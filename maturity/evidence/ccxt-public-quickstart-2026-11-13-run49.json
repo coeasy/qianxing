@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "workflow": "Public CCXT quickstart acceptance",
+  "workflow_run_id": 43477986791,
+  "workflow_run_number": 49,
+  "workflow_conclusion": "failure",
+  "head_commit": "ce441555946e0029f00037ccf0ad0dbb4b0d39f5",
+  "checkout_merge_commit": "f5123c7fa3526869ba82acad26d8ea7a8a25ed30",
+  "build_identity": "qianxing 0.4.0, x86_64-unknown-linux-gnu, release",
+  "python_version": "3.12.16",
+  "ccxt_version": "4.5.89",
+  "as_of_ms": 1794592706929,
+  "shared_linux_release_artifact": {
+    "artifact_id": 14064417034,
+    "sha256": "1caaeda99ae4a4c29da52d332e60d45d906ac68c6295c39cc2ff16fc77409608",
+    "runner_download_digest_verified": true
+  },
+  "public_data_only": true,
+  "credentials_loaded": false,
+  "orders_submitted": false,
+  "venue_results": {
+    "okx": {
+      "job_id": 132071722323,
+      "status": "success",
+      "instrument": "BTC/USDT:USDT.OKX",
+      "timeframe": "15m",
+      "window_days": 180,
+      "bars": 17280,
+      "missing_intervals": 0,
+      "duplicate_rows": 0,
+      "out_of_order_rows": 0,
+      "fills": 952,
+      "rejected_orders": 0,
+      "dataset_sha256": "e93ed8ceeb1bfba3e94439872ffb0c5448c081886ca25a87b5478c563dcf92ae",
+      "result_hash": "72640f9a8a3506ef",
+      "return_bps": -79,
+      "artifact_id": 14064228373,
+      "artifact_sha256": "b7510f5f8ce386b132086093f4e31bbceda5599dca2f9a82ff4d0bcff1528ff7",
+      "artifact_sha256_independently_verified": true
+    },
+    "bitget": {
+      "job_id": 132071722171,
+      "status": "success",
+      "instrument": "BTC/USDT:USDT.BITGET",
+      "timeframe": "15m",
+      "window_days": 52,
+      "bars": 4992,
+      "missing_intervals": 0,
+      "duplicate_rows": 0,
+      "out_of_order_rows": 0,
+      "fills": 260,
+      "rejected_orders": 0,
+      "dataset_sha256": "9d2012bc4c3c7c9422571110589acf5b063732d40375357b562d306c5ffd4082",
+      "result_hash": "77ec2e13cc1b9af8",
+      "return_bps": -1999,
+      "artifact_id": 14063998809,
+      "artifact_sha256": "3a5b8397457cfeedf27bb5d2f11020d22e79afc347241694188cedb1196375b4",
+      "artifact_sha256_independently_verified": true
+    },
+    "binance": {
+      "job_id": 132071722227,
+      "status": "blocked",
+      "instrument": "BTC/USDT:USDT.BINANCE",
+      "stage": "load_markets",
+      "endpoint": "https://api.binance.com/api/v3/exchangeInfo",
+      "http_status": 451,
+      "reason": "runner region restricted by Binance eligibility terms",
+      "retry_or_route_around_attempted": false,
+      "artifact_id": 14064671364,
+      "artifact_sha256": "4e2b4e7aec67d8445b6388504376c66e0f9e0a3b77117e1d6d57d8e3bdd01176",
+      "artifact_sha256_independently_verified": true
+    }
+  },
+  "rate_limit_retry_regression_context": {
+    "previous_run_id": 43474683342,
+    "previous_bitget_job_id": 132061467188,
+    "previous_result": "HTTP 429 Too Many Requests during fetch_ohlcv",
+    "fix_commit": "ce441555946e0029f00037ccf0ad0dbb4b0d39f5",
+    "current_result": "Bitget public-data quickstart completed",
+    "retry_observed_in_current_logs": false,
+    "automated_retry_policy_tests_passed": true
+  },
+  "scope_limitations": [
+    "The public quickstart validates anonymous market data, backtest, and HTML report generation only.",
+    "It does not verify private API access, sandbox or live orders, account-specific fees, or strategy profitability.",
+    "The successful Bitget run does not show that a retry occurred; the bounded retry behavior is covered by offline tests.",
+    "Binance remains blocked on this hosted runner by HTTP 451 and was not routed around."
+  ]
+}

@@ -13,16 +13,16 @@ pub use algo_execution::{
     ALGO_EXECUTION_STATE_SCHEMA_VERSION,
 };
 pub use application::*;
-use qx_control::{order_from_submit_command, ControlCommand};
-use qx_core::FeeModel;
+use qx_control::{cancel_order_target_from_command, order_from_submit_command, ControlCommand};
+use qx_core::{DecimalRounding, ExactDecimal, FeeModel};
 use qx_guanxing::QuoteTick;
 use qx_risk::OrderRiskPosition;
 pub use qx_zhenlu::algo::{
     plan_twap, plan_vwap, AlgoChildSlice, AlgoExecutionError, VwapVolumeBucket, MAX_ALGO_CHILDREN,
 };
 use qx_zhenlu::{
-    PaperVenue, RiskContext, SpreadOrderGroup, SpreadOrderGroupStatus, SpreadOrderGroupStore,
-    Venue, VenueEvent,
+    OrderGroupStore, PaperVenue, RiskContext, SpreadOrderGroup, SpreadOrderGroupStatus,
+    SpreadOrderGroupStore, Venue, VenueEvent,
 };
 
 pub fn spread_group_barrier(
@@ -148,12 +148,44 @@ fn venue_events_to_application(events: Vec<VenueEvent>) -> Vec<ExecutionEvent> {
                 client_order_id,
                 venue_order_id,
             },
-            VenueEvent::Fill(fill) => ExecutionEvent::Fill(Box::new(fill)),
+            VenueEvent::Rejected {
+                client_order_id,
+                reason,
+                ..
+            } => ExecutionEvent::Rejected {
+                client_order_id,
+                reason,
+            },
+            VenueEvent::Fill(fill) => ExecutionEvent::Fill(fill),
+            VenueEvent::FeeAdjustment {
+                account_id,
+                venue_id,
+                order_id,
+                instrument,
+                fees,
+                ..
+            } => ExecutionEvent::FeeAdjustment {
+                account_id,
+                venue_id,
+                order_id,
+                instrument,
+                fees,
+            },
             VenueEvent::Cancelled {
                 client_order_id, ..
             } => ExecutionEvent::Cancelled { client_order_id },
         })
         .collect()
+}
+
+fn venue_group_submission_to_application(
+    submission: qx_zhenlu::VenueOrderGroupSubmission,
+) -> OrderGroupSubmission {
+    OrderGroupSubmission {
+        venue_group_id: submission.venue_group_id,
+        group_status: submission.group_status,
+        events: venue_events_to_application(submission.events),
+    }
 }
 
 impl<V: Venue> VenuePort for VenuePortAdapter<V> {
@@ -163,6 +195,32 @@ impl<V: Venue> VenuePort for VenuePortAdapter<V> {
 
     fn capabilities(&self) -> qx_zhenlu::venue_capabilities::VenueCapabilities {
         *self.venue.capabilities()
+    }
+
+    fn execution_readiness(&self) -> Result<(), String> {
+        self.venue
+            .execution_readiness()
+            .map_err(|error| format!("Venue {} 尚未就绪: {error:?}", self.venue_id()))
+    }
+
+    fn validate_submit_order_group(
+        &mut self,
+        group: &qx_core::OrderGroupState,
+    ) -> Result<(), String> {
+        self.venue
+            .validate_order_group(group)
+            .map_err(|error| format!("Venue 订单组预检失败: {error:?}"))
+    }
+
+    fn submit_order_group(
+        &mut self,
+        group: &qx_core::OrderGroupState,
+        ts: u64,
+    ) -> Result<OrderGroupSubmission, String> {
+        self.venue
+            .submit_order_group(group, ts)
+            .map(venue_group_submission_to_application)
+            .map_err(|error| format!("Venue 订单组提交结果未知: {error:?}"))
     }
 
     fn submit_order(
@@ -187,6 +245,28 @@ impl<V: Venue> VenuePort for VenuePortAdapter<V> {
             .cancel(client_order_id, ts)
             .map(venue_events_to_application)
             .map_err(|error| format!("Venue cancel 失败: {error:?}"))
+    }
+
+    fn validate_amend_order(
+        &mut self,
+        current: &qx_core::Order,
+        amended: &qx_core::Order,
+    ) -> Result<(), String> {
+        self.venue
+            .validate_amendment(current, amended)
+            .map_err(|error| format!("Venue amend preflight 失败: {error:?}"))
+    }
+
+    fn amend_order(
+        &mut self,
+        current: &qx_core::Order,
+        amended: &qx_core::Order,
+        ts: u64,
+    ) -> Result<Vec<ExecutionEvent>, String> {
+        self.venue
+            .amend(current, amended, ts)
+            .map(venue_events_to_application)
+            .map_err(|error| format!("Venue amend 结果未知: {error:?}"))
     }
 }
 
@@ -199,6 +279,32 @@ impl<V: Venue + ?Sized> VenuePort for BorrowedVenuePort<'_, V> {
         *self.venue.capabilities()
     }
 
+    fn execution_readiness(&self) -> Result<(), String> {
+        self.venue
+            .execution_readiness()
+            .map_err(|error| format!("Venue {} 尚未就绪: {error:?}", self.venue_id()))
+    }
+
+    fn validate_submit_order_group(
+        &mut self,
+        group: &qx_core::OrderGroupState,
+    ) -> Result<(), String> {
+        self.venue
+            .validate_order_group(group)
+            .map_err(|error| format!("Venue 订单组预检失败: {error:?}"))
+    }
+
+    fn submit_order_group(
+        &mut self,
+        group: &qx_core::OrderGroupState,
+        ts: u64,
+    ) -> Result<OrderGroupSubmission, String> {
+        self.venue
+            .submit_order_group(group, ts)
+            .map(venue_group_submission_to_application)
+            .map_err(|error| format!("Venue 订单组提交结果未知: {error:?}"))
+    }
+
     fn submit_order(
         &mut self,
         order: qx_core::Order,
@@ -222,6 +328,28 @@ impl<V: Venue + ?Sized> VenuePort for BorrowedVenuePort<'_, V> {
             .map(venue_events_to_application)
             .map_err(|error| format!("Venue cancel 失败: {error:?}"))
     }
+
+    fn validate_amend_order(
+        &mut self,
+        current: &qx_core::Order,
+        amended: &qx_core::Order,
+    ) -> Result<(), String> {
+        self.venue
+            .validate_amendment(current, amended)
+            .map_err(|error| format!("Venue amend preflight 失败: {error:?}"))
+    }
+
+    fn amend_order(
+        &mut self,
+        current: &qx_core::Order,
+        amended: &qx_core::Order,
+        ts: u64,
+    ) -> Result<Vec<ExecutionEvent>, String> {
+        self.venue
+            .amend(current, amended, ts)
+            .map(venue_events_to_application)
+            .map_err(|error| format!("Venue amend 结果未知: {error:?}"))
+    }
 }
 
 impl<V: Venue + ?Sized> VenueRouterPort for BorrowedVenuePort<'_, V> {
@@ -233,6 +361,20 @@ impl<V: Venue + ?Sized> VenueRouterPort for BorrowedVenuePort<'_, V> {
             || venue_id.trim().is_empty()
             || venue_id.eq_ignore_ascii_case(self.venue_id()))
         .then(|| self.capabilities())
+    }
+
+    fn execution_readiness_for(&self, venue_id: &str) -> Result<(), String> {
+        if self.accept_any_venue
+            || venue_id.trim().is_empty()
+            || venue_id.eq_ignore_ascii_case(self.venue_id())
+        {
+            VenuePort::execution_readiness(self)
+        } else {
+            Err(format!(
+                "Venue readiness 路由不匹配: requested={venue_id} configured={}",
+                self.venue_id()
+            ))
+        }
     }
 
     fn submit_order(
@@ -283,6 +425,20 @@ impl<V: Venue> VenueRouterPort for VenuePortAdapter<V> {
             || venue_id.trim().is_empty()
             || venue_id.eq_ignore_ascii_case(self.venue_id()))
         .then(|| self.capabilities())
+    }
+
+    fn execution_readiness_for(&self, venue_id: &str) -> Result<(), String> {
+        if self.accept_any_venue
+            || venue_id.trim().is_empty()
+            || venue_id.eq_ignore_ascii_case(self.venue_id())
+        {
+            VenuePort::execution_readiness(self)
+        } else {
+            Err(format!(
+                "Venue readiness 路由不匹配: requested={venue_id} configured={}",
+                self.venue_id()
+            ))
+        }
     }
 
     fn submit_order(
@@ -371,8 +527,11 @@ pub struct PortExecutionService<'a, V: VenuePort, P: ExecutionEventPort> {
     now: u64,
     source_seq: &'a mut u64,
     registration_correlation: Option<String>,
+    cancel_operation_id: Option<String>,
     instrument_spec: Option<TradingInstrumentSpec>,
     spread_store: Option<&'a dyn SpreadOrderGroupStore>,
+    order_group_store: Option<&'a mut dyn OrderGroupStore>,
+    submission_group_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -401,8 +560,11 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
             now,
             source_seq,
             registration_correlation: None,
+            cancel_operation_id: None,
             instrument_spec: None,
             spread_store: None,
+            order_group_store: None,
+            submission_group_id: None,
         }
     }
 
@@ -412,6 +574,11 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
     /// 绕过 CLI 的调用方（回测、语言绑定、未来执行器）也无法跳过它。
     pub fn with_spread_group_store(mut self, store: &'a dyn SpreadOrderGroupStore) -> Self {
         self.spread_store = Some(store);
+        self
+    }
+
+    pub fn with_order_group_store(mut self, store: &'a mut dyn OrderGroupStore) -> Self {
+        self.order_group_store = Some(store);
         self
     }
 
@@ -430,8 +597,10 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
         let order = order_from_submit_command(command)
             .map_err(|error| format!("SubmitOrder 订单载荷非法: {error:?}"))?;
         self.registration_correlation = Some(format!("control:{}", command.command_id));
+        self.submission_group_id = command.payload.get("spread_group_id").cloned();
         let result = self.submit(order);
         self.registration_correlation = None;
+        self.submission_group_id = None;
         result
     }
 
@@ -444,20 +613,34 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
         let order = order_from_submit_command(command)
             .map_err(|error| format!("SubmitOrder 订单载荷非法: {error:?}"))?;
         self.registration_correlation = Some(format!("control:{}", command.command_id));
+        self.submission_group_id = command.payload.get("spread_group_id").cloned();
         let result = self.submit_with_risk(order, risk);
         self.registration_correlation = None;
+        self.submission_group_id = None;
         result
     }
 
     pub fn submit(&mut self, order: qx_core::Order) -> Result<PortExecutionResult, String> {
         self.validate_order(&order)?;
+        if self.events.orders().iter().any(|existing| {
+            existing.account_id == order.account_id
+                && self.events.has_pending_amendment(existing.client_id)
+        }) {
+            return Err("账户存在改单结果未知的订单，必须先对账，禁止新增订单".into());
+        }
         self.venue.validate_submit_capabilities(&order)?;
-        if let Some(existing) = self
+        let existing_order = self
             .events
             .orders()
             .into_iter()
-            .find(|existing| existing.client_id == order.client_id)
-        {
+            .find(|existing| existing.client_id == order.client_id);
+        if let Some(existing) = existing_order.as_ref() {
+            if !existing.same_submission_identity(&order) {
+                return Err(format!(
+                    "client_order_id {} 已绑定到不同的账户、标的、方向、数量或执行策略，拒绝复用",
+                    order.client_id
+                ));
+            }
             if existing.status.is_terminal()
                 || matches!(
                     existing.status,
@@ -479,12 +662,13 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
             // `CancelPending` 只能走到 `Cancelled`/`Filled`/`Unknown`，`Submitted` 非法，
             // 所以对一条撤单在途的订单补发 `venue.submit_order` 只会用同一个
             // `client_order_id` 再下一单，不是"重试"。
-            // `PendingSubmit` 刻意放行——只有真的调过 `venue.submit_order` 才会把状态推离
-            // `PendingSubmit`（回包归约，或 Err 分支经 `mark_reconcile` 转 `Unknown`），
-            // 因此这里的 `PendingSubmit` 等价于"已登记但远端从未收到"，补发是恢复动作。
+            // 正式的 LiveEventPipeline 会在网络副作用前把新订单持久化为 Submitted。
+            // 其它 OrderStore 可能仍保留 PendingSubmit；该状态同样不能证明远端未收到，
+            // 因而已有 PendingSubmit/Submitted 都必须先对账，不能把重试当作恢复。
             if matches!(
                 existing.status,
                 qx_core::OrderStatus::Submitted
+                    | qx_core::OrderStatus::PendingSubmit
                     | qx_core::OrderStatus::CancelPending
                     | qx_core::OrderStatus::Unknown
             ) {
@@ -499,7 +683,20 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
                     existing.client_id, existing.status
                 ));
             }
-        } else {
+        }
+        if existing_order.is_none() {
+            // A known disconnected/snapshotting venue is a safe local refusal. Check it before
+            // creating a PendingSubmit record so callers can retry after the connector recovers.
+            self.venue.execution_readiness()?;
+            if let Some(group_id) = self.submission_group_id.as_deref() {
+                let store = self.spread_store.ok_or_else(|| {
+                    format!(
+                        "FAIL_CLOSED: 多腿订单组 {group_id} 未绑定组状态存储，拒绝提交订单 {}",
+                        order.client_id
+                    )
+                })?;
+                store.begin_leg_submission(group_id, order.client_id)?;
+            }
             self.events.register_order(
                 order.clone(),
                 self.now,
@@ -545,12 +742,23 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
         // `correlation_id:source_seq` 去重，而每条命令都从 0 重新计数，只用
         // `(worker, venue)` 会让后一笔订单的 Accepted/ReconcileRequired 被判为
         // 重放而静默丢弃；只用客户单号又会让同一订单的第二笔成交被吞掉。
-        let venue_prefix = format!(
-            "{}:venue:{}:{}",
-            self.worker_id,
-            self.venue.venue_id(),
-            order.client_id
-        );
+        let venue_prefix = match self
+            .registration_correlation
+            .as_deref()
+            .filter(|correlation_id| !correlation_id.trim().is_empty())
+        {
+            Some(correlation_id) => format!(
+                "{correlation_id}:venue:{}:{}",
+                self.venue.venue_id(),
+                order.client_id
+            ),
+            None => format!(
+                "{}:venue:{}:{}",
+                self.worker_id,
+                self.venue.venue_id(),
+                order.client_id
+            ),
+        };
         for fact in facts {
             let correlation_id = fact_correlation(&venue_prefix, &fact);
             self.append(fact, correlation_id)?;
@@ -586,6 +794,268 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
         self.submit(order)
     }
 
+    /// Submit an OCO/Bracket exactly once through the shared execution boundary.
+    /// Each leg intent is registered before the single native group RPC; any
+    /// ambiguous outcome fences the group for reconciliation and is never retried.
+    pub fn submit_order_group<R: RiskPort>(
+        &mut self,
+        intent: qx_core::OrderGroupIntent,
+        risk: &R,
+    ) -> Result<PortExecutionResult, String> {
+        let group = qx_core::OrderGroupState::from_intent(intent)?;
+        self.venue.validate_submit_order_group(&group)?;
+        for leg in &group.legs {
+            self.validate_order(&leg.order)?;
+            match risk
+                .evaluate_order(&leg.order)
+                .map_err(|error| format!("订单组账户级风控执行失败: {error}"))?
+            {
+                RiskVerdict::Allow => {}
+                RiskVerdict::Reject { reason } => {
+                    return Err(format!(
+                        "订单组 {:?} 子腿 {} 被账户级风控拒绝: {reason}",
+                        leg.role, leg.order.client_id
+                    ));
+                }
+            }
+        }
+        self.venue.execution_readiness()?;
+        if self.order_group_store.is_none() {
+            return Err("FAIL_CLOSED: 原生订单组提交路径未注入订单组持久化存储".into());
+        }
+        let existing_orders = self.events.orders();
+        if let Some(existing) = group.legs.iter().find_map(|leg| {
+            existing_orders
+                .iter()
+                .find(|order| order.client_id == leg.order.client_id)
+        }) {
+            return Err(format!(
+                "订单组子腿 {} 已在 OMS 中，必须先恢复或对账，禁止重放组提交",
+                existing.client_id
+            ));
+        }
+        {
+            let store = self
+                .order_group_store
+                .as_deref_mut()
+                .ok_or_else(|| "订单组存储不可用".to_string())?;
+            store.create(&group)?;
+            if !store.begin_submission(&group.intent.group_id)? {
+                return Err(format!(
+                    "订单组 {} 已启动过提交或需对账，禁止重放 Venue 副作用",
+                    group.intent.group_id
+                ));
+            }
+        }
+        for leg in &group.legs {
+            if let Err(error) = self.events.register_order(
+                leg.order.clone(),
+                self.now,
+                Some(format!(
+                    "{}:group:{}:register:{}",
+                    self.worker_id, group.intent.group_id, leg.order.client_id
+                )),
+            ) {
+                if let Some(store) = self.order_group_store.as_deref_mut() {
+                    let _ = store.require_reconciliation(&group.intent.group_id);
+                }
+                return Err(format!(
+                    "订单组 {} 子腿 {} 注册失败，订单组已围栏待对账: {error}",
+                    group.intent.group_id, leg.order.client_id
+                ));
+            }
+        }
+        {
+            let orders = self.events.orders();
+            let store = self
+                .order_group_store
+                .as_deref_mut()
+                .ok_or_else(|| "订单组存储不可用".to_string())?;
+            for leg in &group.legs {
+                let snapshot = orders
+                    .iter()
+                    .find(|order| order.client_id == leg.order.client_id)
+                    .ok_or_else(|| {
+                        format!("已注册订单组子腿 {} 无法从 OMS 读取", leg.order.client_id)
+                    })?;
+                store.apply_order_snapshot(&group.intent.group_id, snapshot, None)?;
+            }
+        }
+
+        let submission = match self.venue.submit_order_group(&group, self.now) {
+            Ok(submission) => submission,
+            Err(error) => {
+                self.mark_group_reconcile(&group, "group-submit-unknown")?;
+                return Err(format!("Venue 订单组提交结果未知，已围栏待对账: {error}"));
+            }
+        };
+        if let Some(venue_group_id) = submission.venue_group_id {
+            let result = self
+                .order_group_store
+                .as_deref_mut()
+                .ok_or_else(|| "订单组存储不可用".to_string())?
+                .record_venue_group_id(&group.intent.group_id, venue_group_id);
+            if let Err(error) = result {
+                self.mark_group_reconcile(&group, "venue-group-id-conflict")?;
+                return Err(format!("交易所订单组 ID 无法持久化，已围栏待对账: {error}"));
+            }
+        }
+        let group_status = submission.group_status;
+        let facts = submission.events;
+        if let Some(group_status) = group_status {
+            if group_status == qx_core::OrderGroupStatus::Active && facts.is_empty() {
+                self.order_group_store
+                    .as_deref_mut()
+                    .ok_or_else(|| "订单组存储不可用".to_string())?
+                    .activate_native_group(&group.intent.group_id)?;
+                return Ok(PortExecutionResult {
+                    message: format!(
+                        "ORDER_GROUP_ACTIVE group_id={} venue_resource=accepted_without_child_orders",
+                        group.intent.group_id
+                    ),
+                    event_count: 0,
+                });
+            }
+            self.mark_group_reconcile(&group, "native-group-state-requires-reconcile")?;
+            return Err(format!(
+                "Venue 原生订单组状态 {:?} 尚不能安全归约到子订单，已围栏待对账",
+                group_status
+            ));
+        }
+        let mut per_leg = Vec::with_capacity(group.legs.len());
+        for leg in &group.legs {
+            let leg_facts: Vec<_> = facts
+                .iter()
+                .filter(|fact| execution_event_client_order_id(fact) == Some(leg.order.client_id))
+                .cloned()
+                .collect();
+            if let Err(error) = validate_submit_events(&leg.order, &leg_facts) {
+                self.mark_group_reconcile(&group, "invalid-group-facts")?;
+                return Err(format!(
+                    "Venue 订单组子腿 {} 回报无效，订单组已围栏待对账: {error}",
+                    leg.order.client_id
+                ));
+            }
+            if let Err(error) =
+                gate_submit_facts(&leg.order, &leg_facts, self.instrument_spec.as_ref())
+            {
+                self.mark_group_reconcile(&group, error.reason_tag())?;
+                return Err(error.to_string());
+            }
+            per_leg.push((leg.order.client_id, leg_facts));
+        }
+        if facts
+            .iter()
+            .any(|fact| execution_event_client_order_id(fact).is_none())
+        {
+            self.mark_group_reconcile(&group, "unattributed-group-fact")?;
+            return Err("Venue 订单组返回无法归属子腿的事实，已围栏待对账".into());
+        }
+
+        let event_count = facts.len();
+        let mut has_reconcile = false;
+        for (client_order_id, leg_facts) in per_leg {
+            let venue_prefix = format!(
+                "{}:venue:{}:{}:group:{}",
+                self.worker_id,
+                self.venue.venue_id(),
+                client_order_id,
+                group.intent.group_id
+            );
+            for fact in leg_facts {
+                has_reconcile |= matches!(fact, ExecutionEvent::ReconcileRequired { .. });
+                let correlation_id = fact_correlation(&venue_prefix, &fact);
+                self.append(fact, correlation_id)?;
+            }
+        }
+        let orders = self.events.orders();
+        {
+            let store = self
+                .order_group_store
+                .as_deref_mut()
+                .ok_or_else(|| "订单组存储不可用".to_string())?;
+            if has_reconcile {
+                store.require_reconciliation(&group.intent.group_id)?;
+            }
+            for leg in &group.legs {
+                let snapshot = orders
+                    .iter()
+                    .find(|order| order.client_id == leg.order.client_id)
+                    .ok_or_else(|| {
+                        format!("订单组子腿 {} 回报后无法从 OMS 读取", leg.order.client_id)
+                    })?;
+                let venue_order_id = facts.iter().find_map(|fact| match fact {
+                    ExecutionEvent::Accepted {
+                        client_order_id,
+                        venue_order_id,
+                    } if *client_order_id == leg.order.client_id => Some(venue_order_id.clone()),
+                    _ => None,
+                });
+                if has_reconcile {
+                    store.record_order_snapshot_during_reconciliation(
+                        &group.intent.group_id,
+                        snapshot,
+                        venue_order_id,
+                    )?;
+                } else if store.load(&group.intent.group_id)?.is_some_and(|current| {
+                    current.status == qx_core::OrderGroupStatus::ReconcileRequired
+                }) {
+                    // A complete response can transiently look unresolved while its legs are
+                    // reduced one at a time (for example Rejected before peer Accepted).
+                    // Reapply each known venue fact through the barrier-aware reducer so the
+                    // final group state reflects the whole response instead of a leg-order race.
+                    store.reconcile_order_snapshot(
+                        &group.intent.group_id,
+                        snapshot,
+                        venue_order_id,
+                    )?;
+                } else {
+                    store.apply_order_snapshot(&group.intent.group_id, snapshot, venue_order_id)?;
+                }
+            }
+        }
+        if has_reconcile {
+            return Err("Venue 订单组回报要求对账，已禁止继续自动执行".into());
+        }
+        Ok(PortExecutionResult {
+            message: format!(
+                "ORDER_GROUP_SUBMITTED group_id={} venue_events={event_count}",
+                group.intent.group_id
+            ),
+            event_count,
+        })
+    }
+
+    fn mark_group_reconcile(
+        &mut self,
+        group: &qx_core::OrderGroupState,
+        reason: &str,
+    ) -> Result<(), String> {
+        for leg in &group.legs {
+            self.mark_reconcile(leg.order.client_id, reason)?;
+        }
+        let orders = self.events.orders();
+        let store = self
+            .order_group_store
+            .as_deref_mut()
+            .ok_or_else(|| "订单组存储不可用".to_string())?;
+        store.require_reconciliation(&group.intent.group_id)?;
+        for leg in &group.legs {
+            let snapshot = orders
+                .iter()
+                .find(|order| order.client_id == leg.order.client_id)
+                .ok_or_else(|| {
+                    format!("待对账订单组子腿 {} 无法从 OMS 读取", leg.order.client_id)
+                })?;
+            store.record_order_snapshot_during_reconciliation(
+                &group.intent.group_id,
+                snapshot,
+                None,
+            )?;
+        }
+        Ok(())
+    }
+
     /// Fail closed on frozen market-spec identity, lot size, minimum quantity,
     /// and price tick before risk registration or any venue side effect.
     pub fn validate_order(&self, order: &qx_core::Order) -> Result<(), String> {
@@ -599,8 +1069,13 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
                     order.instrument, spec.instrument
                 ));
             }
-            spec.validate_order(order.qty.raw(), order.limit.map(|price| price.raw()))
-                .map_err(|error| format!("订单不满足 market spec: {error}"))?;
+            if let Some(amounts) = order.exact_amounts {
+                spec.validate_exact_order_precision(amounts.quantity, amounts.limit_price)
+                    .map_err(|error| format!("精确订单不满足 market spec: {error}"))?;
+            } else {
+                spec.validate_order(order.qty.raw(), order.limit.map(|price| price.raw()))
+                    .map_err(|error| format!("订单不满足 market spec: {error}"))?;
+            }
         }
         Ok(())
     }
@@ -630,43 +1105,281 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
 
     pub fn cancel(&mut self, client_order_id: u64) -> Result<PortExecutionResult, String> {
         self.venue.capabilities().validate_cancel()?;
-        if !self
-            .events
-            .orders()
-            .into_iter()
-            .any(|order| order.client_id == client_order_id)
-        {
-            return Err(format!("订单不存在: {client_order_id}"));
+        if self.events.has_pending_amendment(client_order_id) {
+            return Err(format!(
+                "订单 {client_order_id} 存在改单结果未知的操作，必须先对账后才能撤单"
+            ));
+        }
+        let order = self
+            .order(client_order_id)
+            .ok_or_else(|| format!("订单不存在: {client_order_id}"))?;
+        match order.status {
+            qx_core::OrderStatus::Cancelled => {
+                return Ok(PortExecutionResult {
+                    message: "ALREADY_CANCELLED".into(),
+                    event_count: 0,
+                });
+            }
+            qx_core::OrderStatus::Filled
+            | qx_core::OrderStatus::Rejected
+            | qx_core::OrderStatus::Expired => {
+                return Err(format!(
+                    "订单 {} 已处于终态 {:?}，不能撤销",
+                    client_order_id, order.status
+                ));
+            }
+            qx_core::OrderStatus::PendingSubmit => {
+                return Err(format!(
+                    "订单 {} 尚未提交到交易所，不能撤销",
+                    client_order_id
+                ));
+            }
+            qx_core::OrderStatus::CancelPending => {
+                return Err(format!("订单 {} 已有撤单在途，必须先对账", client_order_id));
+            }
+            qx_core::OrderStatus::Unknown => {
+                return Err(format!(
+                    "订单 {} 状态未知，必须先对账后才能撤单",
+                    client_order_id
+                ));
+            }
+            qx_core::OrderStatus::Submitted
+            | qx_core::OrderStatus::Accepted
+            | qx_core::OrderStatus::Working
+            | qx_core::OrderStatus::PartiallyFilled => {}
+        }
+        self.venue.execution_readiness()?;
+        let operation_id = self.cancel_operation_id.clone().unwrap_or_else(|| {
+            format!("{}:cancel:{}:{}", self.worker_id, client_order_id, self.now)
+        });
+        let append_outcome = self.append_with_outcome(
+            ExecutionEvent::CancelPending { client_order_id },
+            format!("{operation_id}:pending:{client_order_id}"),
+        )?;
+        if append_outcome == EventAppendOutcome::Duplicate {
+            return Err(format!(
+                "订单 {} 的撤单意图已由同一操作持久化，禁止重复调用 Venue；必须先对账",
+                client_order_id
+            ));
         }
         let facts = match self.venue.cancel_order(client_order_id, self.now) {
             Ok(facts) if facts.is_empty() => {
-                self.mark_reconcile(client_order_id, "empty-cancel-response")?;
+                self.mark_reconcile_for_operation(
+                    client_order_id,
+                    "empty-cancel-response",
+                    &operation_id,
+                )?;
                 return Err("Venue 未返回取消事实，结果未知，必须先对账".into());
             }
             Ok(facts) => facts,
             Err(error) => {
-                self.mark_reconcile(client_order_id, "cancel-error")?;
+                self.mark_reconcile_for_operation(client_order_id, "cancel-error", &operation_id)?;
                 return Err(format!(
                     "Venue cancel 失败/结果未知: {error}；订单已标记为待对账"
                 ));
             }
         };
         if let Err(error) = validate_cancel_events(client_order_id, &facts) {
-            self.mark_reconcile(client_order_id, "invalid-cancel-response")?;
+            self.mark_reconcile_for_operation(
+                client_order_id,
+                "invalid-cancel-response",
+                &operation_id,
+            )?;
             return Err(format!(
                 "Venue 返回非法撤单事实，结果未知，必须先对账: {error}"
             ));
         }
         let event_count = facts.len();
-        for fact in facts {
-            self.append(
+        let has_cancelled = facts.iter().any(|fact| {
+            matches!(
                 fact,
-                format!("{}:cancel:{}", self.worker_id, client_order_id),
-            )?;
+                ExecutionEvent::Cancelled {
+                    client_order_id: id
+                } if *id == client_order_id
+            )
+        });
+        let has_reconcile = facts
+            .iter()
+            .any(|fact| matches!(fact, ExecutionEvent::ReconcileRequired { .. }));
+        for fact in facts {
+            let prefix = format!("{operation_id}:response:{client_order_id}");
+            let correlation = fact_correlation(&prefix, &fact);
+            self.append(fact, correlation)?;
+        }
+        if has_reconcile {
+            return Err("Venue 返回撤单待对账事实，禁止重复撤单".into());
+        }
+        if !has_cancelled {
+            return Err(format!(
+                "订单 {client_order_id} 在撤单竞态中已全部成交，成交事实已入账"
+            ));
         }
         Ok(PortExecutionResult {
             message: format!("CANCELLED venue_events={event_count}"),
             event_count,
+        })
+    }
+
+    /// Apply an audited CancelOrder command only after binding its declared routing scope to the
+    /// authoritative OMS order. The venue never receives an account or instrument supplied only
+    /// by the caller.
+    pub fn cancel_command(
+        &mut self,
+        command: &ControlCommand,
+    ) -> Result<PortExecutionResult, String> {
+        let target = cancel_order_target_from_command(command)
+            .map_err(|error| format!("CancelOrder 命令无效: {error:?}"))?;
+        let order = self
+            .order(target.client_order_id)
+            .ok_or_else(|| format!("订单不存在: {}", target.client_order_id))?;
+        if order.account_id != target.account_id
+            || !order
+                .instrument
+                .venue
+                .as_str()
+                .eq_ignore_ascii_case(&target.venue_id)
+            || !self.venue.venue_id().eq_ignore_ascii_case(&target.venue_id)
+        {
+            return Err("CancelOrder 路由账户/交易所与 OMS 订单或执行 Venue 不一致".into());
+        }
+        self.cancel_operation_id = Some(format!(
+            "control:cancel:{}:{}",
+            command.command_id, target.client_order_id
+        ));
+        let result = self.cancel(target.client_order_id);
+        self.cancel_operation_id = None;
+        result
+    }
+
+    /// Apply a durable control-plane amendment. The adapter is preflighted before the
+    /// pending fact is written; after that fact exists a retry is forbidden until a
+    /// reconciler proves the exchange result.
+    pub fn amend_command(
+        &mut self,
+        command: &ControlCommand,
+    ) -> Result<PortExecutionResult, String> {
+        let target = qx_control::amend_order_target_from_command(command)
+            .map_err(|error| format!("AmendOrder 命令无效: {error:?}"))?;
+        let current = self
+            .order(target.client_order_id)
+            .ok_or_else(|| format!("订单不存在: {}", target.client_order_id))?;
+        if current.account_id != target.account_id
+            || !current
+                .instrument
+                .venue
+                .as_str()
+                .eq_ignore_ascii_case(&target.venue_id)
+            || !self.venue.venue_id().eq_ignore_ascii_case(&target.venue_id)
+        {
+            return Err("AmendOrder 路由账户/交易所与 OMS 订单或执行 Venue 不一致".into());
+        }
+        if self.events.has_pending_amendment(current.client_id) {
+            return Err(format!(
+                "订单 {} 存在改单结果未知的操作，禁止重发；必须先对账",
+                current.client_id
+            ));
+        }
+        if current.filled != target.order.filled
+            || current.status != target.order.status
+            || current.instrument != target.order.instrument
+            || current.side != target.order.side
+            || current.account_id != target.order.account_id
+            || current.trace != target.order.trace
+            || current.policy != target.order.policy
+        {
+            return Err("AmendOrder 请求基于过期或身份不一致的订单快照".into());
+        }
+        self.venue.validate_amend_order(&current, &target.order)?;
+        self.events.refresh_order_state()?;
+        let refreshed = self
+            .order(target.client_order_id)
+            .ok_or_else(|| format!("订单在改单预检期间从 OMS 消失: {}", target.client_order_id))?;
+        if refreshed != current {
+            return Err(format!(
+                "订单 {} 在改单预检期间出现新成交或状态变化，拒绝基于旧快照改单",
+                target.client_order_id
+            ));
+        }
+        let operation_id = format!(
+            "control:amend:{}:{}",
+            command.command_id, target.client_order_id
+        );
+        let pending = self.append_with_outcome(
+            ExecutionEvent::OrderAmendmentPending {
+                operation_id: operation_id.clone(),
+                order: Box::new(target.order.clone()),
+            },
+            format!("{operation_id}:pending:{}", target.client_order_id),
+        )?;
+        if pending == EventAppendOutcome::Duplicate {
+            return Err(format!(
+                "订单 {} 的改单意图已持久化，禁止重复触达 Venue；必须先对账",
+                target.client_order_id
+            ));
+        }
+        let facts = match self.venue.amend_order(&current, &target.order, self.now) {
+            Ok(facts) => facts,
+            Err(error) => {
+                self.mark_reconcile_for_operation(
+                    target.client_order_id,
+                    "amend-error",
+                    &operation_id,
+                )?;
+                return Err(format!(
+                    "Venue amend 失败/结果未知: {error}；订单已标记为待对账"
+                ));
+            }
+        };
+        if facts.iter().any(|fact| match fact {
+            ExecutionEvent::Fill(fill) => fill.order_id != target.client_order_id,
+            ExecutionEvent::FillWithSpec { fill, .. } => fill.order_id != target.client_order_id,
+            ExecutionEvent::FeeAdjustment { order_id, .. } => *order_id != target.client_order_id,
+            ExecutionEvent::Cancelled { client_order_id }
+            | ExecutionEvent::CancelPending { client_order_id }
+            | ExecutionEvent::ReconcileRequired { client_order_id } => {
+                *client_order_id != target.client_order_id
+            }
+            ExecutionEvent::Accepted { .. }
+            | ExecutionEvent::Rejected { .. }
+            | ExecutionEvent::OrderAmendmentPending { .. }
+            | ExecutionEvent::OrderAmended { .. }
+            | ExecutionEvent::MarketQuote { .. } => true,
+        }) {
+            self.mark_reconcile_for_operation(
+                target.client_order_id,
+                "invalid-amend-response",
+                &operation_id,
+            )?;
+            return Err("Venue amend 返回了非法或其他订单的事实，结果未知，必须先对账".into());
+        }
+
+        // The adapter reports success only after an authoritative fetch confirms the
+        // requested terms. Commit those terms before any concurrent fill facts so the
+        // OMS reduces fills against the amended total quantity.
+        self.append(
+            ExecutionEvent::OrderAmended {
+                operation_id: operation_id.clone(),
+                order: Box::new(target.order.clone()),
+            },
+            format!("{operation_id}:confirmed:{}", target.client_order_id),
+        )?;
+        let fact_count = facts.len();
+        let has_reconcile = facts
+            .iter()
+            .any(|fact| matches!(fact, ExecutionEvent::ReconcileRequired { .. }));
+        for fact in facts {
+            let correlation = fact_correlation(
+                &format!("{operation_id}:response:{}", target.client_order_id),
+                &fact,
+            );
+            self.append(fact, correlation)?;
+        }
+        if has_reconcile {
+            return Err("改单已确认但成交回报要求对账，账户进入待对账状态".into());
+        }
+        Ok(PortExecutionResult {
+            message: format!("AMENDED venue_events={fact_count}"),
+            event_count: fact_count + 1,
         })
     }
 
@@ -677,7 +1390,27 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
         )
     }
 
+    fn mark_reconcile_for_operation(
+        &mut self,
+        client_order_id: u64,
+        reason: &str,
+        operation_id: &str,
+    ) -> Result<(), String> {
+        self.append(
+            ExecutionEvent::ReconcileRequired { client_order_id },
+            format!("{operation_id}:reconcile:{reason}:{client_order_id}"),
+        )
+    }
+
     fn append(&mut self, event: ExecutionEvent, correlation_id: String) -> Result<(), String> {
+        self.append_with_outcome(event, correlation_id).map(|_| ())
+    }
+
+    fn append_with_outcome(
+        &mut self,
+        event: ExecutionEvent,
+        correlation_id: String,
+    ) -> Result<EventAppendOutcome, String> {
         *self.source_seq = self.source_seq.saturating_add(1);
         let event_ts = match &event {
             ExecutionEvent::Fill(fill) | ExecutionEvent::FillWithSpec { fill, .. } => fill.ts,
@@ -690,13 +1423,14 @@ impl<'a, V: VenuePort, P: ExecutionEventPort> PortExecutionService<'a, V, P> {
             },
             (_, event) => event,
         };
-        self.events.append_execution_event(ExecutionEventEnvelope {
-            event,
-            event_ts,
-            receive_ts: self.now,
-            source_seq: *self.source_seq,
-            correlation_id,
-        })
+        self.events
+            .append_execution_event_with_outcome(ExecutionEventEnvelope {
+                event,
+                event_ts,
+                receive_ts: self.now,
+                source_seq: *self.source_seq,
+                correlation_id,
+            })
     }
 }
 
@@ -751,7 +1485,10 @@ pub struct HedgeRecoveryWorker<'a, R: VenueRouterPort, P: ExecutionEventPort> {
     claim_owner: String,
     now: u64,
     source_seq: &'a mut u64,
+    account_venue_scope: Option<(Option<String>, Option<String>)>,
 }
+
+const MAX_HEDGE_ATTEMPTS: u32 = 3;
 
 impl<'a, R: VenueRouterPort, P: ExecutionEventPort> HedgeRecoveryWorker<'a, R, P> {
     pub fn new(
@@ -773,7 +1510,31 @@ impl<'a, R: VenueRouterPort, P: ExecutionEventPort> HedgeRecoveryWorker<'a, R, P
             claim_owner: format!("{}:{}:{}", worker_id, std::process::id(), now),
             now,
             source_seq,
+            account_venue_scope: None,
         })
+    }
+
+    /// Scope a live recovery pass to the exact account and venue served by this worker.
+    pub fn for_account_venue(mut self, account_id: &str, venue_id: &str) -> Result<Self, String> {
+        let account_id = account_id.trim();
+        let venue_id = venue_id.trim();
+        if account_id.is_empty() || venue_id.is_empty() {
+            return Err("实盘多腿恢复必须绑定 account_id 与 venue_id".into());
+        }
+        self.account_venue_scope = Some((
+            Some(account_id.to_string()),
+            Some(venue_id.to_ascii_uppercase()),
+        ));
+        Ok(self)
+    }
+
+    pub fn for_account(mut self, account_id: &str) -> Result<Self, String> {
+        let account_id = account_id.trim();
+        if account_id.is_empty() {
+            return Err("实盘多腿恢复必须绑定 account_id".into());
+        }
+        self.account_venue_scope = Some((Some(account_id.to_string()), None));
+        Ok(self)
     }
 
     fn load_group(&mut self) -> Result<(), String> {
@@ -785,7 +1546,10 @@ impl<'a, R: VenueRouterPort, P: ExecutionEventPort> HedgeRecoveryWorker<'a, R, P
                     .iter()
                     .zip(&self.group.legs)
                     .any(|(left, right)| {
-                        left.leg_id != right.leg_id || left.venue_id != right.venue_id
+                        left.leg_id != right.leg_id
+                            || left.venue_id != right.venue_id
+                            || left.order.account_id != right.order.account_id
+                            || left.order.instrument != right.order.instrument
                     })
             {
                 return Err("Hedge 恢复快照与请求的策略、腿或 Venue 路由不一致".into());
@@ -842,9 +1606,72 @@ impl<'a, R: VenueRouterPort, P: ExecutionEventPort> HedgeRecoveryWorker<'a, R, P
             }
         }
 
-        let targets = self.group.compensation_targets();
+        let mut targets = self.group.compensation_targets();
+        if let Some((account_id, venue_id)) = &self.account_venue_scope {
+            targets.retain(|target| {
+                account_id
+                    .as_deref()
+                    .is_none_or(|account_id| target.account_id == account_id)
+                    && venue_id
+                        .as_deref()
+                        .is_none_or(|venue_id| target.venue_id.eq_ignore_ascii_case(venue_id))
+            });
+        }
         if targets.is_empty() {
-            return Err("HedgeRequired 订单组没有可确认的补偿目标".into());
+            // A crash can happen after the final compensation fill and progress
+            // snapshot are durable, but before the group status is changed to
+            // Hedged. On restart there are no outstanding targets, so finish
+            // that state transition under the same group claim used by normal
+            // recovery. An account-scoped worker must still verify the whole
+            // group before it can close the group-wide state.
+            if self.group.all_confirmed_exposure_hedged() {
+                let Some(claim_token) = self.store.try_claim(
+                    &self.group.group_id,
+                    &self.claim_owner,
+                    self.now,
+                    HEDGE_RECOVERY_LEASE_MS,
+                )?
+                else {
+                    return Ok(HedgeRecoveryOutcome {
+                        group: self.group,
+                        attempted: 0,
+                        completed: false,
+                        errors: vec!["订单组正在由其他恢复 owner 处理，跳过本轮".into()],
+                    });
+                };
+                if !self.store.verify_claim(
+                    &self.group.group_id,
+                    &self.claim_owner,
+                    claim_token,
+                    self.now,
+                )? {
+                    return Ok(HedgeRecoveryOutcome {
+                        group: self.group,
+                        attempted: 0,
+                        completed: false,
+                        errors: vec!["多腿恢复 claim 已过期或已被其他 owner 接管".into()],
+                    });
+                }
+                self.group
+                    .mark_hedged()
+                    .map_err(|error| format!("标记多腿订单组已对冲失败: {error:?}"))?;
+                self.store
+                    .save_claimed(&self.group, &self.claim_owner, claim_token, self.now)?;
+                self.store
+                    .release_claim(&self.group.group_id, &self.claim_owner, claim_token)?;
+                return Ok(HedgeRecoveryOutcome {
+                    group: self.group,
+                    attempted: 0,
+                    completed: true,
+                    errors: Vec::new(),
+                });
+            }
+            return Ok(HedgeRecoveryOutcome {
+                group: self.group,
+                attempted: 0,
+                completed: false,
+                errors: Vec::new(),
+            });
         }
         let Some(claim_token) = self.store.try_claim(
             &self.group.group_id,
@@ -886,7 +1713,7 @@ impl<'a, R: VenueRouterPort, P: ExecutionEventPort> HedgeRecoveryWorker<'a, R, P
                 all_filled = false;
                 continue;
             }
-            let client_id = compensation_client_id(&self.group, &target.leg_id);
+            let client_id = compensation_client_id(&self.group, &target.leg_id, target.attempt);
             let existing = self
                 .events
                 .orders()
@@ -899,28 +1726,89 @@ impl<'a, R: VenueRouterPort, P: ExecutionEventPort> HedgeRecoveryWorker<'a, R, P
                         "补偿 client_order_id={} 已被其他订单占用，拒绝覆盖",
                         client_id
                     ));
+                    self.group.require_reconciliation();
                     all_filled = false;
                     continue;
                 }
                 if existing.status == OrderStatus::Filled {
+                    if !existing.filled_decimal().is_positive() {
+                        errors.push(format!(
+                            "补偿订单 {} 报告 Filled 但成交数量为零，必须对账",
+                            client_id
+                        ));
+                        self.group.require_reconciliation();
+                        all_filled = false;
+                        continue;
+                    }
+                    self.group
+                        .record_compensation_fill_exact(&target.leg_id, existing.filled_decimal())
+                        .map_err(|error| format!("恢复补偿成交进度失败: {error:?}"))?;
+                    if existing
+                        .filled_decimal()
+                        .checked_cmp(target.quantity_decimal())
+                        .is_some_and(|ordering| ordering.is_lt())
+                    {
+                        let next_attempt = self
+                            .group
+                            .advance_compensation_attempt(&target.leg_id)
+                            .map_err(|error| format!("推进补偿尝试序号失败: {error:?}"))?;
+                        if next_attempt >= MAX_HEDGE_ATTEMPTS {
+                            self.group.require_reconciliation();
+                            errors.push(format!(
+                                "补偿腿 {} 已达到 {} 次尝试上限，剩余敞口转人工对账",
+                                target.leg_id, MAX_HEDGE_ATTEMPTS
+                            ));
+                        }
+                    }
                     continue;
                 }
-                if matches!(existing.status, OrderStatus::Unknown) {
-                    errors.push(format!("补偿订单 {} 状态未知，必须先对账", client_id));
+                if matches!(
+                    existing.status,
+                    OrderStatus::PendingSubmit
+                        | OrderStatus::Submitted
+                        | OrderStatus::Accepted
+                        | OrderStatus::Working
+                        | OrderStatus::PartiallyFilled
+                        | OrderStatus::CancelPending
+                ) {
                     all_filled = false;
                     continue;
                 }
-                if !matches!(
+                if matches!(
                     existing.status,
-                    OrderStatus::PendingSubmit | OrderStatus::Submitted
+                    OrderStatus::Cancelled | OrderStatus::Expired
                 ) {
+                    if existing.filled_decimal().is_positive() {
+                        self.group
+                            .record_compensation_fill_exact(
+                                &target.leg_id,
+                                existing.filled_decimal(),
+                            )
+                            .map_err(|error| format!("归约终态补偿部分成交失败: {error:?}"))?;
+                    }
+                    let next_attempt = self
+                        .group
+                        .advance_compensation_attempt(&target.leg_id)
+                        .map_err(|error| format!("推进补偿尝试序号失败: {error:?}"))?;
+                    if next_attempt >= MAX_HEDGE_ATTEMPTS {
+                        self.group.require_reconciliation();
+                        errors.push(format!(
+                            "补偿腿 {} 已达到 {} 次尝试上限，剩余敞口转人工对账",
+                            target.leg_id, MAX_HEDGE_ATTEMPTS
+                        ));
+                    }
                     errors.push(format!(
-                        "补偿订单 {} 当前状态 {:?}，未达到 Filled",
+                        "补偿订单 {} 已终止于 {:?}，剩余敞口将在下一恢复轮处理",
                         client_id, existing.status
                     ));
                     all_filled = false;
                     continue;
                 }
+                errors.push(format!(
+                    "补偿订单 {} 状态 {:?} 不能安全重试，必须对账",
+                    client_id, existing.status
+                ));
+                self.group.require_reconciliation();
                 all_filled = false;
                 continue;
             }
@@ -963,6 +1851,11 @@ impl<'a, R: VenueRouterPort, P: ExecutionEventPort> HedgeRecoveryWorker<'a, R, P
                 all_filled = false;
                 continue;
             }
+            if let Err(error) = self.router.execution_readiness_for(&source_leg.venue_id) {
+                errors.push(format!("补偿腿 {} Venue 尚未就绪: {error}", target.leg_id));
+                all_filled = false;
+                continue;
+            }
             self.events
                 .register_order(
                     order.clone(),
@@ -984,6 +1877,7 @@ impl<'a, R: VenueRouterPort, P: ExecutionEventPort> HedgeRecoveryWorker<'a, R, P
                             "补偿腿 {} 未返回事实，结果未知，必须对账",
                             target.leg_id
                         ));
+                        self.group.require_reconciliation();
                         all_filled = false;
                         continue;
                     }
@@ -993,6 +1887,7 @@ impl<'a, R: VenueRouterPort, P: ExecutionEventPort> HedgeRecoveryWorker<'a, R, P
                             "补偿腿 {} 提交失败/结果未知: {error}",
                             target.leg_id
                         ));
+                        self.group.require_reconciliation();
                         all_filled = false;
                         continue;
                     }
@@ -1014,6 +1909,7 @@ impl<'a, R: VenueRouterPort, P: ExecutionEventPort> HedgeRecoveryWorker<'a, R, P
                     ),
                     None,
                 )?;
+                self.group.require_reconciliation();
                 all_filled = false;
                 continue;
             }
@@ -1025,18 +1921,77 @@ impl<'a, R: VenueRouterPort, P: ExecutionEventPort> HedgeRecoveryWorker<'a, R, P
                 let correlation_id = fact_correlation(&hedge_prefix, &fact);
                 self.append_fact(fact, correlation_id, leg_spec.as_ref())?;
             }
-            let filled = self
+            let persisted_hedge = self
                 .events
                 .orders()
                 .into_iter()
-                .find(|candidate| candidate.client_id == client_id)
-                .is_some_and(|candidate| candidate.status == OrderStatus::Filled);
-            if !filled {
-                all_filled = false;
+                .find(|candidate| candidate.client_id == client_id);
+            match persisted_hedge {
+                Some(hedge)
+                    if hedge.status == OrderStatus::Filled
+                        && hedge.filled_decimal().is_positive() =>
+                {
+                    self.group
+                        .record_compensation_fill_exact(&target.leg_id, hedge.filled_decimal())
+                        .map_err(|error| format!("归约补偿成交进度失败: {error:?}"))?;
+                    if hedge
+                        .filled_decimal()
+                        .checked_cmp(target.quantity_decimal())
+                        .is_some_and(|ordering| ordering.is_lt())
+                    {
+                        let next_attempt = self
+                            .group
+                            .advance_compensation_attempt(&target.leg_id)
+                            .map_err(|error| format!("推进补偿尝试序号失败: {error:?}"))?;
+                        if next_attempt >= MAX_HEDGE_ATTEMPTS {
+                            self.group.require_reconciliation();
+                            errors.push(format!(
+                                "补偿腿 {} 已达到 {} 次尝试上限，剩余敞口转人工对账",
+                                target.leg_id, MAX_HEDGE_ATTEMPTS
+                            ));
+                        }
+                    }
+                }
+                Some(hedge)
+                    if matches!(hedge.status, OrderStatus::Cancelled | OrderStatus::Expired) =>
+                {
+                    if hedge.filled_decimal().is_positive() {
+                        self.group
+                            .record_compensation_fill_exact(&target.leg_id, hedge.filled_decimal())
+                            .map_err(|error| format!("归约终态补偿部分成交失败: {error:?}"))?;
+                    }
+                    let next_attempt = self
+                        .group
+                        .advance_compensation_attempt(&target.leg_id)
+                        .map_err(|error| format!("推进补偿尝试序号失败: {error:?}"))?;
+                    if next_attempt >= MAX_HEDGE_ATTEMPTS {
+                        self.group.require_reconciliation();
+                        errors.push(format!(
+                            "补偿腿 {} 已达到 {} 次尝试上限，剩余敞口转人工对账",
+                            target.leg_id, MAX_HEDGE_ATTEMPTS
+                        ));
+                    }
+                    all_filled = false;
+                }
+                Some(hedge)
+                    if matches!(hedge.status, OrderStatus::Rejected | OrderStatus::Unknown) =>
+                {
+                    self.group.require_reconciliation();
+                    errors.push(format!(
+                        "补偿订单 {} 进入 {:?}，必须人工对账",
+                        client_id, hedge.status
+                    ));
+                    all_filled = false;
+                }
+                _ => all_filled = false,
             }
         }
 
-        if all_filled && errors.is_empty() {
+        if all_filled
+            && errors.is_empty()
+            && self.group.all_confirmed_exposure_hedged()
+            && self.group.status == SpreadOrderGroupStatus::HedgeRequired
+        {
             self.group
                 .mark_hedged()
                 .map_err(|error| format!("标记多腿订单组已对冲失败: {error:?}"))?;
@@ -1045,10 +2000,12 @@ impl<'a, R: VenueRouterPort, P: ExecutionEventPort> HedgeRecoveryWorker<'a, R, P
             .save_claimed(&self.group, &self.claim_owner, claim_token, self.now)?;
         self.store
             .release_claim(&self.group.group_id, &self.claim_owner, claim_token)?;
+        let completed =
+            self.group.status == SpreadOrderGroupStatus::Hedged && all_filled && errors.is_empty();
         Ok(HedgeRecoveryOutcome {
             group: self.group,
             attempted,
-            completed: all_filled && errors.is_empty(),
+            completed,
             errors,
         })
     }
@@ -1092,43 +2049,57 @@ fn build_compensation_order(
 ) -> Result<Order, String> {
     let mut policy = source_leg.order.policy.unwrap_or_default();
     policy.reduce_only = true;
+    let exact_amounts = target.qty_exact.map(|quantity| qx_core::ExactOrderAmounts {
+        quantity,
+        limit_price: None,
+        filled: qx_core::ExactDecimal::ZERO,
+        quote_budget: None,
+        quote_filled: qx_core::ExactDecimal::ZERO,
+        market_reference_price: source_leg.order.market_reference_price_decimal(),
+        conditional: None,
+    });
     let order = Order {
         client_id,
         instrument: target.instrument.clone(),
         side: target.side,
-        qty: target.qty,
+        qty: if exact_amounts.is_some() {
+            qx_core::Quantity::ZERO
+        } else {
+            target.qty
+        },
         limit: None,
         status: OrderStatus::PendingSubmit,
         filled: Quantity::ZERO,
         account_id: target.account_id.clone(),
         trace: Some(OrderTrace {
+            run_id: None,
             strategy_id: Some(group.strategy_id.clone()),
             signal_id: None,
             intent_id: None,
             rule_version: Some("spread-hedge-v1".into()),
         }),
         policy: Some(policy),
+        exact_amounts,
     };
     order.validate()?;
     Ok(order)
 }
 
 fn same_compensation_order(left: &Order, right: &Order) -> bool {
-    left.instrument == right.instrument
-        && left.side == right.side
-        && left.qty == right.qty
-        && left.account_id == right.account_id
-        && left.policy == right.policy
+    left.same_submission_identity(right)
 }
 
-fn compensation_client_id(group: &SpreadOrderGroup, leg_id: &str) -> u64 {
+fn compensation_client_id(group: &SpreadOrderGroup, leg_id: &str, attempt: u32) -> u64 {
     let mut hash = 0xcbf29ce484222325_u64;
+    let attempt_bytes = attempt.to_le_bytes();
     for byte in group
         .group_id
         .as_bytes()
         .iter()
         .chain([0_u8].iter())
         .chain(leg_id.as_bytes().iter())
+        .chain([0_u8].iter())
+        .chain(attempt_bytes.iter())
     {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x100000001b3_u64);
@@ -1199,7 +2170,7 @@ fn gate_submit_facts(
             _ => return None,
         };
         let spec = embedded.or(spec)?;
-        spec.validate_fill(fill.qty.raw(), fill.price.raw()).err()
+        validate_fill_against_spec(fill, spec)
     });
     match violation {
         Some(error) => Err(SubmitFactViolation::Precision(error)),
@@ -1215,14 +2186,27 @@ fn gate_submit_facts(
 /// 字段选择与 `qx-runtime` 的 `fill_key` 同源，因此同一批回报重放仍然幂等。
 fn fill_tag(fill: &qx_core::Fill) -> String {
     format!(
-        "fill:{}:{}:{}:{}:{}:{}",
+        "fill:{}:{}:{}:{}:{}:{}{}",
         fill.order_id,
         fill.ts,
         fill.qty.raw(),
         fill.price.raw(),
         fill.fee.raw(),
-        fill.venue_order_id.clone().unwrap_or_default()
+        fill.venue_order_id.clone().unwrap_or_default(),
+        fill.exact_identity_suffix(),
     )
+}
+
+fn validate_fill_against_spec(
+    fill: &qx_core::Fill,
+    spec: &TradingInstrumentSpec,
+) -> Option<qx_core::QxError> {
+    match fill.exact_amounts {
+        Some(amounts) => spec
+            .validate_exact_fill(amounts.quantity, amounts.price)
+            .err(),
+        None => spec.validate_fill(fill.qty.raw(), fill.price.raw()).err(),
+    }
 }
 
 /// 一条 Venue 回报在其关联号中的稳定身份段。
@@ -1231,7 +2215,57 @@ fn fact_tag(fact: &ExecutionEvent) -> String {
         ExecutionEvent::Accepted {
             client_order_id, ..
         } => format!("accepted:{client_order_id}"),
+        ExecutionEvent::Rejected {
+            client_order_id,
+            reason,
+        } => {
+            format!("rejected:{client_order_id}:{reason}")
+        }
+        ExecutionEvent::CancelPending { client_order_id } => {
+            format!("cancel-pending:{client_order_id}")
+        }
+        ExecutionEvent::OrderAmendmentPending {
+            operation_id,
+            order,
+        } => format!("amend-pending:{}:{}", order.client_id, operation_id),
+        ExecutionEvent::OrderAmended {
+            operation_id,
+            order,
+        } => format!("amended:{}:{}", order.client_id, operation_id),
         ExecutionEvent::Cancelled { client_order_id } => format!("cancelled:{client_order_id}"),
+        ExecutionEvent::FeeAdjustment {
+            account_id,
+            venue_id,
+            order_id,
+            instrument,
+            fees,
+        } => {
+            let mut fees = fees.clone();
+            fees.sort_by(|left, right| {
+                left.currency
+                    .as_deref()
+                    .unwrap_or_default()
+                    .cmp(right.currency.as_deref().unwrap_or_default())
+                    .then_with(|| left.amount.raw().cmp(&right.amount.raw()))
+            });
+            let identity = fees
+                .iter()
+                .map(|fee| {
+                    format!(
+                        "{}={}#{}",
+                        fee.currency.as_deref().unwrap_or_default(),
+                        fee.amount.raw(),
+                        {
+                            let mut trade_ids = fee.source_trade_ids.clone();
+                            trade_ids.sort();
+                            trade_ids.join(";")
+                        }
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("fee-adjustment:{account_id}:{venue_id}:{order_id}:{instrument}:{identity}")
+        }
         ExecutionEvent::ReconcileRequired { client_order_id } => {
             format!("reconcile:{client_order_id}")
         }
@@ -1241,6 +2275,27 @@ fn fact_tag(fact: &ExecutionEvent) -> String {
         ExecutionEvent::MarketQuote { instrument, quote } => {
             format!("market:{instrument}:{}:{}", quote.source_seq, quote.ts)
         }
+    }
+}
+
+fn execution_event_client_order_id(event: &ExecutionEvent) -> Option<u64> {
+    match event {
+        ExecutionEvent::Accepted {
+            client_order_id, ..
+        }
+        | ExecutionEvent::Rejected {
+            client_order_id, ..
+        }
+        | ExecutionEvent::CancelPending { client_order_id }
+        | ExecutionEvent::Cancelled { client_order_id }
+        | ExecutionEvent::ReconcileRequired { client_order_id } => Some(*client_order_id),
+        ExecutionEvent::Fill(fill) | ExecutionEvent::FillWithSpec { fill, .. } => {
+            Some(fill.order_id)
+        }
+        ExecutionEvent::FeeAdjustment { order_id, .. } => Some(*order_id),
+        ExecutionEvent::OrderAmendmentPending { order, .. }
+        | ExecutionEvent::OrderAmended { order, .. } => Some(order.client_id),
+        ExecutionEvent::MarketQuote { .. } => None,
     }
 }
 
@@ -1318,7 +2373,20 @@ fn ingest_venue_events_with_pipeline<P: ExecutionEventPort>(
                 ts,
                 format!("{worker_id}:accepted:{client_order_id}"),
             ),
+            VenueEvent::Rejected {
+                client_order_id,
+                reason,
+                ts,
+            } => (
+                ExecutionEvent::Rejected {
+                    client_order_id,
+                    reason,
+                },
+                ts,
+                format!("{worker_id}:rejected:{client_order_id}"),
+            ),
             VenueEvent::Fill(fill) => {
+                let fill = *fill;
                 let event_ts = fill.ts;
                 let fill_order_id = fill.order_id;
                 let seq = *source_seq;
@@ -1328,8 +2396,7 @@ fn ingest_venue_events_with_pipeline<P: ExecutionEventPort>(
                 let content_correlation = format!("{worker_id}:{}", fill_tag(&fill));
                 // 精度闸门：带冻结产品规格的回报若落在 tick/step 之外，就是与规格冲突的
                 // 事实，只能转成待对账（不记账、不改状态），并把原因回传给 worker。
-                let violation = spec
-                    .and_then(|spec| spec.validate_fill(fill.qty.raw(), fill.price.raw()).err());
+                let violation = spec.and_then(|spec| validate_fill_against_spec(&fill, spec));
                 if let Some(error) = violation {
                     rejections.push(format!(
                         "订单 {fill_order_id} 成交回报违反产品规格: {error:?}"
@@ -1360,6 +2427,24 @@ fn ingest_venue_events_with_pipeline<P: ExecutionEventPort>(
                 ts,
                 format!("{worker_id}:cancelled:{client_order_id}"),
             ),
+            VenueEvent::FeeAdjustment {
+                account_id,
+                venue_id,
+                order_id,
+                instrument,
+                fees,
+                ts,
+            } => {
+                let fact = ExecutionEvent::FeeAdjustment {
+                    account_id,
+                    venue_id,
+                    order_id,
+                    instrument,
+                    fees,
+                };
+                let correlation = fact_correlation(worker_id, &fact);
+                (fact, ts, correlation)
+            }
         };
         pipeline.append_execution_event(ExecutionEventEnvelope {
             event,
@@ -1551,7 +2636,16 @@ pub fn execute_paper_submit_effect<P: ExecutionEventPort + application::LedgerPr
             1,
         )
     });
+    validate_paper_quote(&quote)?;
     let mut venue = PaperVenue::new("paper", fee_model);
+    if order.exact_amounts.is_some() {
+        let spec = risk_context.instrument_spec.clone().ok_or_else(|| {
+            "FAIL_CLOSED: Paper exact order 缺少冻结 market spec 和结算币种".to_string()
+        })?;
+        venue
+            .set_instrument_spec(spec)
+            .map_err(|error| format!("Paper 冻结 market spec 配置失败: {error:?}"))?;
+    }
     let mut source_seq = 0_u64;
     // Paper 与 worker/实盘共用同一副作用编排（`ExecutionGateway` = `PortExecutionService`）：
     // 空的 Venue 回报同样要转成"未知结果 → 待对账"，不允许第二套实现各自解释。
@@ -1589,14 +2683,6 @@ pub fn execute_paper_submit_effect<P: ExecutionEventPort + application::LedgerPr
     if submit_result.starts_with("ALREADY_APPLIED_FROM_EVENT_LOG") {
         return Ok(submit_result);
     }
-    if quote.bid.raw() <= 0
-        || quote.ask.raw() <= 0
-        || quote.bid.raw() > quote.ask.raw()
-        || quote.bid_qty.raw() <= 0
-        || quote.ask_qty.raw() <= 0
-    {
-        return Err("Paper 行情报价非法，拒绝撮合".into());
-    }
     let quote_seq = if quote.source_seq == 0 {
         1
     } else {
@@ -1612,7 +2698,9 @@ pub fn execute_paper_submit_effect<P: ExecutionEventPort + application::LedgerPr
         source_seq: quote_seq,
         correlation_id: format!("paper-execution:market:{}:{quote_seq}", order.instrument),
     })?;
-    let fills = venue.on_quote(&order.instrument, quote);
+    let fills = venue
+        .try_on_quote(&order.instrument, quote)
+        .map_err(|error| format!("Paper 精确撮合失败: {error:?}"))?;
     let fill_count = fills.len();
     if let Some(spec) = risk_context.instrument_spec.as_ref() {
         ingest_venue_events_with_spec(
@@ -1637,6 +2725,34 @@ pub fn execute_paper_submit_effect<P: ExecutionEventPort + application::LedgerPr
         fill_count,
         pipeline.ledger_entry_count()
     ))
+}
+
+fn validate_paper_quote(quote: &QuoteTick) -> Result<(), String> {
+    let project = |raw: i128, exact: Option<ExactDecimal>, label: &str| match exact {
+        Some(value) => {
+            if !value.is_positive() {
+                return Err(format!("Paper {label} 精确值必须为正数"));
+            }
+            let projected = value
+                .checked_mul_at_scale(ExactDecimal::ONE, 9, DecimalRounding::TowardZero)
+                .and_then(|value| value.to_raw(9).ok());
+            if projected != Some(raw) {
+                return Err(format!("Paper {label} 精确值与兼容投影不一致"));
+            }
+            Ok(value)
+        }
+        None if raw > 0 => ExactDecimal::from_parts(raw, 9)
+            .map_err(|error| format!("Paper {label} 兼容值非法: {error}")),
+        None => Err(format!("Paper {label} 缺少正数行情")),
+    };
+    let bid = project(quote.bid.raw(), quote.bid_exact, "bid")?;
+    let ask = project(quote.ask.raw(), quote.ask_exact, "ask")?;
+    if bid.checked_cmp(ask).is_none_or(|ordering| ordering.is_gt()) {
+        return Err("Paper 行情买卖价交叉或无法比较".into());
+    }
+    project(quote.bid_qty.raw(), quote.bid_qty_exact, "bid quantity")?;
+    project(quote.ask_qty.raw(), quote.ask_qty_exact, "ask quantity")?;
+    Ok(())
 }
 
 #[cfg(test)]

@@ -1,0 +1,26 @@
+$ python tools/accept_long_only_sma_paper_parity.py
+exit_code=0
+
+[stdout]
+牵星 Qianxing — 分级校准，量天定位
+
+[Paper · Execution] worker=paper-execution processed=0
+牵星 Qianxing — 分级校准，量天定位
+
+[调度 · Scheduler] worker=scheduler-paper day=20261029 queued=1 timed_out=0 skipped=0
+[调度 · Scheduler] worker=scheduler-paper READY jobs=1
+[策略 · Strategy] worker=strategy-paper job=r16-step-1 run_id=12317103121547806811 result=1 orders: ORDER_INTENT_ACCEPTED
+[策略 · Strategy] worker=strategy-paper READY processed=1
+[Paper · Execution] worker=paper-execution processed=1
+[Paper · E2E] scheduler=scheduler-paper strategy=strategy-paper execution=paper-execution orders=1 (+1 本轮新增) ledger_entries=4 (+3 本轮新增) ✓
+牵星 Qianxing — 分级校准，量天定位
+
+[调度 · Scheduler] worker=scheduler-paper day=20261029 queued=1 timed_out=0 skipped=0
+[调度 · Scheduler] worker=scheduler-paper READY jobs=1
+[策略 · Strategy] worker=strategy-paper job=r16-step-2 run_id=8879810236793414719 result=1 orders: ORDER_INTENT_ACCEPTED
+[策略 · Strategy] worker=strategy-paper READY processed=1
+[Paper · Execution] worker=paper-execution processed=1
+[Paper · E2E] scheduler=scheduler-paper strategy=strategy-paper execution=paper-execution orders=2 (+1 本轮新增) ledger_entries=7 (+3 本轮新增) ✓
+{"local_fills": [["Buy", "225", "3"], ["Sell", "225", "2"]], "paper_fills": [["Buy", "225", "3"], ["Sell", "225", "2"]], "ledger_rows": 6, "flat_position": true}
+
+[stderr]

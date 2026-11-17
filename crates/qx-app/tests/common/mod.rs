@@ -116,6 +116,8 @@ pub fn experiment_spec(
         strategy_kinds: Vec::new(),
         split_plan: None,
         baselines: Vec::new(),
+        search: None,
+        cost_sensitivity: Vec::new(),
     }
 }
 
@@ -182,6 +184,8 @@ pub fn depth_spec(run_id: &str, root: &Path, tier: &str, level_count: usize) -> 
         queue_position_bps: 0,
         queue_position_model: qx_xingban::QueuePositionModel::Disabled,
         market_impact_bps: 0,
+        funding_bps: 0,
+        funding_events: Vec::new(),
         output_dir: root.join("runs").to_string_lossy().into_owned(),
         strategy,
         market_spec: None,
@@ -221,10 +225,12 @@ pub fn perpetual_market_spec() -> TradingInstrumentSpec {
         price_tick: 1,
         qty_step: 1,
         min_qty: 1,
+        min_notional_raw: 0,
         max_leverage: 100,
         maintenance_margin_bps: 500,
         valid_from: 1_000,
         valid_to: Some(49_000),
+        exact_rules: None,
     }
 }
 

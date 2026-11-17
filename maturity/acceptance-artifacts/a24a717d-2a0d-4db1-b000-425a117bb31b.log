@@ -1,0 +1,24 @@
+$ python benchmarks/run_strategy_worker_crash_recovery.py --backend postgres --psql target/pg18-edb/bin/psql.exe --runtime deploy/qianxing.runtime.paper-strategy.example.json --binary target/debug/qx-cli.exe --output maturity/evidence/strategy-worker-crash-recovery-postgres-2026-11-04.json
+exit_code=1
+
+[stdout]
+
+[stderr]
+Traceback (most recent call last):
+  File "D:\aex_work\qianxing\benchmarks\run_strategy_worker_crash_recovery.py", line 341, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "D:\aex_work\qianxing\benchmarks\run_strategy_worker_crash_recovery.py", line 246, in main
+    raise RuntimeError(
+    ...<2 lines>...
+    )
+RuntimeError: control_command_persisted: expected injected exit 86, got 2
+stdout:
+牵星 Qianxing — 分级校准，量天定位
+
+[调度 · Scheduler] worker=scheduler-paper day=20261104 queued=1 timed_out=0 skipped=0
+[调度 · Scheduler] worker=scheduler-paper READY jobs=1
+
+stderr:
+[qx-cli · CLI] Paper 主链路验收失败: worker strategy-paper failed: 读取 Strategy JobQueue 失败: Io("PostgreSQL: error serializing parameter 0")
+

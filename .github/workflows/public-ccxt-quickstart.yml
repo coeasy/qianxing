@@ -1,0 +1,195 @@
+name: Public CCXT quickstart acceptance
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/public-ccxt-quickstart.yml"
+      - "crates/qx-cli/src/quickstart.rs"
+      - "crates/qx-cli/src/backtests/ccxt_builtin.rs"
+      - "crates/qx-cli/src/init_project.rs"
+      - "crates/qx-cli/src/project_manifest.rs"
+      - "crates/qx-cli/src/report_command.rs"
+      - "crates/qx-cli/src/report_html.rs"
+      - "crates/qx-cli/src/worker_entry.rs"
+      - "crates/qx-xingban/src/backtest/**"
+      - "crates/qx-risk/src/**"
+      - "crates/qx-adapter/src/ccxt.rs"
+      - "python/qianxing_ccxt/**"
+      - "tools/build_python_wheel.sh"
+      - "python/pyproject.toml"
+      - "deploy/qianxing.runtime.ccxt.example.json"
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      include_binance_public_profile:
+        description: "Run Binance public-data profile. Disable only for the backtest/Paper release lane when the hosted runner is geo-blocked; the full PR/manual lane remains enabled."
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  GIT_CONFIG_COUNT: 1
+  GIT_CONFIG_KEY_0: core.longpaths
+  GIT_CONFIG_VALUE_0: "true"
+
+jobs:
+  build-linux-release:
+    name: Build shared Linux release artifacts
+    # Keep the standalone CLI compatible with Debian 12 / Ubuntu 22.04.
+    # ubuntu-latest can move to a newer glibc and silently raise the runtime baseline.
+    runs-on: ubuntu-22.04
+    outputs:
+      as_of_ms: ${{ steps.acceptance-window.outputs.as_of_ms }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ubuntu-22.04-glibc-2.35-${{ runner.arch }}
+          cache-on-failure: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Capture one UTC cutoff for all exchanges
+        id: acceptance-window
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'as_of_ms=%s\n' "$(date -u +%s%3N)" >> "$GITHUB_OUTPUT"
+      - name: Build the Linux release wheel and bundled CLI once
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check maturin==1.15.0
+          PYTHON=python bash tools/build_python_wheel.sh
+          target/release/qx-cli version
+          max_glibc="$(objdump -T target/release/qx-cli | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sort -Vu | tail -n 1 | sed 's/^GLIBC_//')"
+          test -n "$max_glibc"
+          if [[ "$(printf '2.35\n%s\n' "$max_glibc" | sort -V | tail -n 1)" != "2.35" ]]; then
+            echo "Linux CLI requires GLIBC_$max_glibc; release baseline is GLIBC_2.35 (Debian 12 / Ubuntu 22.04)" >&2
+            exit 1
+          fi
+          echo "Linux CLI maximum GLIBC requirement: $max_glibc"
+          test -n "$(find dist -maxdepth 1 -type f -name '*.whl' -print -quit)"
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE/target/release/qx-cli:/qx-cli:ro" \
+            debian:12-slim /qx-cli version
+          mkdir -p "$RUNNER_TEMP/qianxing-wheel-linux"
+          python -c 'import glob, os, zipfile; zipfile.ZipFile(glob.glob("dist/*.whl")[0]).extractall(os.path.join(os.environ["RUNNER_TEMP"], "qianxing-wheel-linux"))'
+          chmod +x "$RUNNER_TEMP/qianxing-wheel-linux/qianxing/_bin/qx-cli"
+          cmp --silent target/release/qx-cli "$RUNNER_TEMP/qianxing-wheel-linux/qianxing/_bin/qx-cli"
+          docker run --rm \
+            --volume "$RUNNER_TEMP/qianxing-wheel-linux:/wheel:ro" \
+            debian:12-slim /wheel/qianxing/_bin/qx-cli version
+          tar -czf "$RUNNER_TEMP/qianxing-linux-release.tar.gz" dist/*.whl target/release/qx-cli
+          tar -tzf "$RUNNER_TEMP/qianxing-linux-release.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qianxing-linux-release
+          path: ${{ runner.temp }}/qianxing-linux-release.tar.gz
+          if-no-files-found: error
+          retention-days: 2
+
+  public-market-data-quickstart:
+    name: Real public-data quickstart (${{ matrix.exchange }})
+    runs-on: ubuntu-22.04
+    needs: build-linux-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(github.event_name == 'workflow_call' && inputs.include_binance_public_profile == false && '[{"exchange":"okx","instrument":"BTC/USDT:USDT.OKX","days":180},{"exchange":"bitget","instrument":"BTC/USDT:USDT.BITGET","days":52}]' || '[{"exchange":"okx","instrument":"BTC/USDT:USDT.OKX","days":180},{"exchange":"binance","instrument":"BTC/USDT:USDT.BINANCE","days":180},{"exchange":"bitget","instrument":"BTC/USDT:USDT.BITGET","days":52}]') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: qianxing-linux-release
+          path: ${{ runner.temp }}/linux-release
+      - name: Restore the shared Linux release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -xzf "$RUNNER_TEMP/linux-release/qianxing-linux-release.tar.gz" -C "$GITHUB_WORKSPACE"
+          test -n "$(find dist -maxdepth 1 -type f -name '*.whl' -print -quit)"
+          target/release/qx-cli version
+          mkdir -p "$RUNNER_TEMP/public-ccxt-acceptance"
+      - name: Fetch real public market data, backtest, and render report
+        env:
+          EXCHANGE: ${{ matrix.exchange }}
+          INSTRUMENT: ${{ matrix.instrument }}
+          ACCEPTANCE_DAYS: ${{ matrix.days }}
+          AS_OF_MS: ${{ needs.build-linux-release.outputs.as_of_ms }}
+          ACCEPTANCE_ROOT: ${{ runner.temp }}/public-ccxt-acceptance
+          PYTHON_BIN: ${{ runner.temp }}/python-acceptance/bin/python
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/python-acceptance"
+          "$PYTHON_BIN" -m pip install --disable-pip-version-check --no-deps "$GITHUB_WORKSPACE"/dist/*.whl
+          "$PYTHON_BIN" -c 'import qianxing_bridge; print("native_extension=loaded")'
+          "$PYTHON_BIN" -m pip install --disable-pip-version-check ccxt==4.5.89
+          cli="$GITHUB_WORKSPACE/target/release/qx-cli"
+          project="$ACCEPTANCE_ROOT/$EXCHANGE/project"
+          home="$ACCEPTANCE_ROOT/$EXCHANGE/home"
+          mkdir -p "$home"
+          export HOME="$home"
+          export XDG_DATA_HOME="$home/.local/share"
+          export QX_PYTHON="$PYTHON_BIN"
+          log="$ACCEPTANCE_ROOT/$EXCHANGE/quickstart.log"
+          mkdir -p "$(dirname "$log")"
+          "$cli" quickstart "$project" \
+            --profile ccxt --days "$ACCEPTANCE_DAYS" --timeframe 15m --as-of-ms "$AS_OF_MS" \
+            --exchange "$EXCHANGE" --instrument "$INSTRUMENT" --html \
+            2>&1 | tee "$log"
+          test -s "$project/qianxing.project.json"
+          test -s "$project/qianxing.ccxt.public.json"
+          python - "$project/qianxing.ccxt.public.json" "$EXCHANGE" "$INSTRUMENT" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          config = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert config["exchange_id"] == sys.argv[2], config
+          assert sys.argv[3] in config["instruments"], config
+          assert config["sandbox"] is False, config
+          forbidden = {"apiKey", "secret", "password", "uid", "token"}
+          assert not (forbidden & config.keys()), config
+          PY
+          report="$(find "$project" "$home" -type f -name '*.report.html' -size +0c -print -quit)"
+          test -n "$report"
+          summary="$(find "$project" -type f -name '*.summary.json' -size +0c -print -quit)"
+          test -n "$summary"
+          python - "$summary" "$ACCEPTANCE_DAYS" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          summary = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          days = int(sys.argv[2])
+          expected_bars = days * 24 * 4
+          assert int(summary["bars"]) == expected_bars, {
+              "expected_bars": expected_bars,
+              "summary": summary,
+          }
+          assert int(summary["rejected_orders"]) == 0, summary.get("rejection_reasons")
+          quality = summary["dataset_quality"]["quality_report"]
+          assert int(quality["missing_intervals"]) == 0, quality
+          PY
+          printf 'exchange=%s\ninstrument=%s\nreport=%s\n' "$EXCHANGE" "$INSTRUMENT" "$report" \
+            > "$ACCEPTANCE_ROOT/$EXCHANGE/result.txt"
+          sha256sum "$cli" > "$ACCEPTANCE_ROOT/$EXCHANGE/qx-cli.sha256"
+          python --version > "$ACCEPTANCE_ROOT/$EXCHANGE/python-version.txt" 2>&1
+          "$PYTHON_BIN" -c 'import ccxt; print(ccxt.__version__)' > "$ACCEPTANCE_ROOT/$EXCHANGE/ccxt-version.txt"
+      - name: Upload quickstart project, real-data lineage, report, and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-ccxt-quickstart-${{ matrix.exchange }}
+          path: ${{ runner.temp }}/public-ccxt-acceptance/${{ matrix.exchange }}
+          if-no-files-found: warn
+          retention-days: 30

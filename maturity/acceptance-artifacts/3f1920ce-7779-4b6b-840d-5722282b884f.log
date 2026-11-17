@@ -1,0 +1,8 @@
+$ python -c import os,runpy,subprocess; os.environ['CARGO_PROFILE_DEV_DEBUG']='0'; subprocess.run(['cargo','check','-p','qx-app','-p','qx-cli','-j','1'],check=True); runpy.run_path('tools/check_architecture.py')['multi_market_pnl_contributions_module_check']()
+exit_code=0
+
+[stdout]
+[PASS] 多市场 PnL attribution verifier 独立归属 pnl_contributions，保留有界采样、exact 时间轴、市场集合与期末 Ledger 重估
+
+[stderr]
+    Finished `dev` profile [unoptimized] target(s) in 0.50s

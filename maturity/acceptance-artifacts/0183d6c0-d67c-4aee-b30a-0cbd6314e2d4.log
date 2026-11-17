@@ -1,0 +1,14 @@
+$ cargo test -p qx-cli --features sqlite,postgres --bin qx-cli workers::strategy_worker::execution_updates::cursor_state::postgres_tests::postgres_cursor_imports_legacy_file_and_fences_stale_progress --offline -- --ignored --exact --nocapture
+exit_code=0
+
+[stdout]
+
+running 1 test
+test workers::strategy_worker::execution_updates::cursor_state::postgres_tests::postgres_cursor_imports_legacy_file_and_fences_stale_progress ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 485 filtered out; finished in 1.07s
+
+
+[stderr]
+    Finished `test` profile [unoptimized] target(s) in 1.12s
+     Running unittests src\main.rs (target\debug\deps\qx_cli-c8e1dbef86020219.exe)

@@ -1,0 +1,16 @@
+$ cargo test -p qx-runtime --lib pipeline::tests::submission_worker_process_exit --offline -j1
+exit_code=0
+
+[stdout]
+
+running 2 tests
+test pipeline::tests::submission_worker_process_exit_after_venue_call_replays_pending_without_retry ... ok
+test pipeline::tests::submission_worker_process_exit_before_venue_effect_still_requires_reconciliation ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 98 filtered out; finished in 0.23s
+
+
+[stderr]
+   Compiling qx-runtime v0.3.0 (D:\aex_work\qianxing\crates\qx-runtime)
+    Finished `test` profile [unoptimized] target(s) in 4.30s
+     Running unittests src\lib.rs (target\debug\deps\qx_runtime-ca7749673a8f61d1.exe)

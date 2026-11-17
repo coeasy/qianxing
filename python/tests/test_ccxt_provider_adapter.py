@@ -103,7 +103,26 @@ class CcxtProviderAdapterTest(unittest.TestCase):
                 ),
             )
             result = registry.run_backtest_with_manifest(
-                spec, query, "binance-history", "v1", interval_ms=60_000
+                spec,
+                query,
+                "binance-history",
+                "v1",
+                interval_ms=60_000,
+                snapshot_context={
+                    "schema_version": 1,
+                    "instrument_role": "crypto_spot",
+                    "captured_at_ms": 1,
+                    "frequency_ms": 60_000,
+                    "timestamp_semantics": "bar_close",
+                    "price_precision": 8,
+                    "quantity_precision": 8,
+                    "price_unit": "USDT",
+                    "quantity_unit": "BTC",
+                    "calendar_id": "crypto-24x7",
+                    "calendar_version": "v1",
+                    "gaps": [],
+                    "corporate_action_policy": "not_applicable",
+                },
             )
             self.assertEqual(result.manifest["source_lineage"]["primary_source"], "ccxt:binance")
             self.assertTrue(Path(result.manifest_path).is_file())

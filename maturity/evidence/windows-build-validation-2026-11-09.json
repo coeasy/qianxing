@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-09",
+  "platform": "windows-x86_64-msvc",
+  "source_commit": "18597ef90d797ab82fb7e5123a8bc530135d7738",
+  "source_state": "clean-worktree",
+  "environment": {
+    "git_core_autocrlf": true,
+    "test_temp_directory": "workspace .task-tmp (user Temp denied directory creation)"
+  },
+  "validation": {
+    "format": {
+      "command": "cargo fmt --all -- --check",
+      "exit_code": 0
+    },
+    "builds": [
+      {
+        "command": "cargo build --locked -p qx-cli --no-default-features --features sqlite",
+        "exit_code": 0
+      },
+      {
+        "command": "cargo build --locked -p qx-python",
+        "exit_code": 0
+      }
+    ],
+    "cli_unit_tests": {
+      "command": "cargo test --locked -p qx-cli --no-default-features --features sqlite -- --test-threads=4",
+      "passed": 497,
+      "failed": 0,
+      "ignored": 0,
+      "notes": "Executed with the schema fingerprint and unique scratch-directory changes that were subsequently committed as abe9e1e5 and formatted in 18597ef9. The first run using the user Temp path was interrupted after permission-denied failures; rerun with workspace .task-tmp passed."
+    },
+    "cross_entrypoint_integration": {
+      "command": "cargo test --locked -p qx-cli --no-default-features --features sqlite --test app_three_entrypoints -- --test-threads=4",
+      "exit_code": 0,
+      "passed": 33,
+      "failed": 0,
+      "ignored": 0,
+      "duration_seconds": 93.45
+    },
+    "install_smoke": {
+      "local_path_command": "cargo install --path crates/qx-cli --debug --locked --force --root target/cargo-install-smoke",
+      "git_branch_command": "cargo install --git https://github.com/coeasy/qianxing --branch codex/release-windows-longpaths --debug --locked --force qx-cli --root target/cargo-install-git-smoke",
+      "exit_codes": [0, 0],
+      "local_version_output": "qianxing 0.3.0 (build 18597ef, target x86_64-pc-windows-msvc, profile debug, schemas a56ace252fd211b13345acd10e908cff3058a07cf07be6b4f089724d71527106)",
+      "git_version_output": "qianxing 0.3.0 (build 18597ef, target x86_64-pc-windows-msvc, profile debug, schemas a56ace252fd211b13345acd10e908cff3058a07cf07be6b4f089724d71527106)"
+    },
+    "schema_catalog_identity": {
+      "before_fix_local_worktree": "924955e5ac02de7d2437901dd4751462f5545e1c3130bb0ff96e6fc5ab1d227f",
+      "before_fix_clean_git_checkout": "a56ace252fd211b13345acd10e908cff3058a07cf07be6b4f089724d71527106",
+      "after_fix_local_and_git_checkout": "a56ace252fd211b13345acd10e908cff3058a07cf07be6b4f089724d71527106",
+      "cause": "Windows core.autocrlf expanded working-tree JSON line endings; both Rust and Python build scripts now normalize CRLF to LF before hashing."
+    },
+    "release_build": {
+      "status": "not_run",
+      "notes": "The recorded Linux release build did not produce a fresh artifact; this Windows evidence covers debug builds and install smoke checks only."
+    }
+  }
+}

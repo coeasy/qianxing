@@ -12,7 +12,7 @@ use qx_protocol::{
 
 fn snapshot_with_rows() -> AccountSnapshot {
     let instrument = qx_core::InstrumentId::parse("BTC-USDT.BINANCE").unwrap();
-    let mut snapshot = AccountSnapshot::new(1, "main", "default", "BINANCE", 10);
+    let mut snapshot = AccountSnapshot::new(1, "main", "default", "BINANCE", "20260911", 10);
     snapshot.cash_raw.insert("USDT".into(), 1000);
     snapshot.equity_raw = Some(1000);
     snapshot.orders.insert(
@@ -25,6 +25,7 @@ fn snapshot_with_rows() -> AccountSnapshot {
             quantity_raw: 2,
             filled_raw: 0,
             status: qx_core::OrderStatus::Working,
+            exact_amounts: None,
         },
     );
     snapshot.fills.insert(
@@ -35,6 +36,10 @@ fn snapshot_with_rows() -> AccountSnapshot {
             quantity_raw: 2,
             price_raw: 100,
             fee_raw: 1,
+            fee_currency: None,
+            fees: vec![],
+            exact_amounts: None,
+            exact_fees: vec![],
             ts: 10,
         },
     );

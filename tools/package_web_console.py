@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SOURCE = ROOT / "web" / "console"
 SCHEMA_REGISTRY_FILE = ROOT / "maturity" / "schema-registry.json"
-ASSET_FILES = ("index.html", "app.js", "styles.css")
+ASSET_FILES = ("index.html", "app.js", "styles.css", "research-comparison.js")
 VERSION_PATTERN = re.compile(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?")
 IDENTITY_NAME = "release-identity.json"
 
@@ -103,7 +103,7 @@ def package_console(source_dir: Path, output: Path, version: str, commit: str) -
         "target_triple": "web-static",
         "profile": "release",
         "schema_registry_version": _schema_registry_version(),
-        # 两组字段刻意分开：`package_*` 说的是**这个归档自己**是什么（只有静态三件），
+        # 两组字段刻意分开：`package_*` 说的是**这个归档自己**是什么（只有静态四件），
         # `product_*` 说的是**产品现在有什么**（同源 BFF / CSRF / 服务端会话由 `qx-cli console`
         # 提供，不在这个归档里）。混成一组会把「归档是 local-only 静态件」读成「产品没有 BFF」。
         "package_scope": "static-assets-only",

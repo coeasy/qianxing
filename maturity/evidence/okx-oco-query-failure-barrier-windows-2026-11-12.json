@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "evidence_id": "okx-oco-query-failure-barrier-windows-2026-11-12",
+  "recorded_at": "2026-11-12",
+  "scope": "CCXT native OCO reconciliation query failure persists an unknown-state barrier",
+  "environment": {
+    "os": "Windows",
+    "workspace_commit_before_change": "ce7b0e5b"
+  },
+  "verification": [
+    {
+      "command": "cargo test --offline --locked -j 1 -p qx-service okx_oco_query_failure_persists_reconciliation_barrier_and_unknown_order_facts",
+      "result": "passed",
+      "passed": 1,
+      "failed": 0,
+      "assertions": [
+        "an active OKX OCO is moved to ReconcileRequired on an unknown query outcome",
+        "both still-active child orders append ReconcileRequired EventLog facts and become Unknown",
+        "the persisted group snapshot and reconciliation issue retain the OKX-specific reason"
+      ]
+    },
+    {
+      "command": "cargo test --offline --locked -j 1 -p qx-service okx_oco_rpc_query_error_persists_reconciliation_barrier",
+      "result": "passed",
+      "passed": 1,
+      "failed": 0,
+      "assertions": [
+        "the service reconciler issues fetch_order_group with the persisted OKX algo_id and instrument",
+        "the local CCXT RPC mock returns a query timeout and the persisted group becomes ReconcileRequired",
+        "both child orders remain Unknown and a venue-specific issue is emitted"
+      ]
+    },
+    {
+      "command": "cargo test --offline --locked -j 1 -p qx-service native_order_group_reconcile_tests",
+      "result": "passed",
+      "passed": 9,
+      "failed": 0
+    },
+    {
+      "command": "python tools/check_architecture.py",
+      "result": "passed",
+      "passed": 1633,
+      "failed": 0
+    }
+  ],
+  "limitations": [
+    "The RPC error is injected by a local mock; no OKX or Bitget API/Demo request was made.",
+    "Connector maturity remains implemented-unverified."
+  ]
+}

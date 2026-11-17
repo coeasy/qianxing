@@ -8,7 +8,7 @@ kind: backtest-acceptance
 scenario: crypto-example
 outcome: passed
 generated_by: tools/backtest_acceptance.py
-generated_at_unix: 1792564852
+generated_at_unix: 1794094412
 binary: qx-cli.exe
 credentials_required: false
 external_venues: none
@@ -16,13 +16,15 @@ network_accessed: false
 orders_sent: false
 same_dir_rerun: byte_identical
 independent_dirs: result_hash_and_artifact_contents_equal
+evidence_bundle_verified: true
 independent_runs: 2
-result_hash: 26fdd6b52d020700
-data_fingerprint: dataset-bundle:8bf50b57f8204ab9
-config_fingerprint: 161af7d76044eeb2baea353b40a28e0e0645ebb11d88064c08bee88bb7ca44da
+result_hash: 67c176977ad0f81d
+data_fingerprint: barframe:613fdc1dc0b779e7
+config_fingerprint: bdbcc00851b3fa761afcdd569565067399bc029d3a071cbfee808435ecf9278d
 replay_verdict: verified
 artifact_contents:
-  equity: 6856055f14a87f482c4d9f8dc3507a4fd6732d08243b77910df6c384028eedde
-  fills: 9f8f78cdb8c5fda870b65f4700c98ca68cc59b6953a306e72c97fe2852a0afa1
-  run_manifest: eaf12e424c59ea30772e827f757b4179c0631b4b842877218554404fc7ad5eb0
-  summary: 711b2d551b61a9450a02194788fa0c9e93ed594ba2291ba66fcfbdd344ad1225
+  equity: 0f9fe29dc0b175f98c363f32c5823a3a4fd84001e2ae9c1ce4b42acac3ee126c
+  evidence: df728e996095d0876c15745946ce864293a20693725d20d7593ca6da57ff77bc
+  fills: c026e30e2c6a10edcb6e38a8119c75aadfd2e9a34dee5ac1dfaf5f1bb4fbdca6
+  run_manifest: c48d3e6b40c71b81a1176a7cf1a5dab5769fa77438a7c947b4d565cb30cd059a
+  summary: 98595b968acc15612b69bbf820331f54823d0d2c8d81ebfc35b8dcd921b1b9a1

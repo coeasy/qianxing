@@ -6,16 +6,16 @@ mod entry;
 pub(super) use entry::{cancel_route_id, is_terminal, status_route_id, valid_run_route_id};
 use qx_app::{
     MultiAccountBacktestResult, MultiAccountBacktestSpec, MultiAccountDepthBacktestResult,
-    MultiAccountDepthBacktestSpec, MultiLegBacktestOutcome, MultiLegBacktestSpec,
-    MultiMarketBacktestOutcome, MultiMarketBacktestSpec, MultiMarketDepthBacktestOutcome,
-    MultiMarketDepthBacktestSpec, RunDepthExperimentResult, RunDepthExperimentSpec, RunEvent,
-    RunExperimentResult, RunHandle, RunMultiLegExperimentResult, RunMultiLegExperimentSpec,
-    RunMultiMarketDepthExperimentResult, RunMultiMarketExperimentResult,
+    MultiAccountDepthBacktestSpec, MultiAccountJointBacktestOutcome, MultiLegBacktestOutcome,
+    MultiLegBacktestSpec, MultiMarketBacktestOutcome, MultiMarketBacktestSpec,
+    MultiMarketDepthBacktestOutcome, MultiMarketDepthBacktestSpec, RunDepthExperimentResult,
+    RunDepthExperimentSpec, RunEvent, RunExperimentResult, RunHandle, RunMultiLegExperimentResult,
+    RunMultiLegExperimentSpec, RunMultiMarketDepthExperimentResult, RunMultiMarketExperimentResult,
     RunMultiMarketExperimentSpec, RunStatus,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -35,6 +35,7 @@ pub(super) use path_resolution::resolve_input_path;
 const APP_RUN_CAPACITY: usize = 1024;
 const APP_RUN_WATCHER_CAPACITY: usize = 64;
 static APP_RUN_WATCHERS: AtomicUsize = AtomicUsize::new(0);
+static APP_RUN_WATCHER_REJECTIONS: AtomicU64 = AtomicU64::new(0);
 pub(crate) const RUN_START_BACKTEST_ROUTE: &str = "/app/backtest/start";
 pub(crate) const RUN_STATUS_ROUTE_TEMPLATE: &str = "/app/runs/{run_id}";
 pub(crate) const RUN_EVENTS_ROUTE_TEMPLATE: &str = "/app/runs/{run_id}/events";
@@ -44,6 +45,8 @@ pub(crate) const RUN_START_DEPTH_EXPERIMENT_ROUTE: &str = "/app/run-depth-experi
 pub(crate) const RUN_START_EXPERIMENT_ROUTE: &str = "/app/run-experiment/start";
 pub(crate) const RUN_START_MULTI_LEG_ROUTE: &str = "/app/multi-leg-backtest/start";
 pub(crate) const RUN_START_MULTI_ACCOUNT_ROUTE: &str = "/app/multi-account-backtest/start";
+pub(crate) const RUN_START_MULTI_ACCOUNT_JOINT_ROUTE: &str =
+    "/app/multi-account-joint-backtest/start";
 pub(crate) const RUN_START_MULTI_ACCOUNT_DEPTH_ROUTE: &str =
     "/app/multi-account-depth-backtest/start";
 pub(crate) const RUN_START_MULTI_MARKET_ROUTE: &str = "/app/multi-market-backtest/start";
@@ -84,6 +87,9 @@ pub(crate) fn app_run_route_with_query(
         ("POST", RUN_START_MULTI_ACCOUNT_ROUTE) => {
             starts::start_multi_account_backtest(body, paths, registry)
         }
+        ("POST", RUN_START_MULTI_ACCOUNT_JOINT_ROUTE) => {
+            starts::start_multi_account_joint_backtest(body, paths, registry)
+        }
         ("POST", RUN_START_MULTI_ACCOUNT_DEPTH_ROUTE) => {
             starts::start_multi_account_depth_backtest(body, paths, registry)
         }
@@ -122,23 +128,36 @@ pub(crate) fn app_run_route_with_query(
 
 /// Async application runs exposed over HTTP. Durable snapshots retain terminal
 /// results across service restarts; recovered active work is marked interrupted.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct AppRunRegistry {
     entries: Arc<Mutex<BTreeMap<String, AppRunEntry>>>,
     persistence_root: Option<Arc<PathBuf>>,
     initialization_error: Option<AppError>,
+    watcher_counter: &'static AtomicUsize,
+}
+
+impl Default for AppRunRegistry {
+    fn default() -> Self {
+        Self {
+            entries: Arc::new(Mutex::new(BTreeMap::new())),
+            persistence_root: None,
+            initialization_error: None,
+            watcher_counter: &APP_RUN_WATCHERS,
+        }
+    }
 }
 
 enum AppRun {
     Bar(RunHandle<BacktestOutcome>),
     Depth(RunHandle<DepthBacktestOutcome>),
     DepthExperiment(RunHandle<RunDepthExperimentResult>),
-    Experiment(RunHandle<RunExperimentResult>),
+    Experiment(Box<RunHandle<RunExperimentResult>>),
     MultiLeg(RunHandle<MultiLegBacktestOutcome>),
     MultiLegExperiment(RunHandle<RunMultiLegExperimentResult>),
     MultiMarketExperiment(RunHandle<RunMultiMarketExperimentResult>),
     MultiAccount(RunHandle<MultiAccountBacktestResult>),
     MultiAccountDepth(RunHandle<MultiAccountDepthBacktestResult>),
+    MultiAccountJoint(RunHandle<MultiAccountJointBacktestOutcome>),
     MultiMarket(RunHandle<MultiMarketBacktestOutcome>),
     MultiMarketDepth(RunHandle<MultiMarketDepthBacktestOutcome>),
     MultiMarketDepthExperiment(RunHandle<RunMultiMarketDepthExperimentResult>),
@@ -148,7 +167,7 @@ struct AppRunEntry {
     run_id: String,
     run: Option<AppRun>,
     cancel_requested: bool,
-    watcher_slot_reserved: bool,
+    watcher_slot: Option<persistence::WatcherSlot>,
     result: Option<String>,
     error: Option<String>,
     restored_status: Option<String>,
@@ -156,6 +175,23 @@ struct AppRunEntry {
 }
 
 impl AppRunRegistry {
+    pub(crate) fn watcher_metrics_prometheus(&self) -> String {
+        format!(
+            "# HELP qx_app_run_watchers_active Active durable app-run persistence watcher threads.\n\
+# TYPE qx_app_run_watchers_active gauge\n\
+qx_app_run_watchers_active {}\n\
+# HELP qx_app_run_watcher_capacity Maximum concurrent durable app-run persistence watchers.\n\
+# TYPE qx_app_run_watcher_capacity gauge\n\
+qx_app_run_watcher_capacity {}\n\
+# HELP qx_app_run_watcher_rejections_total Run starts rejected because watcher capacity was exhausted.\n\
+# TYPE qx_app_run_watcher_rejections_total counter\n\
+qx_app_run_watcher_rejections_total {}\n",
+            self.watcher_counter.load(Ordering::Acquire),
+            APP_RUN_WATCHER_CAPACITY,
+            APP_RUN_WATCHER_REJECTIONS.load(Ordering::Relaxed)
+        )
+    }
+
     pub(crate) fn from_environment() -> Self {
         let paths = AppPaths::from_environment();
         Self::open(paths.artifact_root.join(".app-runs"))
@@ -167,13 +203,22 @@ impl AppRunRegistry {
                 entries: Arc::new(Mutex::new(entries)),
                 persistence_root: Some(Arc::new(root)),
                 initialization_error: None,
+                watcher_counter: &APP_RUN_WATCHERS,
             },
             Err(error) => Self {
                 entries: Arc::new(Mutex::new(BTreeMap::new())),
                 persistence_root: Some(Arc::new(root)),
                 initialization_error: Some(error),
+                watcher_counter: &APP_RUN_WATCHERS,
             },
         }
+    }
+
+    #[cfg(test)]
+    fn open_with_watcher_counter(root: PathBuf, watcher_counter: &'static AtomicUsize) -> Self {
+        let mut registry = Self::open(root);
+        registry.watcher_counter = watcher_counter;
+        registry
     }
 
     fn reserve(&self, run_id: String) -> Result<(), AppError> {
@@ -204,12 +249,15 @@ impl AppRunRegistry {
                 "应用运行注册表已满，所有保留任务仍在运行",
             ));
         }
-        let watcher_slot_reserved = if self.persistence_root.is_some() {
-            persistence::reserve_limited_slot(&APP_RUN_WATCHERS, APP_RUN_WATCHER_CAPACITY)
+        let watcher_slot = if self.persistence_root.is_some()
+            && persistence::reserve_limited_slot(self.watcher_counter, APP_RUN_WATCHER_CAPACITY)
+        {
+            Some(persistence::WatcherSlot(self.watcher_counter))
         } else {
-            false
+            None
         };
-        if self.persistence_root.is_some() && !watcher_slot_reserved {
+        if self.persistence_root.is_some() && watcher_slot.is_none() {
+            APP_RUN_WATCHER_REJECTIONS.fetch_add(1, Ordering::Relaxed);
             return Err(AppError::new(
                 AppErrorCategory::Timeout,
                 "异步运行持久化观察器已满；任务未启动，请稍后重试",
@@ -217,12 +265,7 @@ impl AppRunRegistry {
         }
         if let Some(oldest) = completed_to_evict {
             if let Some(root) = &self.persistence_root {
-                if let Err(error) = persistence::remove(root, &oldest) {
-                    if watcher_slot_reserved {
-                        APP_RUN_WATCHERS.fetch_sub(1, Ordering::AcqRel);
-                    }
-                    return Err(error);
-                }
+                persistence::remove(root, &oldest)?;
             }
             entries.remove(&oldest);
         }
@@ -232,7 +275,7 @@ impl AppRunRegistry {
                 run_id: run_id.clone(),
                 run: None,
                 cancel_requested: false,
-                watcher_slot_reserved,
+                watcher_slot,
                 result: None,
                 error: None,
                 restored_status: None,
@@ -241,9 +284,6 @@ impl AppRunRegistry {
         );
         if let Some(root) = &self.persistence_root {
             let Some(entry) = entries.get_mut(&run_id) else {
-                if watcher_slot_reserved {
-                    APP_RUN_WATCHERS.fetch_sub(1, Ordering::AcqRel);
-                }
                 return Err(AppError::new(
                     AppErrorCategory::InternalInvariant,
                     format!("新建运行注册表项意外缺失: {run_id}"),
@@ -251,9 +291,6 @@ impl AppRunRegistry {
             };
             if let Err(error) = persistence::reserve(root, entry) {
                 entries.remove(&run_id);
-                if watcher_slot_reserved {
-                    APP_RUN_WATCHERS.fetch_sub(1, Ordering::AcqRel);
-                }
                 return Err(error);
             }
         }
@@ -261,30 +298,22 @@ impl AppRunRegistry {
     }
 
     fn attach(&self, run_id: &str, run: AppRun) -> Result<(), AppError> {
-        let watcher_slot_reserved = match self.with_entry(run_id, |entry| {
+        let watcher_slot = self.with_entry(run_id, |entry| {
             entry.run = Some(run);
             if entry.cancel_requested {
                 entry.cancel();
             }
-            entry.watcher_slot_reserved
-        }) {
-            Ok(reserved) => reserved,
-            Err(error) => {
-                if self.persistence_root.is_some() {
-                    APP_RUN_WATCHERS.fetch_sub(1, Ordering::AcqRel);
-                }
-                return Err(error);
-            }
-        };
+            entry.watcher_slot.take()
+        })?;
         if let Some(root) = self.persistence_root.clone() {
-            if watcher_slot_reserved {
+            if let Some(watcher_slot) = watcher_slot {
                 let entries = Arc::clone(&self.entries);
                 let run_id = run_id.to_string();
                 let watcher_run_id = run_id.clone();
                 let spawn = std::thread::Builder::new()
                     .name(format!("qx-run-persist-{}", run_id))
                     .spawn(move || {
-                        let _watcher_slot = persistence::WatcherSlot;
+                        let _watcher_slot = watcher_slot;
                         let mut failed_terminal_writes = 0_u8;
                         let mut last_snapshot = None;
                         loop {
@@ -328,9 +357,7 @@ impl AppRunRegistry {
                         }
                     });
                 if let Err(error) = spawn {
-                    APP_RUN_WATCHERS.fetch_sub(1, Ordering::AcqRel);
                     let _ = self.with_entry(&run_id, |entry| {
-                        entry.watcher_slot_reserved = false;
                         entry.cancel();
                     });
                     return Err(AppError::from_io(

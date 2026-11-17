@@ -97,6 +97,14 @@ commands:
     external_side_effect: none
     default_enabled: true
     note: 诊断本地 L1/L2 深度帧并生成或复核质量清单；不触账户
+  - name: data-snapshot
+    level: R
+    parent: false
+    surface: cli
+    credentials: none
+    external_side_effect: none
+    default_enabled: true
+    note: 校验冻结行情与质量清单后发布不可变 DatasetSnapshotV1；只写本地研究产物
   - name: dataset-bundle
     level: R
     parent: false
@@ -168,7 +176,7 @@ commands:
     credentials: none
     external_side_effect: none
     default_enabled: true
-    note: 读入并校验地基规格对象（project/dataset/experiment/run-record/capability/evidence/schema-registry）
+    note: 读入并校验九类地基规格对象；experiment/capability/schema-registry 可生成安全占位模板，证据对象只由真实运行/验收生成
   - name: quickstart
     level: R
     parent: false

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.dev/schemas/funding-rate-provider-payload-v2.json",
+  "title": "Qianxing Funding Rate Provider Payload v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["rate_bps", "funding_interval_ms"],
+  "properties": {
+    "rate_bps": {
+      "type": "integer",
+      "minimum": -10000,
+      "maximum": 10000
+    },
+    "funding_interval_ms": {
+      "type": "integer",
+      "minimum": 60000,
+      "maximum": 86400000
+    }
+  }
+}

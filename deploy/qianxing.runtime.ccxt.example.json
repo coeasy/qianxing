@@ -3,9 +3,18 @@
   "environment": "sandbox",
   "api": {
     "bind": "127.0.0.1:8080",
-    "transport": "plaintext",
-    "tls": null,
-    "operators": {},
+    "transport": "mtls",
+    "tls": {
+      "certificate_chain": "certs/server.pem",
+      "private_key": "certs/server.key",
+      "client_ca": "certs/client-ca.pem"
+    },
+    "operators": {
+      "local-operator": {
+        "permission": "Trading",
+        "certificate": "certs/local-operator.pem"
+      }
+    },
     "data_providers": [
       {
         "provider_id": "ccxt-okx-1m",
@@ -62,7 +71,7 @@
       "account_id": "main",
       "venue_id": "okx",
       "endpoint": "qianxing.ccxt.exchange.example.json",
-      "symbols": [],
+      "symbols": ["BTC/USDT:USDT.OKX"],
       "settlement_currency": "USDT",
       "credential_env": null,
       "instrument_spec_path": "deploy/qianxing.ccxt.okx.perpetual.spec.json"
@@ -115,6 +124,7 @@
     "state_path": "scheduler.json",
     "jobs_path": "deploy/qianxing.scheduler.jobs.example.json",
     "job_queue_path": "job-queue",
+    "max_pending_jobs": 4096,
     "tick_interval_ms": 1000
   },
   "strategy": {

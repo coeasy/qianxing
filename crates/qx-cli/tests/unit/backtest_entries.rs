@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn cross_language_strategy_backtest_publishes_the_v7_artifact_contract() {
+fn cross_language_strategy_backtest_publishes_the_v8_artifact_contract() {
     let (deploy, frame, template) = builtin_backtest_example_paths();
     let mut base = read_runtime_config(&template).unwrap();
     let python_strategy = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -15,21 +15,25 @@ fn cross_language_strategy_backtest_publishes_the_v7_artifact_contract() {
     run_strategy_backtest(&runtime, &frame, None).expect("跨语言策略经 qx-app 执行");
 
     let summaries = list_backtest_summary_paths(&root.join("runs")).unwrap();
-    assert_eq!(summaries.len(), 1, "应只发布一份 v7 摘要");
+    assert_eq!(summaries.len(), 1, "应只发布一份 v8 摘要");
     assert!(
         summaries[0]
             .file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| name.ends_with(".v7.summary.json")),
+            .is_some_and(|name| name.ends_with(".v8.summary.json")),
         "summary filenames must carry the schema generation"
     );
     let summary: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&summaries[0]).unwrap()).unwrap();
-    assert_eq!(summary["schema_version"], 7);
+    assert_eq!(summary["schema_version"], 8);
     assert_eq!(summary["strategy_id"], "strategy-builtin");
     assert_eq!(summary["sample_unit"], "bar");
     assert_eq!(summary["bars"].as_u64(), Some(70));
     assert_eq!(summary["result_hash"], summary["replay"]["log_digest"]);
+    assert!(
+        summary["metrics"]["max_drawdown_raw"].as_str().is_some(),
+        "v8 publishes the fixed-point max drawdown amount without narrowing i128"
+    );
     assert!(Path::new(summary["run_record"].as_str().unwrap()).is_file());
     let manifests = std::fs::read_dir(root.join("runs"))
         .unwrap()
@@ -37,7 +41,7 @@ fn cross_language_strategy_backtest_publishes_the_v7_artifact_contract() {
         .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
         .filter(|entry| entry.file_name().to_string_lossy().ends_with(".run.json"))
         .count();
-    assert_eq!(manifests, 1, "RunManifest 仍与 v7 摘要一同发布");
+    assert_eq!(manifests, 1, "RunManifest 仍与 v8 摘要一同发布");
 
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -49,9 +53,12 @@ fn summary_listing_hides_older_generations_of_the_same_run() {
     std::fs::create_dir_all(&runs).unwrap();
     for name in [
         "same-run.summary.json",
+        "same-run.v5.summary.json",
         "same-run.v6.summary.json",
         "same-run.v7.summary.json",
+        "same-run.v8.summary.json",
         "distinct-run.v6.summary.json",
+        "future-run.v9.summary.json",
     ] {
         std::fs::write(runs.join(name), "{}").unwrap();
     }
@@ -65,7 +72,8 @@ fn summary_listing_hides_older_generations_of_the_same_run() {
         names,
         std::collections::BTreeSet::from([
             "distinct-run.v6.summary.json".to_owned(),
-            "same-run.v7.summary.json".to_owned(),
+            "future-run.v9.summary.json".to_owned(),
+            "same-run.v8.summary.json".to_owned(),
         ])
     );
     let _ = std::fs::remove_dir_all(root);
@@ -74,29 +82,45 @@ fn summary_listing_hides_older_generations_of_the_same_run() {
 /// `backtest builtin` 入口：输入校验 fail-closed，且真实跑通共用内核。
 #[test]
 fn builtin_backtest_entry_validates_inputs_and_runs_on_the_shared_kernel() {
-    let (_deploy, frame, _template) = builtin_backtest_example_paths();
-    assert!(run_builtin_backtest("not_a_strategy", &frame, None, 1, None, None).is_err());
-    assert!(run_builtin_backtest("sma_cross", &frame, None, 0, None, None).is_err());
+    let (deploy, frame, template) = builtin_backtest_example_paths();
+    let config = read_runtime_config(&template).unwrap();
+    let (root, runtime) = isolated_backtest_runtime(&deploy, &config, "builtin-entry");
+    assert!(run_builtin_backtest("not_a_strategy", &frame, None, 1, Some(&runtime), None).is_err());
+    assert!(run_builtin_backtest("sma_cross", &frame, None, 0, Some(&runtime), None).is_err());
     assert!(run_builtin_backtest(
         "sma_cross",
         Path::new("missing-frame.json"),
         None,
         1,
-        None,
+        Some(&runtime),
         None
     )
     .is_err());
-    run_builtin_backtest("sma_cross", &frame, None, 1, None, None).unwrap();
+    run_builtin_backtest("sma_cross", &frame, None, 1, Some(&runtime), None).unwrap();
+    assert_eq!(
+        list_backtest_summary_paths(&root.join("runs"))
+            .unwrap()
+            .len(),
+        1
+    );
     let spec_root = temp_cli_case_dir("builtin-broken-market-spec");
     let broken_spec = spec_root.join("spec.json");
     std::fs::write(&broken_spec, "{ not json").unwrap();
-    let error =
-        run_builtin_backtest("sma_cross", &frame, Some(&broken_spec), 1, None, None).unwrap_err();
+    let error = run_builtin_backtest(
+        "sma_cross",
+        &frame,
+        Some(&broken_spec),
+        1,
+        Some(&runtime),
+        None,
+    )
+    .unwrap_err();
     assert!(
         error.contains("策略回测 market spec JSON 无效"),
         "market spec 必须走共用读取口径并 fail-closed: {error}"
     );
     let _ = std::fs::remove_dir_all(&spec_root);
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 /// 回测摘要必须带上风控来源版本号，且版本号与真正参与判定的门禁同源。
@@ -382,6 +406,7 @@ fn ccxt_builtin_rejects_missing_runtime_before_starting_external_worker() {
         spec_path: None,
         quantity: 1,
         runtime_config_path: Some(&valid_runtime),
+        use_public_default_fees: false,
     })
     .expect_err("不支持的月线周期必须在启动外部 worker 前拒绝");
     assert!(
@@ -403,6 +428,7 @@ fn ccxt_builtin_rejects_missing_runtime_before_starting_external_worker() {
         spec_path: None,
         quantity: 1,
         runtime_config_path: Some(&runtime),
+        use_public_default_fees: false,
     })
     .expect_err("Runtime 必须在外部 worker 启动前被完整校验");
     assert!(error.contains("读取"), "应返回 runtime 读取错误: {error}");

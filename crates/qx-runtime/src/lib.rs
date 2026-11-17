@@ -21,9 +21,13 @@ mod data_binding;
 #[cfg(feature = "nats")]
 mod messaging_workers;
 mod pipeline;
+mod reconcile;
 mod runtime_config;
 mod strategy_contract;
+mod strategy_deployment_config;
+pub mod strategy_deployment_store;
 mod strategy_environment;
+mod strategy_observation;
 mod strategy_process_diagnostics;
 mod supervision;
 mod time;
@@ -59,9 +63,19 @@ pub use pipeline::{
     PipelineMetricsSnapshot, RuntimeBalanceDiscrepancy, RuntimeEventEnvelope, RuntimeExternalEvent,
     RuntimeIngestReceipt, PIPELINE_INGEST_WARNING_BUDGET_NS,
 };
+pub use reconcile::{
+    load_reconcile_reports, require_fresh_clean_reconciliation, ReconcileReportSnapshot,
+    LIVE_RECONCILE_MAX_AGE_MS,
+};
 pub use runtime_config::*;
 pub use strategy_contract::*;
+pub use strategy_deployment_config::deployment_runtime_config;
 pub use strategy_environment::{strategy_child_environment, validate_strategy_external_env};
+pub use strategy_observation::{
+    runtime_config_digest, StrategyHostLifecycleEvidenceV1, StrategyHostLifecycleEvidenceV2,
+    StrategyWorkerObservationV1, StrategyWorkerObservationV2, StrategyWorkerObservationV3,
+    StrategyWorkerPhase,
+};
 pub use strategy_process_diagnostics::{
     read_capped_worker_line, record_stderr_tail, stderr_tail_note, STDERR_TAIL_LINES,
     STDERR_TAIL_MAX_CHARS,
@@ -77,6 +91,15 @@ pub use worker_policy::{FieldScope, RoleFieldStatus, WorkerRoleFieldScopes, ALL_
 impl qx_execution::OrderStore for LiveEventPipeline {
     fn orders(&self) -> Vec<qx_core::Order> {
         LiveEventPipeline::orders(self)
+    }
+
+    fn refresh_order_state(&mut self) -> Result<(), String> {
+        self.refresh()
+            .map_err(|error| format!("刷新订单状态失败: {error:?}"))
+    }
+
+    fn has_pending_amendment(&self, client_order_id: u64) -> bool {
+        LiveEventPipeline::pending_amendment(self, client_order_id).is_some()
     }
 
     fn register_order(
@@ -96,6 +119,14 @@ impl qx_execution::EventAppender for LiveEventPipeline {
         &mut self,
         envelope: qx_execution::ExecutionEventEnvelope,
     ) -> Result<(), String> {
+        self.append_execution_event_with_outcome(envelope)
+            .map(|_| ())
+    }
+
+    fn append_execution_event_with_outcome(
+        &mut self,
+        envelope: qx_execution::ExecutionEventEnvelope,
+    ) -> Result<qx_execution::EventAppendOutcome, String> {
         let receipt = match envelope.event {
             qx_execution::ExecutionEvent::MarketQuote { instrument, quote } => {
                 self.ingest(RuntimeEventEnvelope::market_quote(
@@ -106,6 +137,41 @@ impl qx_execution::EventAppender for LiveEventPipeline {
                     envelope.correlation_id,
                 ))
             }
+            qx_execution::ExecutionEvent::CancelPending { client_order_id } => {
+                self.ingest(RuntimeEventEnvelope::order_cancel_pending(
+                    client_order_id,
+                    envelope.event_ts,
+                    envelope.receive_ts,
+                    envelope.source_seq,
+                    envelope.correlation_id,
+                ))
+            }
+            qx_execution::ExecutionEvent::OrderAmendmentPending {
+                operation_id,
+                order,
+            } => self.ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::OrderAmendmentPending {
+                    operation_id,
+                    order: *order,
+                },
+                envelope.event_ts,
+                envelope.receive_ts,
+                envelope.source_seq,
+                envelope.correlation_id,
+            )),
+            qx_execution::ExecutionEvent::OrderAmended {
+                operation_id,
+                order,
+            } => self.ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::OrderAmended {
+                    operation_id,
+                    order: *order,
+                },
+                envelope.event_ts,
+                envelope.receive_ts,
+                envelope.source_seq,
+                envelope.correlation_id,
+            )),
             event => {
                 let event = match event {
                     qx_execution::ExecutionEvent::Accepted {
@@ -115,12 +181,32 @@ impl qx_execution::EventAppender for LiveEventPipeline {
                         client_order_id,
                         venue_order_id: Some(venue_order_id),
                     },
+                    qx_execution::ExecutionEvent::Rejected {
+                        client_order_id,
+                        reason,
+                    } => RuntimeExternalEvent::Rejected {
+                        client_order_id,
+                        reason,
+                    },
                     qx_execution::ExecutionEvent::Fill(fill) => {
                         RuntimeExternalEvent::Fill { fill: *fill }
                     }
                     qx_execution::ExecutionEvent::FillWithSpec { fill, spec } => {
                         RuntimeExternalEvent::FillWithSpec { fill, spec }
                     }
+                    qx_execution::ExecutionEvent::FeeAdjustment {
+                        account_id,
+                        venue_id,
+                        order_id,
+                        instrument,
+                        fees,
+                    } => RuntimeExternalEvent::FeeAdjustment {
+                        account_id,
+                        venue_id,
+                        order_id,
+                        instrument,
+                        fees,
+                    },
                     qx_execution::ExecutionEvent::Cancelled { client_order_id } => {
                         RuntimeExternalEvent::Cancelled { client_order_id }
                     }
@@ -129,6 +215,13 @@ impl qx_execution::EventAppender for LiveEventPipeline {
                     }
                     qx_execution::ExecutionEvent::MarketQuote { .. } => {
                         unreachable!("MarketQuote 在上面的分支处理")
+                    }
+                    qx_execution::ExecutionEvent::CancelPending { .. } => {
+                        unreachable!("CancelPending 在上面的分支处理")
+                    }
+                    qx_execution::ExecutionEvent::OrderAmendmentPending { .. }
+                    | qx_execution::ExecutionEvent::OrderAmended { .. } => {
+                        unreachable!("改单事实在上面的分支处理")
                     }
                 };
                 self.ingest(RuntimeEventEnvelope::venue(
@@ -141,7 +234,13 @@ impl qx_execution::EventAppender for LiveEventPipeline {
             }
         };
         receipt
-            .map(|_| ())
+            .map(|receipt| {
+                if receipt.deduplicated {
+                    qx_execution::EventAppendOutcome::Duplicate
+                } else {
+                    qx_execution::EventAppendOutcome::Appended
+                }
+            })
             .map_err(|error| format!("执行事实归约失败: {error:?}"))
     }
 }

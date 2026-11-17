@@ -4,6 +4,9 @@ use crate::{collect_doctor_report_for_config, read_runtime_config, runtime_times
 use qx_runtime::RuntimeSupervisor;
 use std::path::Path;
 
+mod capabilities;
+use capabilities::assess_runtime_capabilities;
+
 pub(crate) fn collect_runtime_check_report(path: &Path) -> Result<serde_json::Value, String> {
     let config = read_runtime_config(path)?;
     let supervisor = RuntimeSupervisor::new(config.clone())?;
@@ -45,6 +48,33 @@ pub(crate) fn collect_runtime_check_report(path: &Path) -> Result<serde_json::Va
         .and_then(serde_json::Value::as_array)
         .cloned()
         .unwrap_or_default();
+    let (capabilities, capability_failures) = assess_runtime_capabilities(&config, path);
+    let capability_blockers = capability_failures
+        .iter()
+        .filter(|failure| {
+            failure.get("blocking").and_then(serde_json::Value::as_bool) == Some(true)
+        })
+        .collect::<Vec<_>>();
+    for failure in &capability_blockers {
+        if let Some(reason) = failure.get("reason").and_then(serde_json::Value::as_str) {
+            failures.push(serde_json::json!(reason));
+        }
+    }
+    let capability_status = if capability_blockers.is_empty() {
+        "pass"
+    } else {
+        "blocked"
+    };
+    readiness_layers["C"] = serde_json::json!({
+        "status": capability_status,
+        "scope": "configured_runtime_capabilities",
+        "evidence": capabilities.iter().map(|item| item["id"].clone()).collect::<Vec<_>>(),
+        "detail": if capability_blockers.is_empty() {
+            "所有已请求能力均有接线证据；未请求的能力限制已列入矩阵".to_string()
+        } else {
+            format!("{} 项已请求能力未获支持或证据不足", capability_blockers.len())
+        }
+    });
     let health_failed = matches!(health.overall, qx_runtime::OverallHealth::Failed);
     checks.push(serde_json::json!({
         "name": "runtime_health",
@@ -73,7 +103,7 @@ pub(crate) fn collect_runtime_check_report(path: &Path) -> Result<serde_json::Va
     });
     let ok = failures.is_empty();
     Ok(serde_json::json!({
-        "schema_version": 3,
+        "schema_version": 4,
         "runtime_path": path.display().to_string(),
         "environment": environment,
         "profile": profile,
@@ -84,6 +114,8 @@ pub(crate) fn collect_runtime_check_report(path: &Path) -> Result<serde_json::Va
         "config_fingerprint_locked": fingerprint_locked,
         "health": health,
         "readiness_layers": readiness_layers,
+        "capabilities": capabilities,
+        "capability_failures": capability_failures,
         "checks": checks,
         "warnings": warnings,
         "failures": failures,

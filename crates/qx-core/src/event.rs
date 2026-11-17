@@ -6,9 +6,127 @@
 use crate::clock::Ts;
 use crate::identity::InstrumentId;
 use crate::ledger::{LedgerEntry, LedgerEntryKind};
+use crate::numeric::{DecimalRounding, ExactDecimal};
 use crate::numeric::{Money, Price, Quantity};
-use crate::order::Fill;
+use crate::order::{Fill, Side};
+use crate::trading::OrderPolicy;
 use serde::{Deserialize, Serialize};
+
+/// Exchange-precision OHLCV retained beside the legacy 1e-9 Bar projection.
+/// The exact values are authoritative when present; raw fields remain for older
+/// strategy and Arrow consumers and must equal the checked 1e-9 projection.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExactOhlcv {
+    pub open: ExactDecimal,
+    pub high: ExactDecimal,
+    pub low: ExactDecimal,
+    pub close: ExactDecimal,
+    pub volume: ExactDecimal,
+}
+
+/// One exact depth level stored in the market EventLog. Raw values remain the
+/// toward-zero 1e-9 projection for legacy readers; exact values are authoritative.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MarketDepthLevel {
+    pub price: Price,
+    pub quantity: Quantity,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price_exact: Option<ExactDecimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quantity_exact: Option<ExactDecimal>,
+}
+
+impl MarketDepthLevel {
+    pub fn validate(&self) -> Result<(), String> {
+        match (self.price_exact, self.quantity_exact) {
+            (Some(price), Some(quantity)) => {
+                if !price.is_positive() || !quantity.is_positive() {
+                    return Err("盘口精确价格和数量必须为正".into());
+                }
+                let project = |value: ExactDecimal| {
+                    value
+                        .checked_mul_at_scale(ExactDecimal::ONE, 9, DecimalRounding::TowardZero)
+                        .and_then(|scaled| scaled.to_raw(9).ok())
+                };
+                if project(price) != Some(self.price.raw())
+                    || project(quantity) != Some(self.quantity.raw())
+                {
+                    return Err("盘口精确值与 raw 投影不一致".into());
+                }
+            }
+            (None, None) if self.price.raw() > 0 && self.quantity.raw() > 0 => {}
+            (None, None) => return Err("盘口价格和数量必须为正".into()),
+            _ => return Err("盘口精确价格和数量必须同时提供".into()),
+        }
+        Ok(())
+    }
+
+    pub fn exact_price(&self) -> Result<ExactDecimal, String> {
+        match self.price_exact {
+            Some(price) => Ok(price),
+            None => ExactDecimal::from_parts(self.price.raw(), 9)
+                .map_err(|error| format!("盘口 legacy 价格无法转换为精确数值: {error}")),
+        }
+    }
+}
+
+impl ExactOhlcv {
+    /// Project each source value onto the legacy 1e-9 columns, truncating toward zero.
+    /// The exact sidecar remains authoritative; projection only keeps old consumers usable.
+    pub fn raw_projection(&self) -> Result<[i128; 5], String> {
+        let project = |value: ExactDecimal| {
+            value
+                .checked_mul_at_scale(ExactDecimal::ONE, 9, DecimalRounding::TowardZero)
+                .and_then(|projected| projected.to_raw(9).ok())
+                .ok_or_else(|| "ExactOhlcv raw projection is out of range".to_string())
+        };
+        Ok([
+            project(self.open)?,
+            project(self.high)?,
+            project(self.low)?,
+            project(self.close)?,
+            project(self.volume)?,
+        ])
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.open.is_positive()
+            || !self.high.is_positive()
+            || !self.low.is_positive()
+            || !self.close.is_positive()
+            || self.volume.is_negative()
+        {
+            return Err("ExactOhlcv prices must be positive and volume non-negative".into());
+        }
+        if self
+            .high
+            .checked_cmp(self.low)
+            .is_none_or(|ordering| ordering.is_lt())
+            || self
+                .high
+                .checked_cmp(self.open)
+                .is_none_or(|ordering| ordering.is_lt())
+            || self
+                .high
+                .checked_cmp(self.close)
+                .is_none_or(|ordering| ordering.is_lt())
+            || self
+                .low
+                .checked_cmp(self.open)
+                .is_none_or(|ordering| ordering.is_gt())
+            || self
+                .low
+                .checked_cmp(self.close)
+                .is_none_or(|ordering| ordering.is_gt())
+        {
+            return Err("ExactOhlcv high/low range does not contain open and close".into());
+        }
+        self.raw_projection()?;
+        Ok(())
+    }
+}
 
 /// 交易事实的最小血缘元数据。
 ///
@@ -49,15 +167,46 @@ impl EventContext {
     }
 }
 
+/// Stable source classifications used by event producers.
+///
+/// `EventMetadata::source_kind` remains a string on the wire so older event logs and
+/// third-party sources remain readable. Producers should use these constants instead
+/// of inventing category spellings. `source_id` continues to identify the concrete
+/// venue, worker, or internal component.
+pub mod event_source_kind {
+    pub const INTERNAL: &str = "internal";
+    pub const CONTROL: &str = "control";
+    pub const CONTROL_ORDER_CANCEL_PENDING: &str = "control_order_cancel_pending";
+    pub const MARKET_DATA: &str = "market_data";
+    pub const MARKET_QUOTE: &str = "market_quote";
+    pub const MARKET_ORDER_BOOK: &str = "market_order_book";
+    pub const VENUE: &str = "venue";
+    pub const VENUE_ACCOUNT_BALANCE: &str = "venue_account_balance";
+    pub const VENUE_ACCOUNT_POSITION: &str = "venue_account_position";
+    pub const VENUE_FUNDING_RATE: &str = "venue_funding_rate";
+    pub const VENUE_CASHFLOW: &str = "venue_cashflow";
+    pub const VENUE_ORDER_ACCEPTED: &str = "venue_order_accepted";
+    pub const VENUE_ORDER_REJECTED: &str = "venue_order_rejected";
+    pub const VENUE_ORDER_FILL: &str = "venue_order_fill";
+    pub const VENUE_FEE_ADJUSTMENT: &str = "venue_fee_adjustment";
+    pub const VENUE_ORDER_CANCELLED: &str = "venue_order_cancelled";
+    pub const VENUE_ORDER_CANCEL_PENDING: &str = "venue_order_cancel_pending";
+    pub const VENUE_RECONCILE_REQUIRED: &str = "venue_reconcile_required";
+    pub const VENUE_ORDER_STATUS_RECONCILED: &str = "venue_order_status_reconciled";
+    pub const VENUE_ORDER_AMENDED: &str = "venue_order_amended";
+    pub const VENUE_ORDER_AMEND_PENDING: &str = "venue_order_amend_pending";
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct EventMetadata {
     #[serde(default = "default_event_metadata_schema_version")]
     pub schema_version: u32,
     #[serde(default)]
     pub source_id: String,
-    /// 稳定来源分类，例如 `market_data`、`venue`、`control` 或 `internal`。
-    /// 具体供应商/worker 仍由 `source_id` 表达；分类用于跨适配器审计和
-    /// 回放筛选，旧事件缺失时恢复为 `internal`。
+    /// 稳定来源分类。新生产者使用 [`event_source_kind`] 中的细分值；历史
+    /// `market_data` / `venue` / `control` 与第三方自定义值仍保持可读。
+    /// 具体供应商/worker 由 `source_id` 表达，分类用于跨适配器审计和回放筛选；
+    /// 旧事件缺失时恢复为 `internal`。
     #[serde(default = "default_event_source_kind")]
     pub source_kind: String,
     #[serde(default)]
@@ -77,7 +226,20 @@ fn default_event_rule_version() -> String {
 }
 
 fn default_event_source_kind() -> String {
-    "internal".into()
+    event_source_kind::INTERNAL.into()
+}
+
+/// Scale-aware values are appended only when present so legacy event digests remain unchanged.
+fn digest_exact_decimal(h: &mut crate::sourcing::Fnv1a, value: ExactDecimal) {
+    h.write_text(&value.coefficient().to_string());
+    h.write_u64(u64::from(value.scale()));
+}
+
+fn digest_optional_exact_decimal(h: &mut crate::sourcing::Fnv1a, value: Option<ExactDecimal>) {
+    h.write_u64(u64::from(value.is_some()));
+    if let Some(value) = value {
+        digest_exact_decimal(h, value);
+    }
 }
 
 impl Default for EventMetadata {
@@ -144,22 +306,63 @@ pub struct AccountBalance {
     pub asset: String,
     pub free: Money,
     pub locked: Money,
-    /// 保证金/借贷账户的负债，净现金按 free + locked - borrowed 计算。
+    /// 保证金/借贷账户的负债；用于可用余额视图和旧版净现金回退。
     #[serde(default)]
     pub borrowed: Money,
+    /// Exchange-reported net wallet cash in this asset, excluding derivative unrealized PnL.
+    /// `None` keeps the legacy spot formula; derivative adapters must populate this only when
+    /// the venue response exposes wallet cash independently from equity/UPnL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub net_cash_balance: Option<Money>,
+    /// Scale-aware exchange balance facts. Legacy money fields remain the 1e9 projection.
+    /// This sidecar is emitted only when the source supplied exact decimal values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exact_amounts: Option<ExactAccountBalanceAmounts>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct ExactAccountBalanceAmounts {
+    pub free: ExactDecimal,
+    pub locked: ExactDecimal,
+    pub borrowed: ExactDecimal,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub net_cash_balance: Option<ExactDecimal>,
 }
 
 impl AccountBalance {
-    /// 净现金口径的**唯一**实现：`free + locked - borrowed`。
+    /// 净现金口径的**唯一**实现：显式 venue 钱包现金优先，否则回退旧公式
+    /// `free + locked - borrowed`。
     ///
     /// 上层（对账、余额差异判定、协议线格式）必须经由本方法得到净现金，不得再
     /// 各自抄写这条公式——历史上 `qx-runtime` 与 `qx-cli` worker 两侧抄写时
     /// 已经出现口径分叉（V10 §4.7）。溢出返回 `None`，由调用方决定 fail-closed。
     pub fn net_cash_raw(&self) -> Option<i128> {
+        if let Some(net_cash) = self.net_cash_balance {
+            return Some(net_cash.raw());
+        }
         self.free
             .raw()
             .checked_add(self.locked.raw())?
             .checked_sub(self.borrowed.raw())
+    }
+
+    /// Exact wallet cash from an exchange snapshot, falling back to the legacy raw facts.
+    pub fn net_cash_exact(&self) -> Option<ExactDecimal> {
+        if let Some(exact) = self.exact_amounts {
+            return exact.net_cash_balance.or_else(|| {
+                exact
+                    .free
+                    .checked_add(exact.locked)?
+                    .checked_sub(exact.borrowed)
+            });
+        }
+        if let Some(net_cash) = self.net_cash_balance {
+            return ExactDecimal::from_parts(net_cash.raw(), 9).ok();
+        }
+        let free = ExactDecimal::from_parts(self.free.raw(), 9).ok()?;
+        let locked = ExactDecimal::from_parts(self.locked.raw(), 9).ok()?;
+        let borrowed = ExactDecimal::from_parts(self.borrowed.raw(), 9).ok()?;
+        free.checked_add(locked)?.checked_sub(borrowed)
     }
 }
 
@@ -168,6 +371,10 @@ impl AccountBalance {
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct AccountPositionSnapshot {
     pub instrument: InstrumentId,
+    /// Settlement/PNL currency from the venue market metadata. Required before a portfolio
+    /// can aggregate derivative unrealized PnL across instruments without mixing currencies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settlement_currency: Option<String>,
     pub quantity: Quantity,
     pub average_price: Option<Price>,
     pub mark_price: Option<Price>,
@@ -187,6 +394,26 @@ pub struct AccountPositionSnapshot {
     pub leverage: Option<u32>,
     pub margin_mode: Option<String>,
     pub position_side: Option<String>,
+    /// Exact exchange-reported amounts corresponding to the 1e9 compatibility projection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exact_amounts: Option<ExactAccountPositionAmounts>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct ExactAccountPositionAmounts {
+    pub quantity: ExactDecimal,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub average_price: Option<ExactDecimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mark_price: Option<ExactDecimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liquidation_price: Option<ExactDecimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unrealized_pnl: Option<ExactDecimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_margin: Option<ExactDecimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maintenance_margin: Option<ExactDecimal>,
 }
 
 /// 合约资金费率观察快照。它是市场/账户风险输入，不是已结算资金费事实；
@@ -222,6 +449,92 @@ pub struct AccountCashflow {
     pub external_id: String,
 }
 
+/// The strategy output that crossed the backtest adapter boundary.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct StrategyIntentFact {
+    pub intent_id: u64,
+    pub instrument: InstrumentId,
+    pub side: Side,
+    pub qty: Quantity,
+    pub limit: Option<Price>,
+    /// Scale-aware quantity when the strategy emitted an exact decimal intent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qty_exact: Option<ExactDecimal>,
+    /// Scale-aware limit price when the strategy emitted an exact decimal intent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit_exact: Option<ExactDecimal>,
+    pub policy: Option<OrderPolicy>,
+    pub reduce_only: bool,
+    pub post_only: bool,
+}
+
+/// An immutable strategy decision recorded before order admission.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct StrategyDecisionFact {
+    pub schema_version: u32,
+    pub request_id: String,
+    pub strategy_id: String,
+    pub signal_id: u64,
+    pub confidence: i128,
+    pub priority: i32,
+    pub expires_at: u64,
+    pub intents: Vec<StrategyIntentFact>,
+}
+
+/// The exact canonical risk decision evaluated for an order in a backtest.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct OrderRiskDecisionFact {
+    pub client_order_id: u64,
+    pub instrument: InstrumentId,
+    pub strategy_id: Option<String>,
+    pub signal_id: Option<u64>,
+    pub intent_id: Option<u64>,
+    pub allowed: bool,
+    pub violations: Vec<String>,
+    pub projected_position_raw: Option<i128>,
+    pub projected_margin_raw: Option<i128>,
+    pub reference_price_raw: Option<i128>,
+    pub rule_set_version: String,
+}
+
+/// Immutable execution capability preflight evidence bound to one exact order.
+/// `preflight_json` is the versioned app-layer request and decision snapshot; its hash is included
+/// here together with the order/catalog fingerprints so replay can detect substitution.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct ExecutionCapabilityDecisionFact {
+    pub schema_version: u32,
+    pub kind: ExecutionCapabilityDecisionKind,
+    pub decision_id: String,
+    pub command_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order_group_id: Option<String>,
+    pub client_order_id: u64,
+    pub account_id: String,
+    /// Strategy execution identity for the order this preflight admitted. Older facts omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent_id: Option<u64>,
+    pub venue_id: String,
+    pub order_fingerprint: String,
+    pub catalog_fingerprint: String,
+    pub market_rule_fingerprint: String,
+    pub preflight_json: String,
+}
+
+pub const EXECUTION_CAPABILITY_DECISION_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionCapabilityDecisionKind {
+    Submit,
+    RecoveryAdoption,
+}
+
 /// 事件类型。
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum EventKind {
@@ -234,6 +547,24 @@ pub enum EventKind {
         bid_qty: Quantity,
         #[serde(default)]
         ask_qty: Quantity,
+        /// Exchange-native quote precision; absent for historical/legacy market facts.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bid_exact: Option<ExactDecimal>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ask_exact: Option<ExactDecimal>,
+        /// Exchange-native displayed quantities; absent on legacy and historical quotes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bid_qty_exact: Option<ExactDecimal>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ask_qty_exact: Option<ExactDecimal>,
+    },
+    /// Sequenced L2 snapshot from the market-data source. The arrays retain exact
+    /// source precision and are replayable as a durable strategy input.
+    MarketOrderBook {
+        instrument: InstrumentId,
+        sequence: u64,
+        bids: Vec<MarketDepthLevel>,
+        asks: Vec<MarketDepthLevel>,
     },
     AccountBalanceSnapshot {
         account_id: String,
@@ -258,6 +589,27 @@ pub enum EventKind {
     OrderSubmitted {
         order: crate::order::Order,
     },
+    /// Authoritative venue result for an order amendment. The full post-amendment snapshot is
+    /// persisted so the OMS terms and pending-order risk reserve rebuild identically on replay.
+    OrderAmended {
+        operation_id: String,
+        order: crate::order::Order,
+    },
+    /// Durable intent written before contacting a venue. A restart must reconcile this
+    /// operation by the same identifier before another mutation is allowed.
+    OrderAmendmentPending {
+        operation_id: String,
+        order: crate::order::Order,
+    },
+    StrategyDecision {
+        decision: StrategyDecisionFact,
+    },
+    OrderRiskDecision {
+        decision: OrderRiskDecisionFact,
+    },
+    ExecutionCapabilityDecision {
+        decision: ExecutionCapabilityDecisionFact,
+    },
     Submit {
         client_order_id: u64,
     },
@@ -270,17 +622,42 @@ pub enum EventKind {
         client_order_id: u64,
         reason: String,
     },
+    /// Durable cancel request intent. If the process exits while the venue call is in flight,
+    /// restart recovery sees CancelPending and reconciles instead of treating the order as idle.
+    CancelPending {
+        client_order_id: u64,
+    },
     Cancelled {
         client_order_id: u64,
     },
     Filled {
         fill: Fill,
     },
+    /// A venue fee/rebate adjustment discovered after its fill quantity was already applied.
+    FeeAdjustment {
+        account_id: String,
+        venue_id: String,
+        order_id: u64,
+        instrument: InstrumentId,
+        fees: Vec<crate::order::FillFee>,
+    },
     LedgerApplied {
         entry: LedgerEntry,
     },
     ReconcileRequired {
         client_order_id: u64,
+    },
+    /// Authoritative venue snapshot applied only after cumulative fills match locally.
+    OrderStatusReconciled {
+        client_order_id: u64,
+        account_id: String,
+        venue_id: String,
+        status: crate::order::OrderStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        venue_order_id: Option<String>,
+        filled_raw: i128,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        filled_exact: Option<ExactDecimal>,
     },
     /// 日终结算。
     Settle,
@@ -350,6 +727,20 @@ impl Event {
 
     /// 稳定摘要：用于重放校验。**不得依赖 Debug 输出**（格式可能随版本变化）。
     pub fn digest(&self, h: &mut crate::sourcing::Fnv1a) {
+        self.digest_with_q68_position_money_presence(h, true);
+    }
+
+    /// Q68 之前的事件摘要格式，用于严格验证旧版已提交的存储 manifest。
+    /// 新写入必须使用 [`Self::digest`]；此格式只用于向前读取。
+    pub fn digest_legacy_q68(&self, h: &mut crate::sourcing::Fnv1a) {
+        self.digest_with_q68_position_money_presence(h, false);
+    }
+
+    fn digest_with_q68_position_money_presence(
+        &self,
+        h: &mut crate::sourcing::Fnv1a,
+        include_position_money_presence: bool,
+    ) {
         h.write_u64(self.seq);
         h.write_u64(self.ts);
         h.write_u64(self.prio as u64);
@@ -376,6 +767,10 @@ impl Event {
                 ask,
                 bid_qty,
                 ask_qty,
+                bid_exact,
+                ask_exact,
+                bid_qty_exact,
+                ask_qty_exact,
             } => {
                 h.write_u64(7);
                 h.write_text(&instrument.to_string());
@@ -383,6 +778,35 @@ impl Event {
                 h.write_i128(ask.raw());
                 h.write_i128(bid_qty.raw());
                 h.write_i128(ask_qty.raw());
+                if bid_exact.is_some() || ask_exact.is_some() {
+                    h.write_u64(0x4558_4143_545f_5154);
+                    digest_optional_exact_decimal(h, *bid_exact);
+                    digest_optional_exact_decimal(h, *ask_exact);
+                }
+                if bid_qty_exact.is_some() || ask_qty_exact.is_some() {
+                    h.write_u64(0x4558_4143_545f_5153);
+                    digest_optional_exact_decimal(h, *bid_qty_exact);
+                    digest_optional_exact_decimal(h, *ask_qty_exact);
+                }
+            }
+            EventKind::MarketOrderBook {
+                instrument,
+                sequence,
+                bids,
+                asks,
+            } => {
+                h.write_u64(22);
+                h.write_text(&instrument.to_string());
+                h.write_u64(*sequence);
+                for levels in [bids, asks] {
+                    h.write_u64(levels.len() as u64);
+                    for level in levels {
+                        h.write_i128(level.price.raw());
+                        h.write_i128(level.quantity.raw());
+                        digest_optional_exact_decimal(h, level.price_exact);
+                        digest_optional_exact_decimal(h, level.quantity_exact);
+                    }
+                }
             }
             EventKind::AccountBalanceSnapshot {
                 account_id,
@@ -398,6 +822,17 @@ impl Event {
                     h.write_i128(balance.free.raw());
                     h.write_i128(balance.locked.raw());
                     h.write_i128(balance.borrowed.raw());
+                    if let Some(net_cash) = balance.net_cash_balance {
+                        h.write_u64(1);
+                        h.write_i128(net_cash.raw());
+                    }
+                    if let Some(exact) = balance.exact_amounts {
+                        h.write_u64(0x4558_4143_545f_4241);
+                        digest_exact_decimal(h, exact.free);
+                        digest_exact_decimal(h, exact.locked);
+                        digest_exact_decimal(h, exact.borrowed);
+                        digest_optional_exact_decimal(h, exact.net_cash_balance);
+                    }
                 }
             }
             EventKind::AccountPositionSnapshot {
@@ -411,6 +846,10 @@ impl Event {
                 h.write_u64(positions.len() as u64);
                 for position in positions {
                     h.write_text(&position.instrument.to_string());
+                    if let Some(currency) = position.settlement_currency.as_deref() {
+                        h.write_u64(1);
+                        h.write_text(currency);
+                    }
                     h.write_i128(position.quantity.raw());
                     h.write_i128(position.average_price.map(|price| price.raw()).unwrap_or(0));
                     h.write_i128(position.mark_price.map(|price| price.raw()).unwrap_or(0));
@@ -425,14 +864,26 @@ impl Event {
                         position.initial_margin,
                         position.maintenance_margin,
                     ] {
-                        // 与账户快照的 state_hash 同一条纪律：未报与报为零必须是两份内容，
-                        // 否则把日志里的 `null` 改成 `0` 不会改动摘要。
-                        h.write_u64(u64::from(value.is_some()));
+                        if include_position_money_presence {
+                            // 与账户快照的 state_hash 同一条纪律：未报与报为零必须是两份内容，
+                            // 否则把日志里的 `null` 改成 `0` 不会改动摘要。
+                            h.write_u64(u64::from(value.is_some()));
+                        }
                         h.write_i128(value.map(Money::raw).unwrap_or_default());
                     }
                     h.write_u64(position.leverage.unwrap_or(0) as u64);
                     h.write_text(position.margin_mode.as_deref().unwrap_or_default());
                     h.write_text(position.position_side.as_deref().unwrap_or_default());
+                    if let Some(exact) = position.exact_amounts {
+                        h.write_u64(0x4558_4143_545f_504f);
+                        digest_exact_decimal(h, exact.quantity);
+                        digest_optional_exact_decimal(h, exact.average_price);
+                        digest_optional_exact_decimal(h, exact.mark_price);
+                        digest_optional_exact_decimal(h, exact.liquidation_price);
+                        digest_optional_exact_decimal(h, exact.unrealized_pnl);
+                        digest_optional_exact_decimal(h, exact.initial_margin);
+                        digest_optional_exact_decimal(h, exact.maintenance_margin);
+                    }
                 }
             }
             EventKind::FundingRateSnapshot {
@@ -495,6 +946,234 @@ impl Event {
                     h.write_u64(0);
                     h.write_text("");
                 }
+                if let Some(exact) = order.exact_amounts {
+                    h.write_u64(0x4558_4143_545f_4f52);
+                    digest_exact_decimal(h, exact.quantity);
+                    h.write_u64(u64::from(exact.limit_price.is_some()));
+                    if let Some(price) = exact.limit_price {
+                        digest_exact_decimal(h, price);
+                    }
+                    digest_exact_decimal(h, exact.filled);
+                    if let Some(conditional) = exact.conditional {
+                        // Preserve hashes for every legacy and ordinary exact order. Conditional
+                        // requests add a versioned suffix so trigger changes cannot reuse an
+                        // EventLog identity or pass idempotent submission checks.
+                        h.write_u64(0x434f_4e44_4954_494f);
+                        h.write_u64(match conditional.kind {
+                            crate::order::ConditionalOrderKind::Trigger => 1,
+                            crate::order::ConditionalOrderKind::StopLoss => 2,
+                            crate::order::ConditionalOrderKind::TakeProfit => 3,
+                            crate::order::ConditionalOrderKind::Trailing => 4,
+                        });
+                        digest_optional_exact_decimal(h, conditional.trigger_price);
+                        h.write_u64(match conditional.trigger_price_type {
+                            None => 0,
+                            Some(crate::order::TriggerPriceType::Last) => 1,
+                            Some(crate::order::TriggerPriceType::Mark) => 2,
+                            Some(crate::order::TriggerPriceType::Index) => 3,
+                        });
+                        digest_optional_exact_decimal(h, conditional.trailing_percent);
+                        digest_optional_exact_decimal(h, conditional.trailing_amount);
+                        digest_optional_exact_decimal(h, conditional.trailing_trigger_price);
+                    }
+                }
+            }
+            EventKind::OrderAmended {
+                operation_id,
+                order,
+            } => {
+                h.write_u64(24);
+                h.write_text(operation_id);
+                h.write_u64(order.client_id);
+                h.write_text(&order.instrument.to_string());
+                h.write_u64(match order.side {
+                    crate::order::Side::Buy => 1,
+                    crate::order::Side::Sell => 2,
+                });
+                h.write_i128(order.qty.raw());
+                h.write_u64(u64::from(order.limit.is_some()));
+                h.write_i128(order.limit.map(|price| price.raw()).unwrap_or_default());
+                h.write_u64(match order.status {
+                    crate::order::OrderStatus::PendingSubmit => 1,
+                    crate::order::OrderStatus::Submitted => 2,
+                    crate::order::OrderStatus::Accepted => 3,
+                    crate::order::OrderStatus::Working => 4,
+                    crate::order::OrderStatus::PartiallyFilled => 5,
+                    crate::order::OrderStatus::Filled => 6,
+                    crate::order::OrderStatus::CancelPending => 7,
+                    crate::order::OrderStatus::Cancelled => 8,
+                    crate::order::OrderStatus::Rejected => 9,
+                    crate::order::OrderStatus::Expired => 10,
+                    crate::order::OrderStatus::Unknown => 11,
+                });
+                h.write_i128(order.filled.raw());
+                h.write_text(&order.account_id);
+                if let Some(trace) = &order.trace {
+                    h.write_text(trace.strategy_id.as_deref().unwrap_or_default());
+                    h.write_u64(trace.signal_id.unwrap_or_default());
+                    h.write_u64(trace.intent_id.unwrap_or_default());
+                    h.write_text(trace.rule_version.as_deref().unwrap_or_default());
+                } else {
+                    h.write_text("");
+                    h.write_u64(0);
+                    h.write_u64(0);
+                    h.write_text("");
+                }
+                if let Some(policy) = order.policy {
+                    h.write_u64(1);
+                    h.write_u64(u64::from(policy.reduce_only));
+                    h.write_u64(match policy.position_side {
+                        crate::trading::PositionSide::Long => 1,
+                        crate::trading::PositionSide::Short => 2,
+                        crate::trading::PositionSide::Net => 3,
+                    });
+                    h.write_u64(match policy.margin_mode {
+                        crate::trading::MarginMode::Cash => 1,
+                        crate::trading::MarginMode::Cross => 2,
+                        crate::trading::MarginMode::Isolated => 3,
+                    });
+                    h.write_u64(match policy.position_mode {
+                        crate::trading::PositionMode::OneWay => 1,
+                        crate::trading::PositionMode::Hedge => 2,
+                    });
+                    h.write_u64(policy.leverage as u64);
+                    h.write_u64(u64::from(policy.post_only));
+                } else {
+                    h.write_u64(0);
+                }
+                if let Some(exact) = order.exact_amounts {
+                    h.write_u64(0x4558_4143_545f_414d);
+                    digest_exact_decimal(h, exact.quantity);
+                    digest_optional_exact_decimal(h, exact.limit_price);
+                    digest_exact_decimal(h, exact.filled);
+                    digest_optional_exact_decimal(h, exact.quote_budget);
+                    digest_exact_decimal(h, exact.quote_filled);
+                    digest_optional_exact_decimal(h, exact.market_reference_price);
+                    h.write_u64(u64::from(exact.conditional.is_some()));
+                    if let Some(conditional) = exact.conditional {
+                        h.write_u64(0x434f_4e44_4954_494f);
+                        h.write_u64(match conditional.kind {
+                            crate::order::ConditionalOrderKind::Trigger => 1,
+                            crate::order::ConditionalOrderKind::StopLoss => 2,
+                            crate::order::ConditionalOrderKind::TakeProfit => 3,
+                            crate::order::ConditionalOrderKind::Trailing => 4,
+                        });
+                        digest_optional_exact_decimal(h, conditional.trigger_price);
+                        h.write_u64(match conditional.trigger_price_type {
+                            None => 0,
+                            Some(crate::order::TriggerPriceType::Last) => 1,
+                            Some(crate::order::TriggerPriceType::Mark) => 2,
+                            Some(crate::order::TriggerPriceType::Index) => 3,
+                        });
+                        digest_optional_exact_decimal(h, conditional.trailing_percent);
+                        digest_optional_exact_decimal(h, conditional.trailing_amount);
+                        digest_optional_exact_decimal(h, conditional.trailing_trigger_price);
+                    }
+                } else {
+                    h.write_u64(0);
+                }
+            }
+            EventKind::OrderAmendmentPending {
+                operation_id,
+                order,
+            } => {
+                h.write_u64(25);
+                h.write_text(operation_id);
+                h.write_text(&serde_json::to_string(order).unwrap_or_default());
+            }
+            EventKind::StrategyDecision { decision } => {
+                h.write_u64(17);
+                h.write_u64(decision.schema_version as u64);
+                h.write_text(&decision.request_id);
+                h.write_text(&decision.strategy_id);
+                h.write_u64(decision.signal_id);
+                h.write_i128(decision.confidence);
+                h.write_u64(decision.priority as i64 as u64);
+                h.write_u64(decision.expires_at);
+                h.write_u64(decision.intents.len() as u64);
+                for intent in &decision.intents {
+                    h.write_u64(intent.intent_id);
+                    h.write_text(&intent.instrument.to_string());
+                    h.write_u64(match intent.side {
+                        Side::Buy => 1,
+                        Side::Sell => 2,
+                    });
+                    h.write_i128(intent.qty.raw());
+                    h.write_u64(u64::from(intent.limit.is_some()));
+                    h.write_i128(intent.limit.map(Price::raw).unwrap_or_default());
+                    if intent.qty_exact.is_some() || intent.limit_exact.is_some() {
+                        h.write_u64(0x4558_4143_545f_5349);
+                        digest_optional_exact_decimal(h, intent.qty_exact);
+                        digest_optional_exact_decimal(h, intent.limit_exact);
+                    }
+                    h.write_u64(u64::from(intent.policy.is_some()));
+                    if let Some(policy) = intent.policy {
+                        h.write_u64(u64::from(policy.reduce_only));
+                        h.write_u64(match policy.position_side {
+                            crate::trading::PositionSide::Long => 1,
+                            crate::trading::PositionSide::Short => 2,
+                            crate::trading::PositionSide::Net => 3,
+                        });
+                        h.write_u64(match policy.margin_mode {
+                            crate::trading::MarginMode::Cash => 1,
+                            crate::trading::MarginMode::Cross => 2,
+                            crate::trading::MarginMode::Isolated => 3,
+                        });
+                        h.write_u64(match policy.position_mode {
+                            crate::trading::PositionMode::OneWay => 1,
+                            crate::trading::PositionMode::Hedge => 2,
+                        });
+                        h.write_u64(policy.leverage as u64);
+                        h.write_u64(u64::from(policy.post_only));
+                    }
+                    h.write_u64(u64::from(intent.reduce_only));
+                    h.write_u64(u64::from(intent.post_only));
+                }
+            }
+            EventKind::OrderRiskDecision { decision } => {
+                h.write_u64(18);
+                h.write_u64(decision.client_order_id);
+                h.write_text(&decision.instrument.to_string());
+                h.write_u64(u64::from(decision.strategy_id.is_some()));
+                h.write_text(decision.strategy_id.as_deref().unwrap_or_default());
+                h.write_u64(u64::from(decision.signal_id.is_some()));
+                h.write_u64(decision.signal_id.unwrap_or_default());
+                h.write_u64(u64::from(decision.intent_id.is_some()));
+                h.write_u64(decision.intent_id.unwrap_or_default());
+                h.write_u64(u64::from(decision.allowed));
+                h.write_u64(decision.violations.len() as u64);
+                for violation in &decision.violations {
+                    h.write_text(violation);
+                }
+                for value in [
+                    decision.projected_position_raw,
+                    decision.projected_margin_raw,
+                    decision.reference_price_raw,
+                ] {
+                    h.write_u64(u64::from(value.is_some()));
+                    h.write_i128(value.unwrap_or_default());
+                }
+                h.write_text(&decision.rule_set_version);
+            }
+            EventKind::ExecutionCapabilityDecision { decision } => {
+                h.write_u64(20);
+                h.write_u64(decision.schema_version as u64);
+                h.write_u64(match decision.kind {
+                    ExecutionCapabilityDecisionKind::Submit => 1,
+                    ExecutionCapabilityDecisionKind::RecoveryAdoption => 2,
+                });
+                h.write_text(&decision.decision_id);
+                h.write_u64(u64::from(decision.command_id.is_some()));
+                h.write_u64(decision.command_id.unwrap_or_default());
+                h.write_u64(u64::from(decision.order_group_id.is_some()));
+                h.write_text(decision.order_group_id.as_deref().unwrap_or_default());
+                h.write_u64(decision.client_order_id);
+                h.write_text(&decision.account_id);
+                h.write_text(&decision.venue_id);
+                h.write_text(&decision.order_fingerprint);
+                h.write_text(&decision.catalog_fingerprint);
+                h.write_text(&decision.market_rule_fingerprint);
+                h.write_text(&decision.preflight_json);
             }
             EventKind::Submit { client_order_id } => {
                 h.write_u64(3);
@@ -520,6 +1199,10 @@ impl Event {
                 h.write_u64(9);
                 h.write_u64(*client_order_id);
             }
+            EventKind::CancelPending { client_order_id } => {
+                h.write_u64(21);
+                h.write_u64(*client_order_id);
+            }
             EventKind::Filled { fill } => {
                 h.write_u64(5);
                 h.write_u64(fill.order_id);
@@ -535,6 +1218,97 @@ impl Event {
                 h.write_text(fill.venue_order_id.as_deref().unwrap_or_default());
                 h.write_text(fill.rule_version.as_deref().unwrap_or_default());
                 h.write_text(fill.fee_currency.as_deref().unwrap_or_default());
+                // Keep the digest of legacy scalar-only Fill facts stable. Explicit fee rows are
+                // sorted before hashing so equivalent venue arrays cannot create replay drift.
+                if !fill.fees.is_empty() {
+                    let mut fees = fill.fees.clone();
+                    fees.sort_by(|left, right| {
+                        left.currency
+                            .as_deref()
+                            .unwrap_or_default()
+                            .cmp(right.currency.as_deref().unwrap_or_default())
+                            .then_with(|| left.amount.raw().cmp(&right.amount.raw()))
+                    });
+                    h.write_u64(1);
+                    h.write_u64(fees.len() as u64);
+                    for fee in fees {
+                        h.write_i128(fee.amount.raw());
+                        h.write_text(fee.currency.as_deref().unwrap_or_default());
+                        if !fee.source_trade_ids.is_empty() {
+                            let mut trade_ids = fee.source_trade_ids;
+                            trade_ids.sort();
+                            h.write_u64(2);
+                            h.write_u64(trade_ids.len() as u64);
+                            for trade_id in trade_ids {
+                                h.write_text(&trade_id);
+                            }
+                        }
+                    }
+                }
+                if let Some(exact) = fill.exact_amounts {
+                    h.write_u64(0x4558_4143_545f_4649);
+                    digest_exact_decimal(h, exact.quantity);
+                    digest_exact_decimal(h, exact.price);
+                    digest_optional_exact_decimal(h, exact.quote_cost);
+                    h.write_u64(u64::from(exact.quote_budget_complete));
+                }
+                if !fill.exact_fees.is_empty() {
+                    let mut fees = fill.exact_fees.clone();
+                    fees.sort_by(|left, right| {
+                        left.currency
+                            .as_deref()
+                            .unwrap_or_default()
+                            .cmp(right.currency.as_deref().unwrap_or_default())
+                            .then_with(|| left.amount.to_string().cmp(&right.amount.to_string()))
+                    });
+                    h.write_u64(0x4558_4143_545f_4645);
+                    h.write_u64(fees.len() as u64);
+                    for fee in fees {
+                        digest_exact_decimal(h, fee.amount);
+                        h.write_text(fee.currency.as_deref().unwrap_or_default());
+                        let mut trade_ids = fee.source_trade_ids;
+                        trade_ids.sort();
+                        h.write_u64(trade_ids.len() as u64);
+                        for trade_id in trade_ids {
+                            h.write_text(&trade_id);
+                        }
+                    }
+                }
+            }
+            EventKind::FeeAdjustment {
+                account_id,
+                venue_id,
+                order_id,
+                instrument,
+                fees,
+            } => {
+                h.write_u64(19);
+                h.write_text(account_id);
+                h.write_text(venue_id);
+                h.write_u64(*order_id);
+                h.write_text(&instrument.to_string());
+                let mut fees = fees.clone();
+                fees.sort_by(|left, right| {
+                    left.currency
+                        .as_deref()
+                        .unwrap_or_default()
+                        .cmp(right.currency.as_deref().unwrap_or_default())
+                        .then_with(|| left.amount.raw().cmp(&right.amount.raw()))
+                });
+                h.write_u64(fees.len() as u64);
+                for fee in fees {
+                    h.write_i128(fee.amount.raw());
+                    h.write_text(fee.currency.as_deref().unwrap_or_default());
+                    if !fee.source_trade_ids.is_empty() {
+                        let mut trade_ids = fee.source_trade_ids;
+                        trade_ids.sort();
+                        h.write_u64(2);
+                        h.write_u64(trade_ids.len() as u64);
+                        for trade_id in trade_ids {
+                            h.write_text(&trade_id);
+                        }
+                    }
+                }
             }
             EventKind::LedgerApplied { entry } => {
                 h.write_u64(10);
@@ -580,10 +1354,57 @@ impl Event {
                     h.write_u64(1);
                     h.write_u64(u64::from(leverage));
                 }
+                if let Some(exact) = entry.exact_amounts {
+                    h.write_u64(0x4558_4143_545f_4c45);
+                    digest_exact_decimal(h, exact.amount);
+                    digest_exact_decimal(h, exact.quantity);
+                    h.write_u64(u64::from(exact.price.is_some()));
+                    if let Some(price) = exact.price {
+                        digest_exact_decimal(h, price);
+                    }
+                    if let Some(contract_size) = exact.contract_size {
+                        h.write_u64(0x4558_4143_545f_4353);
+                        digest_exact_decimal(h, contract_size);
+                    }
+                    if let Some(inverse) = exact.inverse {
+                        h.write_u64(0x4558_4143_545f_494e);
+                        h.write_u64(u64::from(inverse));
+                    }
+                }
             }
             EventKind::ReconcileRequired { client_order_id } => {
                 h.write_u64(11);
                 h.write_u64(*client_order_id);
+            }
+            EventKind::OrderStatusReconciled {
+                client_order_id,
+                account_id,
+                venue_id,
+                status,
+                venue_order_id,
+                filled_raw,
+                filled_exact,
+            } => {
+                h.write_u64(23);
+                h.write_u64(*client_order_id);
+                h.write_text(account_id);
+                h.write_text(venue_id);
+                h.write_u64(match status {
+                    crate::order::OrderStatus::PendingSubmit => 1,
+                    crate::order::OrderStatus::Submitted => 2,
+                    crate::order::OrderStatus::Accepted => 3,
+                    crate::order::OrderStatus::Working => 4,
+                    crate::order::OrderStatus::PartiallyFilled => 5,
+                    crate::order::OrderStatus::Filled => 6,
+                    crate::order::OrderStatus::CancelPending => 7,
+                    crate::order::OrderStatus::Cancelled => 8,
+                    crate::order::OrderStatus::Rejected => 9,
+                    crate::order::OrderStatus::Expired => 10,
+                    crate::order::OrderStatus::Unknown => 11,
+                });
+                h.write_text(venue_order_id.as_deref().unwrap_or_default());
+                h.write_i128(*filled_raw);
+                digest_optional_exact_decimal(h, *filled_exact);
             }
             EventKind::Settle => h.write_u64(6),
         }
@@ -593,6 +1414,10 @@ impl Event {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        ConditionalOrderIntent, ConditionalOrderKind, ExactFillAmounts, ExactOrderAmounts,
+        InstrumentId, Order, OrderStatus,
+    };
 
     #[test]
     fn priority_order_is_deterministic() {
@@ -634,6 +1459,169 @@ mod tests {
     }
 
     #[test]
+    fn market_quote_digest_binds_exact_displayed_sizes_only_when_present() {
+        let instrument = InstrumentId::parse("TINYUSDT.OKX").unwrap();
+        let legacy = Event::new(
+            1,
+            10,
+            Priority::MARKET,
+            EventKind::MarketQuote {
+                instrument: instrument.clone(),
+                bid: Price::from_i64(1),
+                ask: Price::from_i64(2),
+                bid_qty: Quantity::ZERO,
+                ask_qty: Quantity::ZERO,
+                bid_exact: None,
+                ask_exact: None,
+                bid_qty_exact: None,
+                ask_qty_exact: None,
+            },
+        );
+        let exact = Event::new(
+            1,
+            10,
+            Priority::MARKET,
+            EventKind::MarketQuote {
+                instrument,
+                bid: Price::from_i64(1),
+                ask: Price::from_i64(2),
+                bid_qty: Quantity::ZERO,
+                ask_qty: Quantity::ZERO,
+                bid_exact: None,
+                ask_exact: None,
+                bid_qty_exact: Some(ExactDecimal::parse("0.0000000001").unwrap()),
+                ask_qty_exact: Some(ExactDecimal::parse("0.0000000002").unwrap()),
+            },
+        );
+        let digest = |event: &Event| {
+            let mut hash = crate::sourcing::Fnv1a::new();
+            event.digest(&mut hash);
+            hash.finish()
+        };
+        assert_ne!(digest(&legacy), digest(&exact));
+        let restored: Event = serde_json::from_str(&serde_json::to_string(&exact).unwrap())
+            .expect("exact displayed sizes round-trip through EventLog JSON");
+        assert_eq!(restored, exact);
+    }
+
+    #[test]
+    fn strategy_and_risk_decision_fields_are_bound_to_replay_digest() {
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let strategy_event = Event::new(
+            1,
+            20,
+            Priority::COMMAND,
+            EventKind::StrategyDecision {
+                decision: StrategyDecisionFact {
+                    schema_version: 1,
+                    request_id: "request-1".into(),
+                    strategy_id: "strategy-1".into(),
+                    signal_id: 7,
+                    confidence: 9_500,
+                    priority: -2,
+                    expires_at: 25,
+                    intents: vec![StrategyIntentFact {
+                        intent_id: 8,
+                        instrument,
+                        side: Side::Buy,
+                        qty: Quantity::from_i64(2),
+                        limit: None,
+                        qty_exact: None,
+                        limit_exact: None,
+                        policy: None,
+                        reduce_only: false,
+                        post_only: false,
+                    }],
+                },
+            },
+        );
+        let changed_confidence = match &strategy_event.kind {
+            EventKind::StrategyDecision { decision } => {
+                let mut decision = decision.clone();
+                decision.confidence += 1;
+                Event::new(
+                    strategy_event.seq,
+                    strategy_event.ts,
+                    strategy_event.prio,
+                    EventKind::StrategyDecision { decision },
+                )
+            }
+            _ => unreachable!(),
+        };
+        let exact_quantity = match &strategy_event.kind {
+            EventKind::StrategyDecision { decision } => {
+                let mut decision = decision.clone();
+                decision.intents[0].qty_exact = Some(ExactDecimal::parse("0.0000000001").unwrap());
+                Event::new(
+                    strategy_event.seq,
+                    strategy_event.ts,
+                    strategy_event.prio,
+                    EventKind::StrategyDecision { decision },
+                )
+            }
+            _ => unreachable!(),
+        };
+        let risk_event = Event::new(
+            2,
+            20,
+            Priority::COMMAND,
+            EventKind::OrderRiskDecision {
+                decision: OrderRiskDecisionFact {
+                    client_order_id: 9,
+                    instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+                    strategy_id: Some("strategy-1".into()),
+                    signal_id: Some(7),
+                    intent_id: Some(8),
+                    allowed: true,
+                    violations: Vec::new(),
+                    projected_position_raw: Some(0),
+                    projected_margin_raw: None,
+                    reference_price_raw: Some(100),
+                    rule_set_version: "risk-v1".into(),
+                },
+            },
+        );
+        let changed_projection = match &risk_event.kind {
+            EventKind::OrderRiskDecision { decision } => {
+                let mut decision = decision.clone();
+                decision.projected_margin_raw = Some(0);
+                Event::new(
+                    risk_event.seq,
+                    risk_event.ts,
+                    risk_event.prio,
+                    EventKind::OrderRiskDecision { decision },
+                )
+            }
+            _ => unreachable!(),
+        };
+        let changed_instrument = match &risk_event.kind {
+            EventKind::OrderRiskDecision { decision } => {
+                let mut decision = decision.clone();
+                decision.instrument = InstrumentId::parse("ETHUSDT.BINANCE").unwrap();
+                Event::new(
+                    risk_event.seq,
+                    risk_event.ts,
+                    risk_event.prio,
+                    EventKind::OrderRiskDecision { decision },
+                )
+            }
+            _ => unreachable!(),
+        };
+        let digest = |event: &Event| {
+            let mut hash = crate::sourcing::Fnv1a::new();
+            event.digest(&mut hash);
+            hash.finish()
+        };
+        assert_ne!(digest(&strategy_event), digest(&changed_confidence));
+        assert_ne!(digest(&strategy_event), digest(&exact_quantity));
+        assert_ne!(digest(&risk_event), digest(&changed_projection));
+        assert_ne!(digest(&risk_event), digest(&changed_instrument));
+        let restored: Event = serde_json::from_str(&serde_json::to_string(&risk_event).unwrap())
+            .expect("risk decision fact round-trip");
+        assert_eq!(restored, risk_event);
+    }
+
+    #[test]
     fn ledger_event_digest_includes_persisted_opening_leverage() {
         let mut entry = LedgerEntry {
             id: 1,
@@ -649,6 +1637,7 @@ mod tests {
             multiplier: 1,
             position_side: None,
             leverage: None,
+            exact_amounts: None,
         };
         let legacy = Event::new(
             1,
@@ -666,6 +1655,82 @@ mod tests {
             hash.finish()
         };
         assert_ne!(digest(&legacy), digest(&leveraged));
+    }
+
+    #[test]
+    fn exact_ledger_amounts_are_included_in_event_identity() {
+        let mut entry = LedgerEntry {
+            id: 1,
+            account_id: "main".into(),
+            currency: "USDT".into(),
+            kind: LedgerEntryKind::TradeCash,
+            amount: Money::ZERO,
+            instrument: Some(InstrumentId::parse("TINY/USDT.BINANCE").unwrap()),
+            quantity: Quantity::ZERO,
+            price: None,
+            order_id: Some(7),
+            ts: 1,
+            multiplier: 1,
+            position_side: None,
+            leverage: None,
+            exact_amounts: None,
+        };
+        let legacy = Event::new(
+            1,
+            1,
+            Priority::APPLY,
+            EventKind::LedgerApplied {
+                entry: entry.clone(),
+            },
+        );
+        entry.exact_amounts = Some(crate::ExactLedgerAmounts {
+            amount: ExactDecimal::parse("-0.000000000000000001").unwrap(),
+            quantity: ExactDecimal::ZERO,
+            price: None,
+            contract_size: None,
+            inverse: None,
+        });
+        let exact = Event::new(
+            1,
+            1,
+            Priority::APPLY,
+            EventKind::LedgerApplied {
+                entry: entry.clone(),
+            },
+        );
+        let digest = |event: &Event| {
+            let mut hash = crate::sourcing::Fnv1a::new();
+            event.digest(&mut hash);
+            hash.finish()
+        };
+        assert_ne!(digest(&legacy), digest(&exact));
+        let restored: Event =
+            serde_json::from_str(&serde_json::to_string(&exact).unwrap()).unwrap();
+        assert_eq!(restored, exact);
+
+        let mut derivative_entry = entry;
+        derivative_entry.kind = LedgerEntryKind::TradePosition;
+        let derivative_amounts = derivative_entry
+            .exact_amounts
+            .as_mut()
+            .expect("exact amount payload");
+        derivative_amounts.amount = ExactDecimal::ZERO;
+        derivative_amounts.quantity = ExactDecimal::parse("1").unwrap();
+        derivative_amounts.price = Some(ExactDecimal::parse("10000").unwrap());
+        derivative_amounts.contract_size = Some(ExactDecimal::parse("0.001").unwrap());
+        derivative_amounts.inverse = Some(false);
+        let derivative = Event::new(
+            1,
+            1,
+            Priority::APPLY,
+            EventKind::LedgerApplied {
+                entry: derivative_entry,
+            },
+        );
+        assert_ne!(digest(&exact), digest(&derivative));
+        let restored: Event =
+            serde_json::from_str(&serde_json::to_string(&derivative).unwrap()).unwrap();
+        assert_eq!(restored, derivative);
     }
 
     #[test]
@@ -705,6 +1770,7 @@ mod tests {
     fn unreported_position_money_is_not_hashed_as_zero() {
         let position = |pnl: Option<Money>| AccountPositionSnapshot {
             instrument: InstrumentId::parse("BTC/USDT:USDT.OKX").unwrap(),
+            settlement_currency: None,
             quantity: Quantity::from_i64(2),
             average_price: None,
             mark_price: None,
@@ -715,9 +1781,10 @@ mod tests {
             leverage: None,
             margin_mode: None,
             position_side: None,
+            exact_amounts: None,
         };
-        let digest_of = |pnl: Option<Money>| {
-            let event = Event::new(
+        let event_of = |pnl: Option<Money>| {
+            Event::new(
                 1,
                 1,
                 Priority::APPLY,
@@ -726,12 +1793,22 @@ mod tests {
                     venue_id: "OKX".into(),
                     positions: vec![position(pnl)],
                 },
-            );
+            )
+        };
+        let unreported = event_of(None);
+        let reported_zero = event_of(Some(Money::ZERO));
+        let digest = |event: &Event, legacy: bool| {
             let mut hasher = crate::sourcing::Fnv1a::new();
-            event.digest(&mut hasher);
+            if legacy {
+                event.digest_legacy_q68(&mut hasher);
+            } else {
+                event.digest(&mut hasher);
+            }
             hasher.finish()
         };
-        assert_ne!(digest_of(None), digest_of(Some(Money::ZERO)));
+        assert_ne!(digest(&unreported, false), digest(&reported_zero, false));
+        // Before Q68, absent and explicit zero intentionally shared the stored digest.
+        assert_eq!(digest(&unreported, true), digest(&reported_zero, true));
 
         let reported: AccountPositionSnapshot =
             serde_json::from_value(serde_json::to_value(position(Some(Money::ZERO))).unwrap())
@@ -758,5 +1835,201 @@ mod tests {
             ),
             (None, None, None)
         );
+    }
+
+    #[test]
+    fn exact_account_balance_and_position_amounts_are_part_of_event_identity() {
+        let digest = |event: &Event| {
+            let mut hash = crate::sourcing::Fnv1a::new();
+            event.digest(&mut hash);
+            hash.finish()
+        };
+        let balance_event = |amount: ExactDecimal| {
+            Event::new(
+                1,
+                1,
+                Priority::APPLY,
+                EventKind::AccountBalanceSnapshot {
+                    account_id: "main".into(),
+                    venue_id: "BINANCE".into(),
+                    balances: vec![AccountBalance {
+                        asset: "PEPE".into(),
+                        free: Money::ZERO,
+                        locked: Money::ZERO,
+                        borrowed: Money::ZERO,
+                        net_cash_balance: None,
+                        exact_amounts: Some(ExactAccountBalanceAmounts {
+                            free: amount,
+                            locked: ExactDecimal::ZERO,
+                            borrowed: ExactDecimal::ZERO,
+                            net_cash_balance: None,
+                        }),
+                    }],
+                },
+            )
+        };
+        let balance_a = balance_event(ExactDecimal::parse("0.0000000001").unwrap());
+        let balance_b = balance_event(ExactDecimal::parse("0.0000000002").unwrap());
+        assert_ne!(digest(&balance_a), digest(&balance_b));
+
+        let position_event = |quantity: ExactDecimal| {
+            Event::new(
+                1,
+                1,
+                Priority::APPLY,
+                EventKind::AccountPositionSnapshot {
+                    account_id: "main".into(),
+                    venue_id: "BINANCE".into(),
+                    positions: vec![AccountPositionSnapshot {
+                        instrument: InstrumentId::parse("PEPEUSDT.BINANCE").unwrap(),
+                        settlement_currency: Some("USDT".into()),
+                        quantity: Quantity::ZERO,
+                        average_price: None,
+                        mark_price: None,
+                        liquidation_price: None,
+                        unrealized_pnl: None,
+                        initial_margin: None,
+                        maintenance_margin: None,
+                        leverage: None,
+                        margin_mode: None,
+                        position_side: Some("short".into()),
+                        exact_amounts: Some(ExactAccountPositionAmounts {
+                            quantity,
+                            average_price: None,
+                            mark_price: None,
+                            liquidation_price: None,
+                            unrealized_pnl: None,
+                            initial_margin: None,
+                            maintenance_margin: None,
+                        }),
+                    }],
+                },
+            )
+        };
+        let position_a = position_event(ExactDecimal::parse("-0.0000000001").unwrap());
+        let position_b = position_event(ExactDecimal::parse("-0.0000000002").unwrap());
+        assert_ne!(digest(&position_a), digest(&position_b));
+        assert_eq!(
+            serde_json::from_str::<Event>(&serde_json::to_string(&position_a).unwrap()).unwrap(),
+            position_a
+        );
+    }
+
+    #[test]
+    fn exact_order_amounts_are_round_tripped_and_included_in_event_identity() {
+        let mut order = Order {
+            client_id: 88,
+            instrument: InstrumentId::parse("PEPE/USDT.OKX").unwrap(),
+            side: Side::Buy,
+            qty: Quantity::ZERO,
+            limit: None,
+            status: OrderStatus::Submitted,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: None,
+            exact_amounts: None,
+        };
+        let legacy = Event::new(
+            1,
+            1,
+            Priority::APPLY,
+            EventKind::OrderSubmitted {
+                order: order.clone(),
+            },
+        );
+        order.exact_amounts = Some(ExactOrderAmounts {
+            quantity: ExactDecimal::parse("0.000000000123456789").unwrap(),
+            limit_price: Some(ExactDecimal::parse("0.00000001").unwrap()),
+            filled: ExactDecimal::ZERO,
+            market_reference_price: None,
+            quote_budget: None,
+            quote_filled: Default::default(),
+            conditional: None,
+        });
+        let exact = Event::new(1, 1, Priority::APPLY, EventKind::OrderSubmitted { order });
+
+        let digest = |event: &Event| {
+            let mut hash = crate::sourcing::Fnv1a::new();
+            event.digest(&mut hash);
+            hash.finish()
+        };
+        assert_ne!(digest(&legacy), digest(&exact));
+        let restored: Event =
+            serde_json::from_str(&serde_json::to_string(&exact).unwrap()).unwrap();
+        assert_eq!(restored, exact);
+
+        let with_trigger = |trigger: &str| {
+            let mut event = exact.clone();
+            if let EventKind::OrderSubmitted { order } = &mut event.kind {
+                order.exact_amounts.as_mut().unwrap().conditional = Some(ConditionalOrderIntent {
+                    kind: ConditionalOrderKind::Trigger,
+                    trigger_price: Some(ExactDecimal::parse(trigger).unwrap()),
+                    trigger_price_type: None,
+                    trailing_percent: None,
+                    trailing_amount: None,
+                    trailing_trigger_price: None,
+                });
+            }
+            event
+        };
+        let triggered = with_trigger("0.01");
+        assert_ne!(digest(&triggered), digest(&with_trigger("0.02")));
+        let restored_triggered: Event =
+            serde_json::from_str(&serde_json::to_string(&triggered).unwrap()).unwrap();
+        assert_eq!(restored_triggered, triggered);
+    }
+
+    #[test]
+    fn exact_fill_amounts_are_included_in_event_identity() {
+        let mut fill = Fill {
+            order_id: 89,
+            account_id: "main".into(),
+            ..Fill::default()
+        };
+        let legacy = Event::new(
+            1,
+            1,
+            Priority::APPLY,
+            EventKind::Filled { fill: fill.clone() },
+        );
+        fill.exact_amounts = Some(ExactFillAmounts {
+            quantity: ExactDecimal::parse("0.0000000001").unwrap(),
+            price: ExactDecimal::parse("0.00000001").unwrap(),
+            quote_cost: None,
+            quote_budget_complete: false,
+        });
+        let exact = Event::new(1, 1, Priority::APPLY, EventKind::Filled { fill });
+        let digest = |event: &Event| {
+            let mut hash = crate::sourcing::Fnv1a::new();
+            event.digest(&mut hash);
+            hash.finish()
+        };
+        assert_ne!(digest(&legacy), digest(&exact));
+        let completed_quote_budget = match exact.kind.clone() {
+            EventKind::Filled { mut fill } => {
+                fill.exact_amounts.as_mut().unwrap().quote_cost =
+                    Some(ExactDecimal::parse("0.0000000001").unwrap());
+                fill.exact_amounts.as_mut().unwrap().quote_budget_complete = true;
+                Event::new(1, 1, Priority::APPLY, EventKind::Filled { fill })
+            }
+            _ => unreachable!(),
+        };
+        assert_ne!(digest(&exact), digest(&completed_quote_budget));
+        let with_exact_fee = match exact.kind.clone() {
+            EventKind::Filled { mut fill } => {
+                fill.exact_fees.push(crate::ExactFillFee {
+                    amount: ExactDecimal::parse("0.0000000001").unwrap(),
+                    currency: Some("PEPE".into()),
+                    source_trade_ids: vec!["fee-trade-1".into()],
+                });
+                Event::new(1, 1, Priority::APPLY, EventKind::Filled { fill })
+            }
+            _ => unreachable!(),
+        };
+        assert_ne!(digest(&exact), digest(&with_exact_fee));
+        let restored: Event =
+            serde_json::from_str(&serde_json::to_string(&with_exact_fee).unwrap()).unwrap();
+        assert_eq!(restored, with_exact_fee);
     }
 }

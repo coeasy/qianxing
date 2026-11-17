@@ -1,10 +1,12 @@
 //! CCXT Pro account order stream lifecycle and EventLog reduction.
 
+use crate::ccxt_reconcile_host::sync_ccxt_order_groups_from_user_stream;
 use crate::ccxt_stream_retry::{
     ccxt_idle_poll_delay, ccxt_watch_reply_is_idle, CcxtReconnectBudget,
 };
+use crate::exchange_gateway::{ExchangeGatewayPort, GatewayBusinessHealthStatus};
 use crate::pipeline::PipelineStorage;
-use crate::pipeline_metrics_report::PipelineMetricsReporter;
+use crate::pipeline_metrics_report::{ccxt_error_metric_category, PipelineMetricsReporter};
 use crate::worker_market_spec::load_worker_market_spec_for_instrument;
 use qx_adapter::{CcxtCallOutcome, CcxtProcessClient, CcxtProcessVenue};
 use qx_core::VenueFamily;
@@ -60,7 +62,7 @@ pub fn run_ccxt_user_stream_worker(input: CcxtUserStreamWorkerInput) -> Result<(
         .map_err(|error| format!("启动公共 CCXT Pro Worker 失败: {error}"))?;
     // Reply before 4/5 of the driver's read window so empty but healthy accounts stay cancellable.
     let watch_idle_ms = qx_adapter::ccxt_idle_window_ms(client.timeout_ms());
-    let mut venue = CcxtProcessVenue::new(venue_id, Box::new(client));
+    let mut venue = CcxtProcessVenue::new(venue_id.clone(), Box::new(client));
     let mut source_seq = pipeline
         .log()
         .events()
@@ -68,6 +70,8 @@ pub fn run_ccxt_user_stream_worker(input: CcxtUserStreamWorkerInput) -> Result<(
         .map(|event| event.source_seq)
         .unwrap_or(0);
     let mut reconnect_budget = CcxtReconnectBudget::default();
+    let mut reconnects_total = 0_u64;
+    let mut outer_reconnect_pending = false;
     let mut idle_windows = 0_u64;
     loop {
         if context.should_stop() {
@@ -93,12 +97,20 @@ pub fn run_ccxt_user_stream_worker(input: CcxtUserStreamWorkerInput) -> Result<(
             Ok(CcxtCallOutcome::Cancelled) => break,
             Err(error) => {
                 let detail = format!("{error:?}");
+                observe_ccxt_user_stream_error(&mut metrics, &detail);
                 if detail.contains("[unsupported]") || detail.contains("[authentication]") {
+                    metrics.observe_gateway_port_business_status(
+                        ExchangeGatewayPort::PrivateOrderStream,
+                        GatewayBusinessHealthStatus::Unhealthy,
+                        received_ts,
+                    );
+                    metrics.publish(true, received_ts);
                     return Err(format!("CCXT Pro 用户流不可用: {detail}"));
                 }
                 let backoff = reconnect_budget
                     .note_failure()
                     .map_err(|gave_up| format!("{gave_up}；最后一次故障: {detail}"))?;
+                outer_reconnect_pending = true;
                 context.mark(
                     ServiceStatus::Degraded,
                     format!(
@@ -107,6 +119,12 @@ pub fn run_ccxt_user_stream_worker(input: CcxtUserStreamWorkerInput) -> Result<(
                     ),
                     Some(received_ts),
                 )?;
+                metrics.observe_gateway_port_business_status(
+                    ExchangeGatewayPort::PrivateOrderStream,
+                    GatewayBusinessHealthStatus::Degraded,
+                    received_ts,
+                );
+                metrics.publish_if_due(true, received_ts);
                 context.sleep_ms(backoff.as_millis() as u64);
                 if context.should_stop() {
                     break;
@@ -126,6 +144,17 @@ pub fn run_ccxt_user_stream_worker(input: CcxtUserStreamWorkerInput) -> Result<(
         if event.get("stream").and_then(serde_json::Value::as_str) != Some("orders") {
             return Err("CCXT Pro 用户流返回了非 orders 事件".into());
         }
+        let recovered_sessions =
+            ccxt_user_stream_recovered_sessions(event, &mut outer_reconnect_pending);
+        if recovered_sessions > 0 {
+            reconnects_total = reconnects_total.saturating_add(recovered_sessions);
+            metrics.observe_gateway_venue_reconnects(&venue_id, reconnects_total);
+        }
+        metrics.observe_gateway_port_business_status(
+            ExchangeGatewayPort::PrivateOrderStream,
+            GatewayBusinessHealthStatus::Healthy,
+            received_ts,
+        );
         if ccxt_watch_reply_is_idle(event) {
             idle_windows = idle_windows.saturating_add(1);
             context.mark(
@@ -149,6 +178,11 @@ pub fn run_ccxt_user_stream_worker(input: CcxtUserStreamWorkerInput) -> Result<(
             .get("events")
             .and_then(serde_json::Value::as_array)
             .ok_or_else(|| "CCXT Pro orders 事件缺少 events".to_string())?;
+        if let Some(timestamp_ms) =
+            latest_ccxt_user_event_timestamp_ms(event, runtime_timestamp_ms())
+        {
+            metrics.observe_gateway_venue_last_event(&venue_id, timestamp_ms);
+        }
         let mut matched = 0_usize;
         let mut reduced = 0_usize;
         let mut reconcile_errors = 0_usize;
@@ -174,8 +208,23 @@ pub fn run_ccxt_user_stream_worker(input: CcxtUserStreamWorkerInput) -> Result<(
                 continue;
             };
             matched = matched.saturating_add(1);
+            let fee_baseline = pipeline
+                .fee_baseline_for_order(order.client_id)
+                .map_err(|error| format!("读取 CCXT 持久手续费基线失败: {error}"))?;
+            let exact_fee_baseline = pipeline
+                .exact_fee_baseline_for_order(order.client_id)
+                .map_err(|error| format!("读取 CCXT 持久精确手续费基线失败: {error}"))?;
+            let seen_trade_ids = pipeline
+                .fee_trade_ids_for_order(order.client_id)
+                .map_err(|error| format!("读取 CCXT 持久成交费用去重状态失败: {error}"))?;
             venue
-                .restore_order(order.clone(), remote_id)
+                .restore_order_with_exact_fee_state(
+                    order.clone(),
+                    remote_id,
+                    fee_baseline,
+                    exact_fee_baseline,
+                    seen_trade_ids,
+                )
                 .map_err(|error| format!("恢复 CCXT Pro remote order 失败: {error:?}"))?;
             let event_ts = update
                 .get("timestamp_ms")
@@ -227,10 +276,24 @@ pub fn run_ccxt_user_stream_worker(input: CcxtUserStreamWorkerInput) -> Result<(
             };
             reduced = reduced.saturating_add(reduced_events);
         }
+        let order_group_updates = if matched > 0 {
+            let account_id = worker
+                .account_id
+                .as_deref()
+                .ok_or_else(|| format!("worker {} 缺少 account_id", worker.id))?;
+            sync_ccxt_order_groups_from_user_stream(
+                &pipeline_storage.root,
+                &pipeline,
+                account_id,
+                &venue_id,
+            )?
+        } else {
+            0
+        };
         context.mark(
             ServiceStatus::Ready,
             format!(
-                "ccxt pro orders matched={matched} reduced={reduced} reconcile_errors={reconcile_errors}"
+                "ccxt pro orders matched={matched} reduced={reduced} order_group_updates={order_group_updates} reconcile_errors={reconcile_errors}"
             ),
             Some(received_ts),
         )?;
@@ -267,6 +330,51 @@ fn validate_ccxt_user_stream_worker(worker: &WorkerConfig) -> Result<String, Str
         .ok_or_else(|| format!("worker {} 缺少 venue_id", worker.id))
 }
 
+/// Return the newest order-event source time, falling back to receive time when CCXT omits it.
+/// Idle windows and empty event batches do not refresh the last-event metric.
+fn latest_ccxt_user_event_timestamp_ms(
+    event: &serde_json::Value,
+    received_at_ms: u64,
+) -> Option<u64> {
+    if event.get("idle").and_then(serde_json::Value::as_bool) == Some(true) {
+        return None;
+    }
+    let events = event.get("events")?.as_array()?;
+    if events.is_empty() {
+        return None;
+    }
+    Some(
+        events
+            .iter()
+            .filter_map(|update| {
+                update
+                    .get("timestamp_ms")
+                    .and_then(serde_json::Value::as_u64)
+            })
+            .filter(|timestamp_ms| *timestamp_ms > 0)
+            .max()
+            .unwrap_or(received_at_ms),
+    )
+}
+
+fn ccxt_user_stream_recovered_sessions(
+    event: &serde_json::Value,
+    outer_reconnect_pending: &mut bool,
+) -> u64 {
+    let internal_reconnects = event
+        .get("reconnects")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default();
+    internal_reconnects.saturating_add(u64::from(std::mem::take(outer_reconnect_pending)))
+}
+
+fn observe_ccxt_user_stream_error(metrics: &mut PipelineMetricsReporter, error: &str) {
+    metrics.observe_gateway_port_error_category(
+        ExchangeGatewayPort::PrivateOrderStream,
+        ccxt_error_metric_category(error),
+    );
+}
+
 fn runtime_timestamp_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -277,7 +385,12 @@ fn runtime_timestamp_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_ccxt_user_stream_worker;
+    use super::{
+        ccxt_user_stream_recovered_sessions, latest_ccxt_user_event_timestamp_ms,
+        observe_ccxt_user_stream_error, validate_ccxt_user_stream_worker,
+    };
+    use crate::pipeline_metrics_report::PipelineMetricsReporter;
+    use qx_runtime::RuntimeConfig;
     use qx_runtime::WorkerConfig;
 
     fn worker(role: &str, enabled: bool, venue_id: &str) -> WorkerConfig {
@@ -300,5 +413,74 @@ mod tests {
         assert!(validate_ccxt_user_stream_worker(&worker("execution", true, "okx")).is_err());
         assert!(validate_ccxt_user_stream_worker(&worker("user_stream", false, "okx")).is_err());
         assert!(validate_ccxt_user_stream_worker(&worker("user_stream", true, "binance")).is_err());
+    }
+
+    #[test]
+    fn ccxt_user_stream_last_event_time_ignores_idle_and_empty_windows() {
+        assert_eq!(
+            latest_ccxt_user_event_timestamp_ms(
+                &serde_json::json!({"idle": true, "events": []}),
+                500,
+            ),
+            None
+        );
+        assert_eq!(
+            latest_ccxt_user_event_timestamp_ms(&serde_json::json!({"events": []}), 500),
+            None
+        );
+        assert_eq!(
+            latest_ccxt_user_event_timestamp_ms(
+                &serde_json::json!({"events": [{"timestamp_ms": 300}, {"timestamp_ms": 400}]}),
+                500,
+            ),
+            Some(400)
+        );
+        assert_eq!(
+            latest_ccxt_user_event_timestamp_ms(
+                &serde_json::json!({"events": [{"timestamp_ms": null}]}),
+                500,
+            ),
+            Some(500)
+        );
+    }
+
+    #[test]
+    fn ccxt_user_stream_counts_only_recovered_sessions() {
+        let mut outer_pending = false;
+        assert_eq!(
+            ccxt_user_stream_recovered_sessions(
+                &serde_json::json!({"reconnects": 2}),
+                &mut outer_pending,
+            ),
+            2
+        );
+        assert_eq!(
+            ccxt_user_stream_recovered_sessions(&serde_json::json!({}), &mut outer_pending,),
+            0
+        );
+        outer_pending = true;
+        assert_eq!(
+            ccxt_user_stream_recovered_sessions(
+                &serde_json::json!({"reconnects": 2}),
+                &mut outer_pending,
+            ),
+            3
+        );
+        assert!(!outer_pending);
+    }
+
+    #[test]
+    fn ccxt_user_stream_errors_publish_only_bounded_categories() {
+        let config = RuntimeConfig::from_json(include_str!(
+            "../../../deploy/qianxing.runtime.paper-strategy.example.json"
+        ))
+        .expect("paper runtime config is valid");
+        let mut metrics = PipelineMetricsReporter::new(&config, "okx-user-stream", "main");
+        observe_ccxt_user_stream_error(&mut metrics, "CCXT Worker [authentication] private detail");
+        let body = metrics.body(true, 92_000);
+        assert!(body.contains(
+            "qx_gateway_port_errors_total{worker=\"okx-user-stream\",account=\"main\",port=\"private_order_stream\",class=\"authentication\"} 1"
+        ));
+        assert!(!body.contains("private detail"));
     }
 }

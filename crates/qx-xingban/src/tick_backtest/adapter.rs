@@ -2,6 +2,7 @@ use super::TickStrategy;
 use crate::{OrderBookActions, OrderBookSnapshot, OrderBookStrategy};
 use qx_core::{InstrumentId, Order};
 use qx_guanxing::QuoteTick;
+use qx_strategy::StrategyStopReason;
 
 pub(super) struct TickAdapter<'a> {
     pub(super) strategy: &'a mut dyn TickStrategy,
@@ -24,6 +25,18 @@ impl TickAdapter<'_> {
 }
 
 impl OrderBookStrategy for TickAdapter<'_> {
+    fn on_start(&mut self) -> Result<(), String> {
+        self.strategy.on_start()
+    }
+
+    fn on_stop(&mut self) -> Result<(), String> {
+        self.strategy.on_stop()
+    }
+
+    fn on_stop_with_reason(&mut self, reason: StrategyStopReason) -> Result<(), String> {
+        self.strategy.on_stop_with_reason(reason)
+    }
+
     fn on_order_book(
         &mut self,
         snapshot: &OrderBookSnapshot,
@@ -65,5 +78,43 @@ impl OrderBookStrategy for TickAdapter<'_> {
             open_order_ids,
             available_margin_raw,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    struct StopReasonProbe(Arc<Mutex<Option<StrategyStopReason>>>);
+
+    impl super::super::TickStrategy for StopReasonProbe {
+        fn on_tick(&mut self, _tick: &QuoteTick, _position: i128) -> Result<Vec<Order>, String> {
+            Ok(Vec::new())
+        }
+
+        fn on_stop_with_reason(&mut self, reason: StrategyStopReason) -> Result<(), String> {
+            *self.0.lock().unwrap() = Some(reason);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn tick_adapter_forwards_stop_reason() {
+        let received = Arc::new(Mutex::new(None));
+        let mut strategy = StopReasonProbe(Arc::clone(&received));
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let mut adapter = TickAdapter {
+            strategy: &mut strategy,
+            instrument,
+        };
+
+        OrderBookStrategy::on_stop_with_reason(&mut adapter, StrategyStopReason::Cancelled)
+            .unwrap();
+
+        assert_eq!(
+            *received.lock().unwrap(),
+            Some(StrategyStopReason::Cancelled)
+        );
     }
 }

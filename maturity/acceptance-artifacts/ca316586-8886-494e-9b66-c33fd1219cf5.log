@@ -1,0 +1,74 @@
+$ cargo test -p qx-cli --features sqlite,postgres --bin qx-cli workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts --offline -j 1 -- --nocapture
+exit_code=101
+
+[stdout]
+
+running 1 test
+
+running 1 test
+
+running 1 test
+test workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 485 filtered out; finished in 1.20s
+
+
+running 1 test
+
+running 1 test
+test workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 485 filtered out; finished in 1.23s
+
+
+running 1 test
+
+running 1 test
+test workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 485 filtered out; finished in 1.21s
+
+
+running 1 test
+
+running 1 test
+test workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 485 filtered out; finished in 1.20s
+
+
+running 1 test
+
+running 1 test
+test workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts ... FAILED
+
+failures:
+
+failures:
+    workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 485 filtered out; finished in 8.98s
+
+test workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts ... FAILED
+
+failures:
+
+failures:
+    workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 485 filtered out; finished in 46.55s
+
+
+[stderr]
+   Compiling qx-cli v0.3.0 (D:\aex_work\qianxing\crates\qx-cli)
+    Finished `test` profile [unoptimized] target(s) in 9.83s
+     Running unittests src\main.rs (target\debug\deps\qx_cli-c8e1dbef86020219.exe)
+
+thread 'workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts' (38332) panicked at crates\qx-cli\src\workers\strategy_worker\prepared_command_replay.rs:488:48:
+called `Result::unwrap()` on an `Err` value: Os { code: 123, kind: InvalidFilename, message: "文件名、目录名或卷标语法不正确。" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts' (39976) panicked at crates\qx-cli\src\workers\strategy_worker\prepared_command_replay.rs:737:17:
+recovery child failed: exit code: 101
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p qx-cli --bin qx-cli`

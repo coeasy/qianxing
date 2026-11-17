@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "evidence_id": "binance-public-endpoint-direct-ccxt-windows-2026-11-14",
+  "recorded_at": "2026-11-13T22:54:52Z",
+  "scope": "Anonymous read-only connectivity probe to Binance public market metadata; no authenticated operations",
+  "environment": {
+    "os": "Windows",
+    "workspace_commit": "8f97799403e570603df2d3f1eae20654a9e31c66",
+    "python_version": "3.13.13",
+    "ccxt_version": "4.5.78",
+    "client": "ccxt.binance",
+    "timeout_ms": 12000
+  },
+  "verification": {
+    "operation": "load_markets",
+    "request_method": "GET",
+    "remote_endpoint": "https://api.binance.com/api/v3/exchangeInfo",
+    "result": "blocked_by_connect_timeout",
+    "error_class": "RequestTimeout",
+    "error": "HTTPSConnectionPool(host='api.binance.com', port=443): Max retries exceeded with url: /api/v3/exchangeInfo (Caused by ConnectTimeoutError: connection timed out after 12.0 seconds)",
+    "markets_loaded": false,
+    "credentials_loaded": false,
+    "orders_sent": false,
+    "dataset_snapshot_created": false,
+    "backtest_or_report_created": false,
+    "alternate_endpoint_or_proxy_used": false
+  },
+  "limitations": [
+    "This records one Windows environment and one observation time; it does not establish general Binance API availability.",
+    "The request stopped during market metadata loading before OHLCV retrieval, backtest, or report generation.",
+    "This is a network reachability observation only and does not prove or change Binance connector lifecycle maturity."
+  ]
+}

@@ -1,0 +1,7 @@
+$ python3 benchmarks/run_prepared_evaluation_capacity.py --binary target/debug/qx-cli --queue-only --queue-backend file --queue-capacity 4096 --out maturity/evidence/job-queue-capacity-linux-file.json
+exit_code=0
+
+[stdout]
+{"crash_recovery_count": 0, "crash_recovery_samples": 0, "largest_journal_bytes": 0, "out": "maturity/evidence/job-queue-capacity-linux-file.json", "queue_backend": "file", "queue_kind": "job", "queue_overflow_rejected": true, "queue_pending": 4096, "result_sha256": "ded30905a207d62e298e3dd50f7a2711ec9d1da2773821b395dd7babe06ab06e", "workload_count": 0}
+
+[stderr]

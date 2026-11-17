@@ -5,9 +5,7 @@ use super::attach;
 use super::experiment_grid::{
     apply_parameters, expand_grid, normalized_strategy, validate_experiment_id, validate_grid,
 };
-use super::experiment_spec_artifact::{
-    serialize_experiment_input, verify_spec_artifact, write_spec_artifact,
-};
+use super::experiment_spec_artifact::{serialize_experiment_input, write_spec_artifact};
 use super::guard::guard_panics;
 use super::run_multi_market_depth_backtest::run_candidate;
 use crate::run_handle::CancellationToken;
@@ -20,8 +18,17 @@ use qx_strategy::{BuiltinStrategyKind, Strategy};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
+mod candidate_verification;
+mod identity;
+mod persistence;
 mod spec;
 mod types;
+use candidate_verification::{existing_result, verify_multi_market_depth_experiment_candidates};
+use identity::build_multi_market_depth_experiment_identity;
+use persistence::{
+    persist_multi_market_depth_experiment_result,
+    verify_persisted_multi_market_depth_experiment_result,
+};
 pub use types::*;
 
 pub const RUN_MULTI_MARKET_DEPTH_EXPERIMENT_SCHEMA_VERSION: u32 = 1;
@@ -90,10 +97,28 @@ fn run_inner(
     );
     let canonical_spec =
         serialize_experiment_input(&spec.to_json()?, context.code_commit(), identity)?;
+    let (canonical_run_spec, input_data_fingerprint) =
+        build_multi_market_depth_experiment_identity(spec, identity, context)?;
+    let canonical_run_spec_json = canonical_run_spec
+        .canonical_json()
+        .map_err(|error| invariant(format!("多市场盘口实验 CanonicalRunSpec 无效: {error}")))?;
+    let canonical_run_spec_fingerprint = canonical_run_spec
+        .fingerprint()
+        .map_err(|error| invariant(format!("多市场盘口实验 CanonicalRunSpec 指纹失败: {error}")))?;
     match std::fs::read_to_string(&artifact_path) {
         Ok(existing) => {
-            let result = existing_result(&existing, &spec_fingerprint, &spec.experiment_id)?;
-            verify_spec_artifact(&spec_path, &canonical_spec, "多市场盘口实验")?;
+            let result = existing_result(
+                &existing,
+                &spec_fingerprint,
+                &canonical_run_spec_json,
+                &canonical_run_spec_fingerprint,
+                &input_data_fingerprint,
+                &spec.experiment_id,
+                &canonical_run_spec,
+                &root,
+                &spec_path,
+                &canonical_spec,
+            )?;
             return Ok(Some(result));
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -268,22 +293,62 @@ fn run_inner(
         candidates,
         ranking,
         artifact_path: artifact_path.clone(),
+        canonical_run_spec_json: Some(canonical_run_spec_json),
+        canonical_run_spec_fingerprint: Some(canonical_run_spec_fingerprint),
+        input_data_fingerprint: Some(input_data_fingerprint.clone()),
+        result_hash: None,
+        run_manifest: None,
+        run_record: None,
+        artifact_locations: None,
     };
     if cancellation.is_some_and(CancellationToken::is_cancelled) {
         return Ok(None);
     }
-    let report = result.to_json()?;
     std::fs::create_dir_all(&root)
         .map_err(|error| AppError::from_io("创建多市场盘口实验目录", &error))?;
     write_spec_artifact(&spec_path, &canonical_spec, "多市场盘口实验")?;
-    if let Err(error) = write_text(&artifact_path, &report) {
+    verify_multi_market_depth_experiment_candidates(
+        &result,
+        &input_data_fingerprint,
+        &canonical_run_spec,
+        &root,
+    )?;
+    let persisted = persist_multi_market_depth_experiment_result(
+        result,
+        &canonical_run_spec,
+        &root,
+        &artifact_path,
+        &spec_path,
+    )?;
+    if let Err(error) = write_text(&artifact_path, &persisted.to_json()?) {
         if let Ok(existing) = std::fs::read_to_string(&artifact_path) {
-            return existing_result(&existing, &result.spec_fingerprint, &result.experiment_id)
-                .map(Some);
+            return existing_result(
+                &existing,
+                &persisted.spec_fingerprint,
+                persisted
+                    .canonical_run_spec_json
+                    .as_deref()
+                    .unwrap_or_default(),
+                persisted
+                    .canonical_run_spec_fingerprint
+                    .as_deref()
+                    .unwrap_or_default(),
+                persisted
+                    .input_data_fingerprint
+                    .as_deref()
+                    .unwrap_or_default(),
+                &persisted.experiment_id,
+                &canonical_run_spec,
+                &root,
+                &spec_path,
+                &canonical_spec,
+            )
+            .map(Some);
         }
         return Err(error);
     }
-    Ok(Some(result))
+    verify_persisted_multi_market_depth_experiment_result(&persisted)?;
+    Ok(Some(persisted))
 }
 
 fn target_market(
@@ -320,33 +385,6 @@ fn validate_identity(
         ));
     }
     identity.validate_for_slot(&spec.target_strategy_id, &target_market(spec)?.strategy)
-}
-
-fn existing_result(
-    payload: &str,
-    fingerprint: &str,
-    experiment_id: &str,
-) -> Result<RunMultiMarketDepthExperimentResult, AppError> {
-    let existing: RunMultiMarketDepthExperimentResult =
-        serde_json::from_str(payload).map_err(|error| {
-            AppError::new(
-                AppErrorCategory::StorageFailure,
-                format!("既有多市场盘口实验报告无效: {error}"),
-            )
-        })?;
-    if existing.spec_fingerprint != fingerprint || existing.experiment_id != experiment_id {
-        return Err(AppError::new(
-            AppErrorCategory::Conflict,
-            "多市场盘口实验身份已存在且规格不同",
-        ));
-    }
-    if existing.to_json()? != payload {
-        return Err(AppError::new(
-            AppErrorCategory::Conflict,
-            "既有多市场盘口实验报告与规范序列化不一致",
-        ));
-    }
-    Ok(existing)
 }
 
 fn failed_candidate(

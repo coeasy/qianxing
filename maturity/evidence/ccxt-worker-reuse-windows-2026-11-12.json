@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "evidence_id": "ccxt-worker-reuse-windows-2026-11-12",
+  "recorded_at": "2026-11-12",
+  "scope": "ccxt-builtin public fee path reuses the OHLCV worker for market metadata",
+  "environment": {
+    "os": "Windows",
+    "workspace_commit": "81058b8c"
+  },
+  "verification": {
+    "command": "cargo test --offline --locked -j 1 -p qx-cli --test backtest_contracts ccxt_builtin_public_default_fees_are_frozen_and_consumed_by_backtest",
+    "test": "ccxt_builtin_backtest_parity::ccxt_builtin_public_default_fees_are_frozen_and_consumed_by_backtest",
+    "result": "passed",
+    "passed": 1,
+    "failed": 0,
+    "duration_seconds": 1.38
+  },
+  "assertions": [
+    "OHLCV, resolve_market, and fetch_leverage_tiers requests use one worker process identity",
+    "public maker and taker fee rates are frozen with account_specific=false",
+    "frozen fees are bound into the runtime snapshot and consumed by the shared backtest"
+  ],
+  "limitations": [
+    "The test uses a deterministic local fake CCXT worker and makes no exchange network request.",
+    "This does not prove successful real-market data retrieval or exchange Demo/Test lifecycle behavior.",
+    "OKX, Binance, and Bitget connector maturity remains implemented-unverified."
+  ]
+}

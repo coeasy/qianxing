@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/binance-history-acquisition-evidence-v1.json",
+  "title": "Binance Historical Acquisition Evidence v1",
+  "description": "Provenance, archive checksum, quality and licensing record for a captured Binance Vision historical dataset. It records hashes, not the licensed market data itself.",
+  "type": "object",
+  "required": ["schema_version", "kind", "source_project", "archive_base_url", "symbol", "interval", "timezone", "timestamp_semantics", "archive_timestamp_unit", "start_date", "end_date", "rows", "coverage_days_contiguous", "archive_checksums_verified", "source", "frame_sha256", "snapshot_captured_at_ms", "archive_manifest", "capture_location", "acquisition_script", "license", "dataset", "snapshot_sha256", "snapshot_file_sha256", "reproduction"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "kind": {"const": "binance-spot-historical-klines-acceptance-v1"},
+    "source_project": {"type": "string", "format": "uri"},
+    "archive_base_url": {"type": "string", "format": "uri"},
+    "symbol": {"type": "string", "pattern": "^[A-Z0-9]+$"},
+    "interval": {"const": "1d"},
+    "timezone": {"const": "UTC"},
+    "timestamp_semantics": {"const": "bar_open"},
+    "archive_timestamp_unit": {"type": "string", "minLength": 1},
+    "start_date": {"type": "string", "format": "date"},
+    "end_date": {"type": "string", "format": "date"},
+    "rows": {"type": "integer", "minimum": 1},
+    "coverage_days_contiguous": {"const": true},
+    "archive_checksums_verified": {"const": true},
+    "source": {"type": "string", "minLength": 1},
+    "frame_sha256": {"$ref": "#/$defs/sha256"},
+    "snapshot_captured_at_ms": {"type": "integer", "minimum": 1},
+    "archive_manifest": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/archive"}},
+    "capture_location": {"type": "string", "minLength": 1},
+    "acquisition_script": {"type": "string", "minLength": 1},
+    "license": {
+      "type": "object",
+      "required": ["name", "terms_url", "attribution", "use_scope", "commercial_or_live_use_authorized", "data_included_in_repository", "derivative_redistribution_conditions"],
+      "properties": {
+        "name": {"const": "CC BY-NC-SA 4.0"},
+        "terms_url": {"type": "string", "format": "uri"},
+        "attribution": {"const": "Binance Vision"},
+        "use_scope": {"type": "string", "minLength": 1},
+        "commercial_or_live_use_authorized": {"const": false},
+        "data_included_in_repository": {"const": false},
+        "derivative_redistribution_conditions": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "dataset": {
+      "type": "object",
+      "required": ["dataset_id", "version", "instrument", "instrument_role", "frequency_ms", "timezone", "manifest_fingerprint", "content_sha256", "row_count", "duplicate_rows", "out_of_order_rows", "missing_intervals", "coverage_start_ts_ms", "coverage_end_ts_ms"],
+      "properties": {
+        "dataset_id": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "instrument": {"type": "string", "minLength": 1},
+        "instrument_role": {"const": "crypto_spot"},
+        "frequency_ms": {"const": 86400000},
+        "timezone": {"const": "UTC"},
+        "manifest_fingerprint": {"type": "string", "minLength": 1},
+        "content_sha256": {"$ref": "#/$defs/sha256"},
+        "row_count": {"type": "integer", "minimum": 1},
+        "duplicate_rows": {"const": 0},
+        "out_of_order_rows": {"const": 0},
+        "missing_intervals": {"const": 0},
+        "coverage_start_ts_ms": {"type": "integer", "minimum": 1},
+        "coverage_end_ts_ms": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "snapshot_sha256": {"$ref": "#/$defs/sha256"},
+    "snapshot_file_sha256": {"$ref": "#/$defs/sha256"},
+    "reproduction": {
+      "type": "object",
+      "required": ["requires_fresh_output_directory", "pins_monthly_archive_sha256", "pins_snapshot_capture_time", "validate_command", "snapshot_command"],
+      "properties": {
+        "requires_fresh_output_directory": {"const": true},
+        "pins_monthly_archive_sha256": {"const": true},
+        "pins_snapshot_capture_time": {"const": true},
+        "validate_command": {"type": "string", "minLength": 1},
+        "snapshot_command": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "archive": {
+      "type": "object",
+      "required": ["url", "checksum_url", "archive", "archive_sha256", "checksum_file_sha256", "rows"],
+      "properties": {
+        "url": {"type": "string", "format": "uri"},
+        "checksum_url": {"type": "string", "format": "uri"},
+        "archive": {"type": "string", "minLength": 1},
+        "archive_sha256": {"$ref": "#/$defs/sha256"},
+        "checksum_file_sha256": {"$ref": "#/$defs/sha256"},
+        "rows": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

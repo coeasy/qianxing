@@ -106,6 +106,7 @@ fn io_errors_are_classified_by_kind_not_lumped_into_storage_failure() {
 fn app_error_json_carries_every_field_the_four_entrypoints_compare() {
     let error = AppError::new(AppErrorCategory::Conflict, "同一 run_id 已有不同内容")
         .with_correlation_id("run-42")
+        .with_reason_code("run_id_conflict")
         .with_source_code("AMBIGUOUS");
     let value: serde_json::Value =
         serde_json::from_str(&error.to_json()).expect("错误 JSON 可解析");
@@ -120,6 +121,7 @@ fn app_error_json_carries_every_field_the_four_entrypoints_compare() {
         "category",
         "correlation_id",
         "message",
+        "reason_code",
         "retry",
         "safe_to_retry",
         "source_code",
@@ -136,6 +138,7 @@ fn app_error_json_carries_every_field_the_four_entrypoints_compare() {
     assert_eq!(value["retry"], "AFTER_RECONCILE");
     assert_eq!(value["safe_to_retry"], false);
     assert_eq!(value["correlation_id"], "run-42");
+    assert_eq!(value["reason_code"], "run_id_conflict");
 }
 
 #[test]
@@ -148,6 +151,7 @@ fn an_unset_correlation_id_is_null_and_never_an_invented_placeholder() {
         value["correlation_id"].is_null(),
         "没挂 id 就必须是 null——编一个占位串会让「这一层没有 id」与「这一层有 id」长得一样"
     );
+    assert!(value["reason_code"].is_null());
     assert!(value["source_code"].is_null());
 }
 

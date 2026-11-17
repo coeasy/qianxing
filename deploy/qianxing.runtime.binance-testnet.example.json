@@ -4,9 +4,18 @@
   "_comment": "Binance Spot 测试网络验收配置：执行与对账 worker 默认启用，凭据只从环境变量读取；tools/binance_testnet_acceptance.py 会覆盖 storage.data_dir 后使用本文件。",
   "api": {
     "bind": "127.0.0.1:18083",
-    "transport": "plaintext",
-    "tls": null,
-    "operators": {}
+    "transport": "mtls",
+    "tls": {
+      "certificate_chain": "certs/server.pem",
+      "private_key": "certs/server.key",
+      "client_ca": "certs/client-ca.pem"
+    },
+    "operators": {
+      "local-operator": {
+        "permission": "Trading",
+        "certificate": "certs/local-operator.pem"
+      }
+    }
   },
   "storage": {
     "backend": "files",
@@ -102,6 +111,7 @@
     "state_path": "scheduler.json",
     "jobs_path": "qianxing.scheduler.jobs.example.json",
     "job_queue_path": "job-queue",
+    "max_pending_jobs": 4096,
     "tick_interval_ms": 1000
   },
   "strategy": {

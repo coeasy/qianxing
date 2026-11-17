@@ -18,10 +18,15 @@ fn binary() -> PathBuf {
 
 /// 每个用例一个独立目录；集成用例并行跑，共用目录会互相踩产物。
 fn temp_base(label: &str) -> PathBuf {
-    let base = std::env::temp_dir().join(format!(
-        "qianxing-backtest-acceptance-{label}-{}",
-        std::process::id()
-    ));
+    let base = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("qx-cli has a repository root")
+        .join("target")
+        .join(format!(
+            "qianxing-backtest-acceptance-{label}-{}",
+            std::process::id()
+        ));
     let _ = std::fs::remove_dir_all(&base);
     std::fs::create_dir_all(&base).expect("创建临时目录失败");
     base
@@ -140,7 +145,7 @@ fn builtin_runtime_backtest_publishes_a_current_summary() {
     let payload: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&summary).expect("读取 summary"))
             .expect("summary JSON 有效");
-    assert_eq!(payload["schema_version"], 7);
+    assert_eq!(payload["schema_version"], 8);
     assert_eq!(payload["result_hash"], payload["replay"]["log_digest"]);
     let manifest = payload["run_manifest"]
         .as_str()
@@ -166,15 +171,9 @@ fn builtin_runtime_backtest_publishes_a_current_summary() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// 从摘要里取 `result_hash`（不引入 JSON 依赖，按键值对切）。
-fn result_hash(project: &Path) -> String {
-    let summaries: Vec<PathBuf> = std::fs::read_dir(project.join("data/qianxing/runs"))
-        .expect("读取 runs 目录失败")
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| path.to_string_lossy().ends_with(".summary.json"))
-        .collect();
-    assert!(!summaries.is_empty(), "没有 summary 产物");
-    let text = std::fs::read_to_string(&summaries[0]).expect("读取摘要失败");
+/// 从本轮 backtest 明确点名的摘要里取 `result_hash`，避免 quickstart 产物与目录枚举顺序影响结果。
+fn result_hash(summary: &Path) -> String {
+    let text = std::fs::read_to_string(summary).expect("读取摘要失败");
     let key = "\"result_hash\"";
     let start = text.find(key).expect("摘要里没有 result_hash") + key.len();
     let rest = &text[start..];
@@ -221,8 +220,12 @@ fn independent_projects_agree_on_result_hash_without_credentials() {
     for label in ["a", "b"] {
         let project = root.join(label);
         quickstart(&root, &project);
-        backtest(&project, &root);
-        hashes.push(result_hash(&project));
+        let artifacts = backtest(&project, &root);
+        let summary = artifacts
+            .iter()
+            .find(|path| path.to_string_lossy().ends_with(".summary.json"))
+            .expect("backtest 输出必须点名 summary 产物");
+        hashes.push(result_hash(summary));
 
         let (code, output) = run(
             &root,

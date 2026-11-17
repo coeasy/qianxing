@@ -1,0 +1,226 @@
+$ cargo test -p qx-app interrupted_ --offline -j1
+exit_code=0
+
+[stdout]
+
+running 2 tests
+test artifact_store::sink::tests::interrupted_committed_bundle_keeps_new_complete_set ... ok
+test artifact_store::sink::tests::interrupted_prepared_bundle_recovers_old_complete_set ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 164 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 25 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.00s
+
+
+[stderr]
+   Compiling qx-risk v0.3.0 (D:\aex_work\qianxing\crates\qx-risk)
+   Compiling qx-strategy v0.3.0 (D:\aex_work\qianxing\crates\qx-strategy)
+   Compiling qx-zhenlu v0.3.0 (D:\aex_work\qianxing\crates\qx-zhenlu)
+   Compiling qx-xingban v0.3.0 (D:\aex_work\qianxing\crates\qx-xingban)
+   Compiling qx-provider v0.3.0 (D:\aex_work\qianxing\crates\qx-provider)
+   Compiling qx-control v0.3.0 (D:\aex_work\qianxing\crates\qx-control)
+   Compiling qx-app v0.3.0 (D:\aex_work\qianxing\crates\qx-app)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2m 53s
+     Running unittests src\lib.rs (target\debug\deps\qx_app-48ed20529793c5a3.exe)
+     Running tests\account_ownership.rs (target\debug\deps\account_ownership-f250bb3afa1074b7.exe)
+     Running tests\algo_execution.rs (target\debug\deps\algo_execution-44d44e28dc351be6.exe)
+     Running tests\custom_depth_strategy.rs (target\debug\deps\custom_depth_strategy-e4e1f08d3037f843.exe)
+     Running tests\custom_strategy.rs (target\debug\deps\custom_strategy-88563dc3dbe64430.exe)
+     Running tests\dataset_manifest_validation.rs (target\debug\deps\dataset_manifest_validation-d18df14ef50d072f.exe)
+     Running tests\depth_backtest.rs (target\debug\deps\depth_backtest-e7b9da7a452cf790.exe)
+     Running tests\depth_experiment.rs (target\debug\deps\depth_experiment-a8215cab83bbacc8.exe)
+     Running tests\depth_sizing.rs (target\debug\deps\depth_sizing-cd4eb783e8978b13.exe)
+     Running tests\error_contract.rs (target\debug\deps\error_contract-72b5d5e60d9d59fe.exe)
+     Running tests\execution_binding.rs (target\debug\deps\execution_binding-c46d9af8dd6b3b0a.exe)
+     Running tests\experiment_split.rs (target\debug\deps\experiment_split-23e55d13a7be7124.exe)
+     Running tests\independent_consumer.rs (target\debug\deps\independent_consumer-f9dfe1eac16520af.exe)
+     Running tests\multi_account_backtest.rs (target\debug\deps\multi_account_backtest-e448dfb4ed3cea11.exe)
+     Running tests\multi_account_depth_backtest.rs (target\debug\deps\multi_account_depth_backtest-e87db155d1510788.exe)
+     Running tests\multi_account_joint_backtest.rs (target\debug\deps\multi_account_joint_backtest-c255c51e4a1b3c93.exe)
+     Running tests\multi_builtin_backtest.rs (target\debug\deps\multi_builtin_backtest-c902034cfcd8cb2d.exe)
+     Running tests\multi_leg_backtest.rs (target\debug\deps\multi_leg_backtest-535aa98504718595.exe)
+     Running tests\multi_leg_experiment.rs (target\debug\deps\multi_leg_experiment-672dc00663204b2c.exe)
+     Running tests\multi_market_backtest.rs (target\debug\deps\multi_market_backtest-aa27d9e59686aab4.exe)
+     Running tests\multi_market_depth_backtest.rs (target\debug\deps\multi_market_depth_backtest-2ac4ba942ff1b383.exe)
+     Running tests\multi_market_experiment.rs (target\debug\deps\multi_market_experiment-eba1883469bc4494.exe)
+     Running tests\paper_available_margin.rs (target\debug\deps\paper_available_margin-f2f78569e015c2b7.exe)
+     Running tests\portfolio_backtest.rs (target\debug\deps\portfolio_backtest-86961c34d0c1406e.exe)
+     Running tests\portfolio_spec.rs (target\debug\deps\portfolio_spec-c3e4f186fb7152bf.exe)
+     Running tests\quick_research.rs (target\debug\deps\quick_research-d735bf962bc12204.exe)
+     Running tests\run_handles.rs (target\debug\deps\run_handles-6720acc91a0a732f.exe)
+     Running tests\sizing.rs (target\debug\deps\sizing-127ef3b619d9d6ff.exe)
+     Running tests\spec_contract.rs (target\debug\deps\spec_contract-64303f02839b9572.exe)
+     Running tests\strategy_backtest_workflow.rs (target\debug\deps\strategy_backtest_workflow-76459f4b2bdb5fcc.exe)
+     Running tests\strategy_engine.rs (target\debug\deps\strategy_engine-dc305eefd49a0e6e.exe)
+     Running tests\strategy_exact_intent.rs (target\debug\deps\strategy_exact_intent-91d13543569a2528.exe)
+     Running tests\strategy_preflight.rs (target\debug\deps\strategy_preflight-e376dd3190a9fd62.exe)
+     Running tests\strategy_selection.rs (target\debug\deps\strategy_selection-bb69b490436f44c8.exe)
+     Running tests\use_cases.rs (target\debug\deps\use_cases-ebe72e7ec0a9a90b.exe)

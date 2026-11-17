@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "binance_oco_group_cancel_control_local_validation",
+  "generated_at_utc": "2026-11-12T04:18:00Z",
+  "source": {
+    "git_head": "d829c844",
+    "worktree_dirty": true,
+    "dirty_paths_related_to_this_evidence": [
+      "crates/qx-control/src/lib.rs",
+      "crates/qx-app/src/cases/validate_trade_control.rs",
+      "crates/qx-cli/src/api_service/api_service_builder.rs",
+      "crates/qx-cli/tests/unit/control_command_executor_coverage.rs",
+      "crates/qx-service/src/api_host.rs",
+      "crates/qx-service/src/binance_execution_host.rs",
+      "crates/qx-service/src/cancel_order_host.rs",
+      "deploy/README.md",
+      "docs/牵星全量优化方案与竞品超越路线图-2026-11-11.md",
+      "maturity/capabilities.yaml",
+      "maturity/capability-matrix.yaml",
+      "schemas/trade-control-spec-v1.json",
+      "web/console/app.js",
+      "web/console/index.html",
+      "python/qianxing/client_trading.py"
+    ]
+  },
+  "environment": {
+    "os": "Windows 11",
+    "rustc": "1.98.1",
+    "dependency_resolution": "offline, locked"
+  },
+  "commands": [
+    {
+      "argv": ["cargo", "check", "--offline", "--locked", "-j2", "-p", "qx-control", "-p", "qx-app", "-p", "qx-service", "-p", "qx-cli"],
+      "exit_code": 0,
+      "result": "passed"
+    },
+    {
+      "argv": ["cargo", "test", "--offline", "--locked", "-j2", "-p", "qx-service", "cancel_order_group_routes_only_to_the_matching_binance_account"],
+      "exit_code": 0,
+      "selected_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "result": "passed"
+    },
+    {
+      "argv": ["cargo", "test", "--offline", "--locked", "-j2", "-p", "qx-control", "cancel_order_group_command", "--lib"],
+      "exit_code": 0,
+      "selected_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "result": "passed"
+    },
+    {
+      "argv": ["cargo", "test", "--offline", "--locked", "-j2", "-p", "qx-app", "cancel_order_group_is_live_only_and_binds_account_and_venue", "--lib"],
+      "exit_code": 0,
+      "selected_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "result": "passed"
+    },
+    {
+      "argv": ["python", "-m", "pytest", "-q", "python/tests/test_app_use_cases.py", "-k", "shared_rust_control_contract"],
+      "exit_code": 0,
+      "selected_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "result": "passed"
+    },
+    {
+      "argv": ["node", "--check", "web/console/app.js"],
+      "exit_code": 0,
+      "result": "passed"
+    },
+    {
+      "argv": ["cargo", "fmt", "--all", "--", "--check"],
+      "exit_code": 0,
+      "result": "passed"
+    },
+    {
+      "argv": ["cargo", "test", "--offline", "--locked", "-j2", "-p", "qx-cli", "--bin", "qx-cli", "control_command_"],
+      "environment": "Windows 11, Rust 1.98.1",
+      "exit_code": "blocked",
+      "blocker": "MSVC alloca.c build script failed with D8050 while emitting debug records",
+      "result": "not_run_to_completion"
+    },
+    {
+      "argv": ["podman run", "mirror.gcr.io/library/rust:1.98.1-bookworm", "cargo test --offline --locked ..."],
+      "environment": "Linux container on Podman",
+      "exit_code": "blocked",
+      "blocker": "Linux container had no complete offline Cargo registry/index cache; online retry did not finish within the bounded run",
+      "result": "not_run_to_completion"
+    }
+  ],
+  "scope_limitations": [
+    "These checks validate control parsing, Live-only workflow gating, worker routing, Python contract alignment, and frontend syntax; they do not execute a venue request.",
+    "No Binance API request was made. Binance Testnet credentials, permissions, exchange-side OCO cancellation, racing fills, and restart recovery remain unverified.",
+    "The control path cancels an active child and relies on Binance OCO semantics to cancel the list; it does not call the dedicated DELETE /api/v3/orderList endpoint.",
+    "Linux Podman verification of this exact worktree did not complete because dependencies were unavailable offline and online resolution stalled. Windows CLI dispatch coverage remains blocked by the MSVC D8050 toolchain issue.",
+    "This is local code evidence only and is not sandbox or production acceptance evidence."
+  ]
+}

@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "local_worker_metrics_scrape",
+  "captured_at_utc": "2026-11-10T04:28:40Z",
+  "source_commit": "5f49ae830270ae174a90810500232dec580c00db",
+  "binary": {
+    "path": "dist/release-candidate-v0.4.0-windows-x86_64-5f49ae83/qx-cli-v0.4.0-Windows-X64.exe",
+    "sha256": "f2d7260ae119b0a25c9571584684106987a5c1fb6c26d62ccf2edb9b64ee04ba",
+    "identity": "qianxing 0.4.0 (build 5f49ae8, target x86_64-pc-windows-msvc, profile release, schemas 9e1b1153f5086e9ec7162064a6d0249d476e9c954e258d5eff722d75165ad05e)"
+  },
+  "environment": {
+    "platform": "windows-x86_64",
+    "os": "Windows 11 build 22631"
+  },
+  "runtime_config": {
+    "template": "deploy/qianxing.runtime.example.json",
+    "config_fingerprint": "d9ce6e0dfc18226f7eb56863da5cd9ffaaeb7aa9ec2d6ee9aa6a6f0b37feb99c",
+    "sha256": "6669cf88a73c2f4f2f62ea76523df3ed791abab2633bfe1dba82bdeee95eb8c5",
+    "isolated_data_directory": "target/accept-binance-worker-metrics-2026-11-10/data",
+    "enabled_workers": [
+      "api",
+      "binance-market-testnet"
+    ],
+    "disabled_workers": [
+      "scheduler",
+      "strategy-paper",
+      "reconciler-main",
+      "binance-execution-main"
+    ]
+  },
+  "worker": {
+    "id": "binance-market-testnet",
+    "role": "market_data",
+    "venue_id": "binance-testnet",
+    "endpoint": "wss://stream.testnet.binance.vision/ws",
+    "symbols": [
+      "BTCUSDT.BINANCE"
+    ],
+    "command": "qx-cli binance-worker <isolated-runtime-config> binance-market-testnet",
+    "shutdown": "Ctrl+C; worker logged shutdown request and wrote qx_worker_up=0"
+  },
+  "scrape": {
+    "url": "http://127.0.0.1:18085/metrics",
+    "http_statuses": [
+      200,
+      200,
+      200,
+      200
+    ],
+    "content_type": "text/plain; version=0.0.4; charset=utf-8",
+    "samples": [
+      {
+        "at_utc": "2026-11-10T04:27:05.4629160Z",
+        "ingest_attempts": 31,
+        "ingested_events": 31,
+        "failures": 0,
+        "worker_up": 1
+      },
+      {
+        "at_utc": "2026-11-10T04:27:20.4968079Z",
+        "ingest_attempts": 42,
+        "ingested_events": 42,
+        "failures": 0,
+        "worker_up": 1
+      },
+      {
+        "at_utc": "2026-11-10T04:27:35.5321647Z",
+        "ingest_attempts": 56,
+        "ingested_events": 56,
+        "failures": 0,
+        "worker_up": 1
+      },
+      {
+        "at_utc": "2026-11-10T04:27:50.5479693Z",
+        "ingest_attempts": 69,
+        "ingested_events": 69,
+        "failures": 0,
+        "worker_up": 1
+      }
+    ],
+    "prometheus_text_file": "maturity/evidence/binance-market-data-worker-metrics-scrape-2026-11-10.prom",
+    "prometheus_text_sha256": "aa9ee95392bde977fdaeb1c4ba2f91e287dd7bd4a949fbdf806aa5a6c10fedce"
+  },
+  "observations_after_shutdown": {
+    "qx_worker_up": 0,
+    "qx_pipeline_ingest_attempts_total": 74,
+    "qx_pipeline_ingested_events_total": 74,
+    "qx_pipeline_deduplicated_events_total": 0,
+    "qx_pipeline_transient_retries_total": 0,
+    "qx_pipeline_refreshes_total": 74,
+    "qx_pipeline_failures_total": 0,
+    "qx_pipeline_ingest_duration_seconds_total": 0.8397221,
+    "qx_pipeline_ingest_duration_seconds_max": 0.0795923,
+    "qx_pipeline_ingest_warning_budget_seconds": 0.1,
+    "qx_pipeline_ingest_budget_exceeded": 0
+  },
+  "scope": {
+    "venue_connection": "public Binance Spot Testnet market-data websocket only",
+    "credentials_used": false,
+    "private_endpoints_called": false,
+    "execution_or_reconciliation_workers_enabled": false,
+    "orders_submitted": 0
+  },
+  "limitations": [
+    "One approximately 60-second Windows run; this is not an uptime or p99 latency study.",
+    "Only the Binance MarketData worker is covered; CCXT and authenticated execution/reconciliation workers remain unverified.",
+    "The public testnet stream proves market-data ingestion and metrics scrape behavior only, not authenticated sandbox order acceptance."
+  ]
+}

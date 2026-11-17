@@ -376,6 +376,14 @@
                       "type": "integer",
                       "minimum": 1
                     },
+                    "acquisition_cutoff_ms": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "excluded_unclosed_rows": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
                     "timezone": {
                       "type": "string",
                       "minLength": 1
@@ -399,7 +407,7 @@
             "components": {
               "type": "array",
               "description": "多输入运行的有序组成项；multi-barframe 必须为 primary、reference 两项，多市场 BarFrame/DepthFrame 按唯一 market:<instrument> 登记，普通输入省略。",
-              "minItems": 2,
+              "minItems": 1,
               "items": {
                 "type": "object",
                 "required": [
@@ -472,6 +480,8 @@
                       "out_of_order_rows": { "type": "integer", "minimum": 0 },
                       "missing_intervals": { "type": "integer", "minimum": 0 },
                       "interval_ms": { "type": "integer", "minimum": 1 },
+                      "acquisition_cutoff_ms": { "type": "integer", "minimum": 0 },
+                      "excluded_unclosed_rows": { "type": "integer", "minimum": 0 },
                       "timezone": { "type": "string", "minLength": 1 },
                       "corporate_action_coverage": { "type": "boolean" },
                       "usable_tiers": {
@@ -490,6 +500,34 @@
           "allOf": [
             {
               "if": {
+                "not": {
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "multi-barframe",
+                        "multi-market-barframe",
+                        "multi-market-depthframe"
+                      ]
+                    }
+                  },
+                  "required": ["kind"]
+                }
+              },
+              "then": {
+                "properties": { "components": { "maxItems": 0 } }
+              }
+            },
+            {
+              "if": {
+                "properties": { "kind": { "const": "multi-barframe" } },
+                "required": ["kind"]
+              },
+              "then": {
+                "properties": { "components": { "minItems": 2, "maxItems": 2 } }
+              }
+            },
+            {
+              "if": {
                 "properties": {
                   "kind": {
                     "const": "multi-market-barframe"
@@ -500,7 +538,8 @@
               "then": {
                 "properties": {
                   "components": {
-                    "minItems": 3
+                    "minItems": 1,
+                    "maxItems": 32
                   }
                 }
               }
@@ -530,6 +569,17 @@
             "calendar_input_path": {"type": "string", "minLength": 1},
             "calendar_input_sha256": {"type": "string", "minLength": 1},
             "analysis": {"type": "string", "minLength": 2, "description": "Serialized JSON snapshot; verifier recomputes it from input_path and optional calendar_input_path."}
+          },
+          "additionalProperties": false
+        },
+        "strategy_diagnostics": {
+          "type": "object",
+          "description": "Optional strategy-bias diagnostic input. A single Bar run carries one object; a multi-market Bar or depth run may carry a validated per-market JSON array. Offline verification checks the exact file digest and binds every diagnostic to its strategy, instrument, input identity and coverage; it does not reproduce the diagnostic calculation.",
+          "required": ["kind", "input_path", "input_sha256"],
+          "properties": {
+            "kind": {"type": "string", "enum": ["strategy-bias-diagnostics", "strategy-bias-diagnostics-array", "strategy-bias-diagnostics-depth-array"]},
+            "input_path": {"type": "string", "minLength": 1},
+            "input_sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"}
           },
           "additionalProperties": false
         },

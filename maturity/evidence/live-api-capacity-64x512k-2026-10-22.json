@@ -1,0 +1,462 @@
+{
+  "schema_version": 1,
+  "workload": "live-loopback-api-synthetic-crypto-spot-bar-v1",
+  "bars_per_run": 512000,
+  "requested_concurrency": 64,
+  "accepted_runs": 64,
+  "start_failures": {},
+  "run_terminal_statuses": {
+    "live-capacity-000": "succeeded",
+    "live-capacity-001": "succeeded",
+    "live-capacity-002": "succeeded",
+    "live-capacity-003": "succeeded",
+    "live-capacity-004": "succeeded",
+    "live-capacity-005": "succeeded",
+    "live-capacity-006": "succeeded",
+    "live-capacity-007": "succeeded",
+    "live-capacity-008": "succeeded",
+    "live-capacity-009": "succeeded",
+    "live-capacity-010": "succeeded",
+    "live-capacity-011": "succeeded",
+    "live-capacity-012": "succeeded",
+    "live-capacity-013": "succeeded",
+    "live-capacity-014": "succeeded",
+    "live-capacity-015": "succeeded",
+    "live-capacity-016": "succeeded",
+    "live-capacity-017": "succeeded",
+    "live-capacity-018": "succeeded",
+    "live-capacity-019": "succeeded",
+    "live-capacity-020": "succeeded",
+    "live-capacity-021": "succeeded",
+    "live-capacity-022": "succeeded",
+    "live-capacity-023": "succeeded",
+    "live-capacity-024": "succeeded",
+    "live-capacity-025": "succeeded",
+    "live-capacity-026": "succeeded",
+    "live-capacity-027": "succeeded",
+    "live-capacity-028": "succeeded",
+    "live-capacity-029": "succeeded",
+    "live-capacity-030": "succeeded",
+    "live-capacity-031": "succeeded",
+    "live-capacity-032": "succeeded",
+    "live-capacity-033": "succeeded",
+    "live-capacity-034": "succeeded",
+    "live-capacity-035": "succeeded",
+    "live-capacity-036": "succeeded",
+    "live-capacity-037": "succeeded",
+    "live-capacity-038": "succeeded",
+    "live-capacity-039": "succeeded",
+    "live-capacity-040": "succeeded",
+    "live-capacity-041": "succeeded",
+    "live-capacity-042": "succeeded",
+    "live-capacity-043": "succeeded",
+    "live-capacity-044": "succeeded",
+    "live-capacity-045": "succeeded",
+    "live-capacity-046": "succeeded",
+    "live-capacity-047": "succeeded",
+    "live-capacity-048": "succeeded",
+    "live-capacity-049": "succeeded",
+    "live-capacity-050": "succeeded",
+    "live-capacity-051": "succeeded",
+    "live-capacity-052": "succeeded",
+    "live-capacity-053": "succeeded",
+    "live-capacity-054": "succeeded",
+    "live-capacity-055": "succeeded",
+    "live-capacity-056": "succeeded",
+    "live-capacity-057": "succeeded",
+    "live-capacity-058": "succeeded",
+    "live-capacity-059": "succeeded",
+    "live-capacity-060": "succeeded",
+    "live-capacity-061": "succeeded",
+    "live-capacity-062": "succeeded",
+    "live-capacity-063": "succeeded"
+  },
+  "all_accepted_succeeded": true,
+  "starts_by_http_status": {
+    "200": 64
+  },
+  "start_latency_ms": {
+    "p50": 732.202,
+    "p95": 3767.352
+  },
+  "health_latency_ms": {
+    "p50": 285.119,
+    "p95": 479.16
+  },
+  "initial_watcher_metrics": {
+    "qx_app_run_watchers_active": 0,
+    "qx_app_run_watcher_capacity": 64,
+    "qx_app_run_watcher_rejections_total": 0
+  },
+  "admission_watcher_samples": [
+    {
+      "at_ms": 5980.63,
+      "http_status": 200,
+      "qx_app_run_watchers_active": 64,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 0
+    }
+  ],
+  "loaded_watcher_metrics": {
+    "qx_app_run_watchers_active": 64,
+    "qx_app_run_watcher_capacity": 64,
+    "qx_app_run_watcher_rejections_total": 1
+  },
+  "final_watcher_metrics": {
+    "qx_app_run_watchers_active": 0,
+    "qx_app_run_watcher_capacity": 64,
+    "qx_app_run_watcher_rejections_total": 1
+  },
+  "overflow_probe": {
+    "run_id": "live-capacity-064",
+    "status": 503,
+    "elapsed_ms": 5059.459,
+    "body": {
+      "action": "RETRY_LATER",
+      "category": "TIMEOUT",
+      "correlation_id": null,
+      "message": "异步运行持久化观察器已满；任务未启动，请稍后重试",
+      "retry": "SAFE_NOW",
+      "safe_to_retry": true,
+      "source_code": null
+    }
+  },
+  "recovered_run": {
+    "run_id": "live-capacity-065",
+    "status": 200,
+    "elapsed_ms": 33.196,
+    "body": {
+      "error": null,
+      "result": null,
+      "run_id": "live-capacity-065",
+      "status": "running"
+    },
+    "terminal_status": "succeeded"
+  },
+  "watcher_saturation_and_recovery_proven": true,
+  "observed_peak_tree_rss_bytes": 11587563520,
+  "observed_peak_process_count": 2,
+  "elapsed_ms": 66492.003,
+  "probe_count": 30,
+  "probes": [
+    {
+      "at_ms": 12248.06,
+      "health": 200,
+      "health_ms": 421.356,
+      "metrics": 200,
+      "metrics_ms": 298.406,
+      "qx_app_run_watchers_active": 64,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 13878.736,
+      "health": 200,
+      "health_ms": 345.897,
+      "metrics": 200,
+      "metrics_ms": 284.171,
+      "qx_app_run_watchers_active": 64,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 15382.274,
+      "health": 200,
+      "health_ms": 341.866,
+      "metrics": 200,
+      "metrics_ms": 161.472,
+      "qx_app_run_watchers_active": 64,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 16955.417,
+      "health": 200,
+      "health_ms": 264.323,
+      "metrics": 200,
+      "metrics_ms": 308.278,
+      "qx_app_run_watchers_active": 64,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 18435.249,
+      "health": 200,
+      "health_ms": 154.646,
+      "metrics": 200,
+      "metrics_ms": 324.698,
+      "qx_app_run_watchers_active": 64,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 20125.394,
+      "health": 200,
+      "health_ms": 286.959,
+      "metrics": 200,
+      "metrics_ms": 403.002,
+      "qx_app_run_watchers_active": 64,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 21681.81,
+      "health": 200,
+      "health_ms": 236.166,
+      "metrics": 200,
+      "metrics_ms": 319.909,
+      "qx_app_run_watchers_active": 64,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 23221.052,
+      "health": 200,
+      "health_ms": 294.09,
+      "metrics": 200,
+      "metrics_ms": 244.88,
+      "qx_app_run_watchers_active": 64,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 24930.718,
+      "health": 200,
+      "health_ms": 332.738,
+      "metrics": 200,
+      "metrics_ms": 376.461,
+      "qx_app_run_watchers_active": 64,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 26700.752,
+      "health": 200,
+      "health_ms": 441.413,
+      "metrics": 200,
+      "metrics_ms": 327.946,
+      "qx_app_run_watchers_active": 64,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 28318.118,
+      "health": 200,
+      "health_ms": 296.577,
+      "metrics": 200,
+      "metrics_ms": 320.44,
+      "qx_app_run_watchers_active": 64,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 29959.483,
+      "health": 200,
+      "health_ms": 380.007,
+      "metrics": 200,
+      "metrics_ms": 260.637,
+      "qx_app_run_watchers_active": 64,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 31762.698,
+      "health": 200,
+      "health_ms": 510.043,
+      "metrics": 200,
+      "metrics_ms": 292.624,
+      "qx_app_run_watchers_active": 64,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 33944.379,
+      "health": 200,
+      "health_ms": 872.25,
+      "metrics": 200,
+      "metrics_ms": 309.09,
+      "qx_app_run_watchers_active": 64,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 35386.148,
+      "health": 200,
+      "health_ms": 283.278,
+      "metrics": 200,
+      "metrics_ms": 149.917,
+      "qx_app_run_watchers_active": 64,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 36877.894,
+      "health": 200,
+      "health_ms": 263.845,
+      "metrics": 200,
+      "metrics_ms": 227.525,
+      "qx_app_run_watchers_active": 64,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 38538.534,
+      "health": 200,
+      "health_ms": 154.924,
+      "metrics": 200,
+      "metrics_ms": 505.243,
+      "qx_app_run_watchers_active": 63,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 40094.986,
+      "health": 200,
+      "health_ms": 281.799,
+      "metrics": 200,
+      "metrics_ms": 274.416,
+      "qx_app_run_watchers_active": 62,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 41738.802,
+      "health": 200,
+      "health_ms": 366.043,
+      "metrics": 200,
+      "metrics_ms": 277.164,
+      "qx_app_run_watchers_active": 60,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 43083.437,
+      "health": 200,
+      "health_ms": 165.637,
+      "metrics": 200,
+      "metrics_ms": 178.644,
+      "qx_app_run_watchers_active": 59,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 44689.835,
+      "health": 200,
+      "health_ms": 305.639,
+      "metrics": 200,
+      "metrics_ms": 300.499,
+      "qx_app_run_watchers_active": 55,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 46411.071,
+      "health": 200,
+      "health_ms": 355.017,
+      "metrics": 200,
+      "metrics_ms": 359.981,
+      "qx_app_run_watchers_active": 51,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 47868.399,
+      "health": 200,
+      "health_ms": 235.539,
+      "metrics": 200,
+      "metrics_ms": 221.103,
+      "qx_app_run_watchers_active": 47,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 49090.754,
+      "health": 200,
+      "health_ms": 145.816,
+      "metrics": 200,
+      "metrics_ms": 75.942,
+      "qx_app_run_watchers_active": 42,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 50435.665,
+      "health": 200,
+      "health_ms": 199.698,
+      "metrics": 200,
+      "metrics_ms": 144.946,
+      "qx_app_run_watchers_active": 31,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 51787.706,
+      "health": 200,
+      "health_ms": 163.705,
+      "metrics": 200,
+      "metrics_ms": 187.668,
+      "qx_app_run_watchers_active": 29,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 53193.087,
+      "health": 200,
+      "health_ms": 213.763,
+      "metrics": 200,
+      "metrics_ms": 182.435,
+      "qx_app_run_watchers_active": 24,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 54554.817,
+      "health": 200,
+      "health_ms": 298.317,
+      "metrics": 200,
+      "metrics_ms": 63.052,
+      "qx_app_run_watchers_active": 16,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 55627.111,
+      "health": 200,
+      "health_ms": 34.09,
+      "metrics": 200,
+      "metrics_ms": 37.55,
+      "qx_app_run_watchers_active": 11,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    },
+    {
+      "at_ms": 56722.052,
+      "health": 200,
+      "health_ms": 47.078,
+      "metrics": 200,
+      "metrics_ms": 47.334,
+      "qx_app_run_watchers_active": 0,
+      "qx_app_run_watcher_capacity": 64,
+      "qx_app_run_watcher_rejections_total": 1
+    }
+  ],
+  "binary_sha256": "cea97d0faedd682122800a3f36a1f0cd587e03a343813929d015faec2066b9aa",
+  "barframe_sha256": "c879b8e42ee98a19fd97f1dcb7d121673d244828ef0bb0b6d3082fd939e9702a",
+  "measurement_source_fingerprint_schema": 3,
+  "measurement_source_fingerprint": "2bd403f0c7df7b93d343cb486f3d48febab68403ce349eeb4b41fab247ff33b5",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "python": "3.13.13",
+  "profile_coverage_claim": false,
+  "scope": "Synthetic loopback API, one crypto spot instrument, no venue worker or orders; one run, sampled RSS, no allocation census or long-duration soak.",
+  "server_exit_code": 1,
+  "server_stderr_tail": ""
+}

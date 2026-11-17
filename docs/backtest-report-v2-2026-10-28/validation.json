@@ -1,0 +1,390 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "data_scope": "repository_examples_only",
+  "generated_at": "2026-10-28T15:05:38.157953+08:00",
+  "binary": "D:\\workspace\\qx-target-status\\debug\\qx-cli.exe",
+  "binary_sha256": "e7bf1e3db364fe03c96737a4d9ad480cae4bb0bb38274667c397ebfee067efa2",
+  "work_dir": "D:\\workspace\\qval-ui-v2",
+  "markets": {
+    "crypto": {
+      "instrument": "BTCUSDT.BINANCE",
+      "strategy_id": "strategy-macd",
+      "bars": 70,
+      "fills": 1,
+      "metrics": {
+        "calmar": null,
+        "fees_raw": 43250000,
+        "final_equity_raw": 100018956750000,
+        "max_drawdown_bps": 0,
+        "profit_factor": null,
+        "return_bps": 1,
+        "sharpe": 0.611918736194499,
+        "sortino": null,
+        "turnover_raw": 86500000000,
+        "win_rate": 0.2753623188405797
+      },
+      "metrics_exact": {
+        "equity": {
+          "final": "100018.95675",
+          "initial": "100000",
+          "max_drawdown": "0",
+          "max_drawdown_bps": "0",
+          "return": "18.95675",
+          "return_bps": "1"
+        },
+        "fees_by_currency": {
+          "USDT": "0.04325"
+        },
+        "turnover": {
+          "amount": "86.5",
+          "currency": "USDT"
+        }
+      },
+      "replay": {
+        "events": 77,
+        "ledger_entries": 4,
+        "log_digest": "67c176977ad0f81d",
+        "run_ledger_entries": 4
+      },
+      "input_verdict": "verified",
+      "replay_verdict": "verified",
+      "result_hash": "67c176977ad0f81d",
+      "html_report": "crypto-backtest.html",
+      "negative_checks": [
+        {
+          "kind": "input",
+          "exit_code": 2,
+          "expected_rejection": true
+        },
+        {
+          "kind": "fills",
+          "exit_code": 2,
+          "expected_rejection": true
+        }
+      ],
+      "source_summary": "D:\\workspace\\qval-ui-v2\\c1\\data\\qianxing\\runs\\strategy-backtest_strategy-macd_BTCUSDT.BINANCE_46abafca2ea68c003afa1bd4b466bbea714c4bbdb4890e42e5e7bfc60a799b33_3e87aa4e83179cb062a5cbb3-6b6e8efdc7d7ee0b.v7.summary.json",
+      "snapshots": [
+        {
+          "stem": "strategy-backtest_strategy-macd_BTCUSDT.BINANCE_46abafca2ea68c003afa1bd4b466bbea714c4bbdb4890e42e5e7bfc60a799b33_3e87aa4e83179cb062a5cbb3-6b6e8efdc7d7ee0b",
+          "result_hash": "67c176977ad0f81d",
+          "data_fingerprint": "dataset-bundle:8bf50b57f8204ab9",
+          "config_fingerprint": "46abafca2ea68c003afa1bd4b466bbea714c4bbdb4890e42e5e7bfc60a799b33",
+          "replay_verdict": "verified",
+          "contents": {
+            "summary": "cb8863223344fd5da64dc03c127bcc8b1eb03ff71f13248cba77b62fc92988c8",
+            "equity": "0f9fe29dc0b175f98c363f32c5823a3a4fd84001e2ae9c1ce4b42acac3ee126c",
+            "fills": "c026e30e2c6a10edcb6e38a8119c75aadfd2e9a34dee5ac1dfaf5f1bb4fbdca6",
+            "run_manifest": "b25d9f623c9b0741f1d81f64e4fffac77b7059ae9149266e0e986ff60ca65e16"
+          },
+          "normalized": {
+            "summary": "a4ca1b32a9c518e227a443a804c7dae4885a7978e3bacb46f08508ece95e954d",
+            "equity": "0f9fe29dc0b175f98c363f32c5823a3a4fd84001e2ae9c1ce4b42acac3ee126c",
+            "fills": "c026e30e2c6a10edcb6e38a8119c75aadfd2e9a34dee5ac1dfaf5f1bb4fbdca6",
+            "run_manifest": "c6c1cdb8a62c06dec9644eadf08c69465ac49e81ddeb8fc78c0cc13c95c0cb14"
+          }
+        },
+        {
+          "stem": "strategy-backtest_strategy-macd_BTCUSDT.BINANCE_46abafca2ea68c003afa1bd4b466bbea714c4bbdb4890e42e5e7bfc60a799b33_3e87aa4e83179cb062a5cbb3-6b6e8efdc7d7ee0b",
+          "result_hash": "67c176977ad0f81d",
+          "data_fingerprint": "dataset-bundle:8bf50b57f8204ab9",
+          "config_fingerprint": "46abafca2ea68c003afa1bd4b466bbea714c4bbdb4890e42e5e7bfc60a799b33",
+          "replay_verdict": "verified",
+          "contents": {
+            "summary": "cb8863223344fd5da64dc03c127bcc8b1eb03ff71f13248cba77b62fc92988c8",
+            "equity": "0f9fe29dc0b175f98c363f32c5823a3a4fd84001e2ae9c1ce4b42acac3ee126c",
+            "fills": "c026e30e2c6a10edcb6e38a8119c75aadfd2e9a34dee5ac1dfaf5f1bb4fbdca6",
+            "run_manifest": "b25d9f623c9b0741f1d81f64e4fffac77b7059ae9149266e0e986ff60ca65e16"
+          },
+          "normalized": {
+            "summary": "a4ca1b32a9c518e227a443a804c7dae4885a7978e3bacb46f08508ece95e954d",
+            "equity": "0f9fe29dc0b175f98c363f32c5823a3a4fd84001e2ae9c1ce4b42acac3ee126c",
+            "fills": "c026e30e2c6a10edcb6e38a8119c75aadfd2e9a34dee5ac1dfaf5f1bb4fbdca6",
+            "run_manifest": "c6c1cdb8a62c06dec9644eadf08c69465ac49e81ddeb8fc78c0cc13c95c0cb14"
+          }
+        }
+      ]
+    },
+    "ashare": {
+      "instrument": "000001.SZSE",
+      "strategy_id": "strategy-ashare",
+      "bars": 6,
+      "fills": 1,
+      "metrics": {
+        "calmar": null,
+        "fees_raw": 5104500000,
+        "final_equity_raw": 100019895500000,
+        "max_drawdown_bps": 0,
+        "profit_factor": null,
+        "return_bps": 1,
+        "sharpe": 0.4472135954999579,
+        "sortino": null,
+        "turnover_raw": 1045000000000,
+        "win_rate": 0.2
+      },
+      "metrics_exact": {
+        "equity": {
+          "final": "100019.8955",
+          "initial": "100000",
+          "max_drawdown": "0",
+          "max_drawdown_bps": "0",
+          "return": "19.8955",
+          "return_bps": "1"
+        },
+        "fees_by_currency": {
+          "CNY": "5.1045"
+        },
+        "turnover": {
+          "amount": "1045",
+          "currency": "CNY"
+        }
+      },
+      "replay": {
+        "events": 13,
+        "ledger_entries": 4,
+        "log_digest": "6e120606d81369b5",
+        "run_ledger_entries": 4
+      },
+      "input_verdict": "verified",
+      "replay_verdict": "verified",
+      "result_hash": "6e120606d81369b5",
+      "html_report": "ashare-backtest.html",
+      "negative_checks": [
+        {
+          "kind": "input",
+          "exit_code": 2,
+          "expected_rejection": true
+        },
+        {
+          "kind": "fills",
+          "exit_code": 2,
+          "expected_rejection": true
+        }
+      ],
+      "source_summary": "D:\\workspace\\qval-ui-v2\\a1\\data\\qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE_289eebc78a0340137f87edccfb896eae0d83394e292a89384a4a7155debfd58e_134288aa2f947994fc7f6d10-320598b65f17b10a.v7.summary.json",
+      "snapshots": [
+        {
+          "stem": "strategy-backtest_strategy-ashare_000001.SZSE_289eebc78a0340137f87edccfb896eae0d83394e292a89384a4a7155debfd58e_134288aa2f947994fc7f6d10-320598b65f17b10a",
+          "result_hash": "6e120606d81369b5",
+          "data_fingerprint": "dataset-bundle:0796529b56c9ea6b",
+          "config_fingerprint": "289eebc78a0340137f87edccfb896eae0d83394e292a89384a4a7155debfd58e",
+          "replay_verdict": "verified",
+          "contents": {
+            "summary": "936d0b1ad8bf38f196a175af030af398ae3687756b23bd5cce04b030ee90a0c9",
+            "equity": "6eca9b1ee01265a7797324734c4c1c903ce21bfd64f4e6cfba1f32a631532bcf",
+            "fills": "f9fb8d007287434b82f0059a8af8c0fdfb62fdda88ed7df7c3d1a098f4c131b5",
+            "run_manifest": "ac15f3fd16ff90626a22bef8d12baefcc9e85faae9a729d45255fbcca1bb8e8c"
+          },
+          "normalized": {
+            "summary": "ad0b130e84925564e34e10bd3a7127ef8c7d64664729e57432bdab984b9b214d",
+            "equity": "6eca9b1ee01265a7797324734c4c1c903ce21bfd64f4e6cfba1f32a631532bcf",
+            "fills": "f9fb8d007287434b82f0059a8af8c0fdfb62fdda88ed7df7c3d1a098f4c131b5",
+            "run_manifest": "af8f050be95df6713d68eb210e6caff3241912a583716457ae4a143cf34e05b9"
+          }
+        },
+        {
+          "stem": "strategy-backtest_strategy-ashare_000001.SZSE_289eebc78a0340137f87edccfb896eae0d83394e292a89384a4a7155debfd58e_134288aa2f947994fc7f6d10-320598b65f17b10a",
+          "result_hash": "6e120606d81369b5",
+          "data_fingerprint": "dataset-bundle:0796529b56c9ea6b",
+          "config_fingerprint": "289eebc78a0340137f87edccfb896eae0d83394e292a89384a4a7155debfd58e",
+          "replay_verdict": "verified",
+          "contents": {
+            "summary": "936d0b1ad8bf38f196a175af030af398ae3687756b23bd5cce04b030ee90a0c9",
+            "equity": "6eca9b1ee01265a7797324734c4c1c903ce21bfd64f4e6cfba1f32a631532bcf",
+            "fills": "f9fb8d007287434b82f0059a8af8c0fdfb62fdda88ed7df7c3d1a098f4c131b5",
+            "run_manifest": "ac15f3fd16ff90626a22bef8d12baefcc9e85faae9a729d45255fbcca1bb8e8c"
+          },
+          "normalized": {
+            "summary": "ad0b130e84925564e34e10bd3a7127ef8c7d64664729e57432bdab984b9b214d",
+            "equity": "6eca9b1ee01265a7797324734c4c1c903ce21bfd64f4e6cfba1f32a631532bcf",
+            "fills": "f9fb8d007287434b82f0059a8af8c0fdfb62fdda88ed7df7c3d1a098f4c131b5",
+            "run_manifest": "af8f050be95df6713d68eb210e6caff3241912a583716457ae4a143cf34e05b9"
+          }
+        }
+      ]
+    }
+  },
+  "problems": [],
+  "repeatability_evidence": {
+    "crypto": [
+      {
+        "label": "crypto-1",
+        "first": {
+          "stem": "strategy-backtest_strategy-macd_BTCUSDT.BINANCE_46abafca2ea68c003afa1bd4b466bbea714c4bbdb4890e42e5e7bfc60a799b33_3e87aa4e83179cb062a5cbb3-6b6e8efdc7d7ee0b",
+          "result_hash": "67c176977ad0f81d",
+          "data_fingerprint": "dataset-bundle:8bf50b57f8204ab9",
+          "config_fingerprint": "46abafca2ea68c003afa1bd4b466bbea714c4bbdb4890e42e5e7bfc60a799b33",
+          "replay_verdict": "verified",
+          "contents": {
+            "summary": "cb8863223344fd5da64dc03c127bcc8b1eb03ff71f13248cba77b62fc92988c8",
+            "equity": "0f9fe29dc0b175f98c363f32c5823a3a4fd84001e2ae9c1ce4b42acac3ee126c",
+            "fills": "c026e30e2c6a10edcb6e38a8119c75aadfd2e9a34dee5ac1dfaf5f1bb4fbdca6",
+            "run_manifest": "b25d9f623c9b0741f1d81f64e4fffac77b7059ae9149266e0e986ff60ca65e16"
+          },
+          "normalized": {
+            "summary": "a4ca1b32a9c518e227a443a804c7dae4885a7978e3bacb46f08508ece95e954d",
+            "equity": "0f9fe29dc0b175f98c363f32c5823a3a4fd84001e2ae9c1ce4b42acac3ee126c",
+            "fills": "c026e30e2c6a10edcb6e38a8119c75aadfd2e9a34dee5ac1dfaf5f1bb4fbdca6",
+            "run_manifest": "c6c1cdb8a62c06dec9644eadf08c69465ac49e81ddeb8fc78c0cc13c95c0cb14"
+          }
+        },
+        "second": {
+          "stem": "strategy-backtest_strategy-macd_BTCUSDT.BINANCE_46abafca2ea68c003afa1bd4b466bbea714c4bbdb4890e42e5e7bfc60a799b33_3e87aa4e83179cb062a5cbb3-6b6e8efdc7d7ee0b",
+          "result_hash": "67c176977ad0f81d",
+          "data_fingerprint": "dataset-bundle:8bf50b57f8204ab9",
+          "config_fingerprint": "46abafca2ea68c003afa1bd4b466bbea714c4bbdb4890e42e5e7bfc60a799b33",
+          "replay_verdict": "verified",
+          "contents": {
+            "summary": "cb8863223344fd5da64dc03c127bcc8b1eb03ff71f13248cba77b62fc92988c8",
+            "equity": "0f9fe29dc0b175f98c363f32c5823a3a4fd84001e2ae9c1ce4b42acac3ee126c",
+            "fills": "c026e30e2c6a10edcb6e38a8119c75aadfd2e9a34dee5ac1dfaf5f1bb4fbdca6",
+            "run_manifest": "b25d9f623c9b0741f1d81f64e4fffac77b7059ae9149266e0e986ff60ca65e16"
+          },
+          "normalized": {
+            "summary": "a4ca1b32a9c518e227a443a804c7dae4885a7978e3bacb46f08508ece95e954d",
+            "equity": "0f9fe29dc0b175f98c363f32c5823a3a4fd84001e2ae9c1ce4b42acac3ee126c",
+            "fills": "c026e30e2c6a10edcb6e38a8119c75aadfd2e9a34dee5ac1dfaf5f1bb4fbdca6",
+            "run_manifest": "c6c1cdb8a62c06dec9644eadf08c69465ac49e81ddeb8fc78c0cc13c95c0cb14"
+          }
+        },
+        "network_accessed": false,
+        "orders_sent": false
+      },
+      {
+        "label": "crypto-2",
+        "first": {
+          "stem": "strategy-backtest_strategy-macd_BTCUSDT.BINANCE_ac659b21233a1ac92d461b2c1d688191cf37f1e7388374b55f7157fc9e7c1bf9_3e87aa4e83179cb062a5cbb3-fcad54117dd747f5",
+          "result_hash": "67c176977ad0f81d",
+          "data_fingerprint": "dataset-bundle:8bf50b57f8204ab9",
+          "config_fingerprint": "ac659b21233a1ac92d461b2c1d688191cf37f1e7388374b55f7157fc9e7c1bf9",
+          "replay_verdict": "verified",
+          "contents": {
+            "summary": "942b2cd7db62090594c9e6c653f502a0992d1154c005c774265a5647cb6e41ed",
+            "equity": "0f9fe29dc0b175f98c363f32c5823a3a4fd84001e2ae9c1ce4b42acac3ee126c",
+            "fills": "c026e30e2c6a10edcb6e38a8119c75aadfd2e9a34dee5ac1dfaf5f1bb4fbdca6",
+            "run_manifest": "8fe1cda374bc7539c99d43c5e6e3fd87e86ebe9c2acab1e898d527a2eba2bebb"
+          },
+          "normalized": {
+            "summary": "a4ca1b32a9c518e227a443a804c7dae4885a7978e3bacb46f08508ece95e954d",
+            "equity": "0f9fe29dc0b175f98c363f32c5823a3a4fd84001e2ae9c1ce4b42acac3ee126c",
+            "fills": "c026e30e2c6a10edcb6e38a8119c75aadfd2e9a34dee5ac1dfaf5f1bb4fbdca6",
+            "run_manifest": "c6c1cdb8a62c06dec9644eadf08c69465ac49e81ddeb8fc78c0cc13c95c0cb14"
+          }
+        },
+        "second": {
+          "stem": "strategy-backtest_strategy-macd_BTCUSDT.BINANCE_ac659b21233a1ac92d461b2c1d688191cf37f1e7388374b55f7157fc9e7c1bf9_3e87aa4e83179cb062a5cbb3-fcad54117dd747f5",
+          "result_hash": "67c176977ad0f81d",
+          "data_fingerprint": "dataset-bundle:8bf50b57f8204ab9",
+          "config_fingerprint": "ac659b21233a1ac92d461b2c1d688191cf37f1e7388374b55f7157fc9e7c1bf9",
+          "replay_verdict": "verified",
+          "contents": {
+            "summary": "942b2cd7db62090594c9e6c653f502a0992d1154c005c774265a5647cb6e41ed",
+            "equity": "0f9fe29dc0b175f98c363f32c5823a3a4fd84001e2ae9c1ce4b42acac3ee126c",
+            "fills": "c026e30e2c6a10edcb6e38a8119c75aadfd2e9a34dee5ac1dfaf5f1bb4fbdca6",
+            "run_manifest": "8fe1cda374bc7539c99d43c5e6e3fd87e86ebe9c2acab1e898d527a2eba2bebb"
+          },
+          "normalized": {
+            "summary": "a4ca1b32a9c518e227a443a804c7dae4885a7978e3bacb46f08508ece95e954d",
+            "equity": "0f9fe29dc0b175f98c363f32c5823a3a4fd84001e2ae9c1ce4b42acac3ee126c",
+            "fills": "c026e30e2c6a10edcb6e38a8119c75aadfd2e9a34dee5ac1dfaf5f1bb4fbdca6",
+            "run_manifest": "c6c1cdb8a62c06dec9644eadf08c69465ac49e81ddeb8fc78c0cc13c95c0cb14"
+          }
+        },
+        "network_accessed": false,
+        "orders_sent": false
+      }
+    ],
+    "ashare": [
+      {
+        "label": "ashare-1",
+        "first": {
+          "stem": "strategy-backtest_strategy-ashare_000001.SZSE_289eebc78a0340137f87edccfb896eae0d83394e292a89384a4a7155debfd58e_134288aa2f947994fc7f6d10-320598b65f17b10a",
+          "result_hash": "6e120606d81369b5",
+          "data_fingerprint": "dataset-bundle:0796529b56c9ea6b",
+          "config_fingerprint": "289eebc78a0340137f87edccfb896eae0d83394e292a89384a4a7155debfd58e",
+          "replay_verdict": "verified",
+          "contents": {
+            "summary": "936d0b1ad8bf38f196a175af030af398ae3687756b23bd5cce04b030ee90a0c9",
+            "equity": "6eca9b1ee01265a7797324734c4c1c903ce21bfd64f4e6cfba1f32a631532bcf",
+            "fills": "f9fb8d007287434b82f0059a8af8c0fdfb62fdda88ed7df7c3d1a098f4c131b5",
+            "run_manifest": "ac15f3fd16ff90626a22bef8d12baefcc9e85faae9a729d45255fbcca1bb8e8c"
+          },
+          "normalized": {
+            "summary": "ad0b130e84925564e34e10bd3a7127ef8c7d64664729e57432bdab984b9b214d",
+            "equity": "6eca9b1ee01265a7797324734c4c1c903ce21bfd64f4e6cfba1f32a631532bcf",
+            "fills": "f9fb8d007287434b82f0059a8af8c0fdfb62fdda88ed7df7c3d1a098f4c131b5",
+            "run_manifest": "af8f050be95df6713d68eb210e6caff3241912a583716457ae4a143cf34e05b9"
+          }
+        },
+        "second": {
+          "stem": "strategy-backtest_strategy-ashare_000001.SZSE_289eebc78a0340137f87edccfb896eae0d83394e292a89384a4a7155debfd58e_134288aa2f947994fc7f6d10-320598b65f17b10a",
+          "result_hash": "6e120606d81369b5",
+          "data_fingerprint": "dataset-bundle:0796529b56c9ea6b",
+          "config_fingerprint": "289eebc78a0340137f87edccfb896eae0d83394e292a89384a4a7155debfd58e",
+          "replay_verdict": "verified",
+          "contents": {
+            "summary": "936d0b1ad8bf38f196a175af030af398ae3687756b23bd5cce04b030ee90a0c9",
+            "equity": "6eca9b1ee01265a7797324734c4c1c903ce21bfd64f4e6cfba1f32a631532bcf",
+            "fills": "f9fb8d007287434b82f0059a8af8c0fdfb62fdda88ed7df7c3d1a098f4c131b5",
+            "run_manifest": "ac15f3fd16ff90626a22bef8d12baefcc9e85faae9a729d45255fbcca1bb8e8c"
+          },
+          "normalized": {
+            "summary": "ad0b130e84925564e34e10bd3a7127ef8c7d64664729e57432bdab984b9b214d",
+            "equity": "6eca9b1ee01265a7797324734c4c1c903ce21bfd64f4e6cfba1f32a631532bcf",
+            "fills": "f9fb8d007287434b82f0059a8af8c0fdfb62fdda88ed7df7c3d1a098f4c131b5",
+            "run_manifest": "af8f050be95df6713d68eb210e6caff3241912a583716457ae4a143cf34e05b9"
+          }
+        },
+        "network_accessed": false,
+        "orders_sent": false
+      },
+      {
+        "label": "ashare-2",
+        "first": {
+          "stem": "strategy-backtest_strategy-ashare_000001.SZSE_caa1749f479ba264c0d694395ad6bdfb1b1cb3954a0a668b4a1f1b63ed22560d_134288aa2f947994fc7f6d10-e40862ba7b643a82",
+          "result_hash": "6e120606d81369b5",
+          "data_fingerprint": "dataset-bundle:0796529b56c9ea6b",
+          "config_fingerprint": "caa1749f479ba264c0d694395ad6bdfb1b1cb3954a0a668b4a1f1b63ed22560d",
+          "replay_verdict": "verified",
+          "contents": {
+            "summary": "4aa1391c08c64164eaf397602385765b2ba9b424664f11d8c5733dee3e702e40",
+            "equity": "6eca9b1ee01265a7797324734c4c1c903ce21bfd64f4e6cfba1f32a631532bcf",
+            "fills": "f9fb8d007287434b82f0059a8af8c0fdfb62fdda88ed7df7c3d1a098f4c131b5",
+            "run_manifest": "4877b82784a7c66780497d0459424d78e330f22168f53e1e9f6e12d70cc7ab21"
+          },
+          "normalized": {
+            "summary": "ad0b130e84925564e34e10bd3a7127ef8c7d64664729e57432bdab984b9b214d",
+            "equity": "6eca9b1ee01265a7797324734c4c1c903ce21bfd64f4e6cfba1f32a631532bcf",
+            "fills": "f9fb8d007287434b82f0059a8af8c0fdfb62fdda88ed7df7c3d1a098f4c131b5",
+            "run_manifest": "af8f050be95df6713d68eb210e6caff3241912a583716457ae4a143cf34e05b9"
+          }
+        },
+        "second": {
+          "stem": "strategy-backtest_strategy-ashare_000001.SZSE_caa1749f479ba264c0d694395ad6bdfb1b1cb3954a0a668b4a1f1b63ed22560d_134288aa2f947994fc7f6d10-e40862ba7b643a82",
+          "result_hash": "6e120606d81369b5",
+          "data_fingerprint": "dataset-bundle:0796529b56c9ea6b",
+          "config_fingerprint": "caa1749f479ba264c0d694395ad6bdfb1b1cb3954a0a668b4a1f1b63ed22560d",
+          "replay_verdict": "verified",
+          "contents": {
+            "summary": "4aa1391c08c64164eaf397602385765b2ba9b424664f11d8c5733dee3e702e40",
+            "equity": "6eca9b1ee01265a7797324734c4c1c903ce21bfd64f4e6cfba1f32a631532bcf",
+            "fills": "f9fb8d007287434b82f0059a8af8c0fdfb62fdda88ed7df7c3d1a098f4c131b5",
+            "run_manifest": "4877b82784a7c66780497d0459424d78e330f22168f53e1e9f6e12d70cc7ab21"
+          },
+          "normalized": {
+            "summary": "ad0b130e84925564e34e10bd3a7127ef8c7d64664729e57432bdab984b9b214d",
+            "equity": "6eca9b1ee01265a7797324734c4c1c903ce21bfd64f4e6cfba1f32a631532bcf",
+            "fills": "f9fb8d007287434b82f0059a8af8c0fdfb62fdda88ed7df7c3d1a098f4c131b5",
+            "run_manifest": "af8f050be95df6713d68eb210e6caff3241912a583716457ae4a143cf34e05b9"
+          }
+        },
+        "network_accessed": false,
+        "orders_sent": false
+      }
+    ]
+  },
+  "archive": {
+    "path": "input-and-artifacts.zip",
+    "sha256": "9f6e94812af5198f7f182c56e34b392179de358bf10733703e2174778ad7b56c"
+  }
+}

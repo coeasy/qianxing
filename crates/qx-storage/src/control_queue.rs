@@ -14,7 +14,18 @@ pub trait ControlCommandQueueBackend: Send + Sync {
     fn validate_enqueue_request(&self, command: &ControlCommand) -> Result<(), StorageError> {
         command
             .validate()
-            .map_err(|error| StorageError::Conflict(format!("控制命令非法: {error:?}")))
+            .map_err(|error| StorageError::Conflict(format!("控制命令非法: {error:?}")))?;
+        let encoded = serde_json::to_vec(command)
+            .map_err(|error| StorageError::Io(format!("控制命令序列化失败: {error}")))?;
+        if encoded.len() > crate::MAX_CONTROL_COMMAND_BYTES {
+            return Err(StorageError::Conflict(format!(
+                "控制命令 {} 序列化大小 {} 超过 {} 字节上限",
+                command.command_id,
+                encoded.len(),
+                crate::MAX_CONTROL_COMMAND_BYTES
+            )));
+        }
+        Ok(())
     }
 
     fn validate_claim_request(

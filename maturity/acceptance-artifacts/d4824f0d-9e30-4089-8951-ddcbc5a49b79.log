@@ -1,0 +1,8 @@
+$ python -c import os,runpy,subprocess; os.environ['CARGO_PROFILE_DEV_DEBUG']='0'; subprocess.run(['cargo','check','-p','qx-cli','-j','1'],check=True); runpy.run_path('tools/check_architecture.py')['single_market_experiment_bundle_io_module_check']()
+exit_code=0
+
+[stdout]
+[PASS] 单市场实验包 source locator 去重、portable ArtifactReader containment 与 ArtifactId 读取归 bundle_io 唯一拥有
+
+[stderr]
+    Finished `dev` profile [unoptimized] target(s) in 0.51s

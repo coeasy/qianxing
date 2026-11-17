@@ -11,41 +11,81 @@
 //! `.experiment.json` 的规格指纹不会漂移。切分与基准的算法在 [`super::experiment_split`]，
 //! 本模块只负责在读侧把它们接进来。
 
-use super::artifacts::read_text;
+use super::artifacts::{equity_series, persist_run_manifest, read_text, write_text};
 use super::compare_runs::COMPARE_RUNS_SCHEMA_VERSION;
-use super::experiment_grid::{
-    apply_parameters, expand_grid, normalized_strategy, validate_experiment_id, validate_grid,
+use super::experiment_fold_search::{
+    evaluate_fold_local_search, fold_local_execution_count, load_cost_scenario_checkpoint,
+    search_execution_count, write_cost_scenario_checkpoint, MAX_FOLD_LOCAL_RUNS,
 };
+use super::experiment_grid::{
+    apply_parameters, expand_grid, normalized_strategy, validate_continuous_grid,
+    validate_experiment_id, validate_grid,
+};
+use super::experiment_search::{
+    continuous_domain_cardinality, continuous_neighborhood_report_with_radius_and_budget,
+    neighborhood_parameter_sets, neighborhood_report_with_radius_and_budget, ContinuousSearchState,
+    DrawdownPruningWindow, ExperimentCandidatePruning, ExperimentSearchAlgorithm,
+    ExperimentSearchObjective, ExperimentSearchPlan, ExperimentSearchReport, ExperimentSearchTrial,
+    SearchBacktestAttempt, SearchState,
+};
+use super::experiment_spec_artifact::{serialize_experiment_input, write_spec_artifact};
 pub use super::experiment_split::EXPERIMENT_BASELINE_NAMES;
 use super::experiment_split::{
-    evaluate_baselines, evaluate_out_of_sample, experiment_folds, ExperimentBaselineReport,
-    ExperimentOutOfSampleReport, ExperimentSplitPlan,
+    evaluate_baselines, evaluate_out_of_sample, experiment_folds, training_metrics_for_equity,
+    window_max_drawdown_bps, window_return_bps, window_robustness_score_bps,
+    ExperimentBaselineReport, ExperimentOutOfSampleReport, ExperimentSplitPlan,
 };
 use super::guard::guard_panics;
-use super::run_backtest::{run_backtest_inner, run_backtest_inner_with_experiment_strategy};
+use super::run_backtest::{
+    run_backtest_inner, run_backtest_inner_for_experiment,
+    run_backtest_inner_with_experiment_strategy,
+};
+use super::verify_run::verify_run;
 use super::{attach, compare_runs};
 use crate::run_handle::CancellationToken;
 use crate::{
     AppError, AppErrorCategory, BacktestOutcome, BacktestSpec, CallerCapability, CompareRunsResult,
     CompareRunsSpec, ComparedRun, RunContext, RunHandle, StrategyArtifactIdentity,
 };
-use qx_core::Fnv1a;
+use qx_core::{Fnv1a, RunManifest};
 use qx_datastruct::BarFrame;
+use qx_spec::{ArtifactRefV2, CanonicalRunSpec, ReplayVerdict, RunRecordV2, RunStatus};
 use qx_strategy::BuiltinStrategyKind;
 use qx_strategy::Strategy;
+use qx_xingban::{AshareRuleConfig, ExecutionCostRules};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+mod candidate_execution;
+mod cost_sensitivity;
+mod identity;
+mod persistence;
+mod recovery;
+mod report_assembly;
+pub(super) use cost_sensitivity::{cost_robustness_passed, cost_sensitivity_fold_delta};
+use identity::{
+    build_experiment_canonical_run_spec, experiment_result_hash,
+    validate_experiment_artifact_envelope, validate_experiment_run_identity,
+};
+pub(crate) use identity::{
+    experiment_result_hash_from_json, experiment_result_hash_from_value,
+    normalize_experiment_identity_values, quote_unsafe_integer_tokens,
+};
+pub(crate) use persistence::build_experiment_run_manifest;
+use report_assembly::{assemble_and_persist, ExperimentResultAssemblyInput};
 
 pub const RUN_EXPERIMENT_SCHEMA_VERSION: u32 = 1;
 pub const MAX_EXPERIMENT_CANDIDATES: usize = 256;
 
-type StrategyFactory<'a> = dyn FnMut(&BacktestSpec) -> Result<Box<dyn Strategy>, String> + 'a;
+pub(super) type StrategyFactory<'a> =
+    dyn FnMut(&BacktestSpec) -> Result<Box<dyn Strategy>, String> + 'a;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExperimentParameterSpace {
-    /// One of `fast_window`, `slow_window`, `period`, `threshold_bps`, `quantity_raw`, or `target_kelly_fraction_bps`.
+    /// One of the signal, fixed-point order-size, or mutually exclusive sizing parameters supported by `validate_grid`.
     pub name: String,
     pub values: Vec<i128>,
 }
@@ -72,6 +112,92 @@ pub struct RunExperimentSpec {
     /// 基准对照清单，取值域 [`EXPERIMENT_BASELINE_NAMES`]。空表 = 不算基准。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub baselines: Vec<String>,
+    /// Deterministic adaptive search; requires a train/test split and is fingerprinted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search: Option<ExperimentSearchPlan>,
+    /// Optional execution-cost stress scenarios. Each scenario reruns the training-selected
+    /// candidate through the normal matcher, fee, ledger and replay path.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cost_sensitivity: Vec<ExecutionCostSensitivityScenario>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionCostSensitivityScenario {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_cost_rules: Option<ExecutionCostRules>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ashare_rules: Option<AshareRuleConfig>,
+    pub fill_model: crate::BacktestFillModel,
+    /// Optional maximum training-return loss from baseline under this cost scenario, in bps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_training_return_degradation_bps: Option<u32>,
+    /// Require every neighbor in the configured training neighborhood to pass its own stress replay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_neighborhood_training_return_degradation_bps: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionCostSensitivityNeighborResult {
+    pub ordinal: usize,
+    pub parameters: BTreeMap<String, i128>,
+    pub fold_deltas: Vec<ExecutionCostSensitivityFoldDelta>,
+    pub cost_robustness_passed: bool,
+    pub outcome: Option<BacktestOutcome>,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionCostSensitivityNeighborhoodResult {
+    pub radius: usize,
+    pub possible_neighbors: usize,
+    pub evaluated_neighbors: usize,
+    pub successful_neighbors: usize,
+    pub passed_neighbors: usize,
+    pub complete: bool,
+    pub passed: bool,
+    pub candidates: Vec<ExecutionCostSensitivityNeighborResult>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionCostSensitivityResult {
+    pub selected_ordinal: usize,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_cost_rules: Option<ExecutionCostRules>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ashare_rules: Option<AshareRuleConfig>,
+    pub fill_model: crate::BacktestFillModel,
+    /// Whole replay interval delta retained for v1 consumers; split-aware consumers should use `fold_deltas`.
+    pub return_delta_bps: Option<i64>,
+    /// Whole replay interval delta retained for v1 consumers; split-aware consumers should use `fold_deltas`.
+    pub drawdown_delta_bps: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_training_return_degradation_bps: Option<u32>,
+    /// False when a configured gate is breached or its stress result is unavailable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_robustness_passed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_neighborhood_training_return_degradation_bps: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub neighborhood_cost_robustness: Option<ExecutionCostSensitivityNeighborhoodResult>,
+    /// Per-fold deltas keep in-sample cost sensitivity separate from OOS evidence.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fold_deltas: Vec<ExecutionCostSensitivityFoldDelta>,
+    pub outcome: Option<BacktestOutcome>,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionCostSensitivityFoldDelta {
+    pub fold: usize,
+    pub train_range: [u64; 2],
+    pub test_range: [u64; 2],
+    pub training_return_delta_bps: i64,
+    pub training_drawdown_delta_bps: i64,
+    pub out_of_sample_return_delta_bps: i64,
+    pub out_of_sample_drawdown_delta_bps: i64,
 }
 
 impl RunExperimentSpec {
@@ -159,7 +285,22 @@ impl RunExperimentSpec {
         }
         // The strategy-only quick-selection path is useful without numeric knobs. Preserve the
         // old requirement that a legacy parameter experiment declares at least one dimension.
-        let per_kind = if self.parameter_space.is_empty() && strategy_selection {
+        let continuous_ranges = self.search.as_ref().map_or(&[][..], |search| {
+            search.continuous_parameter_space.as_slice()
+        });
+        let continuous_search = !continuous_ranges.is_empty();
+        if continuous_search && (!self.parameter_space.is_empty() || strategy_selection) {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "连续数值范围不能与离散 parameter_space 或 strategy_kinds 混用",
+            ));
+        }
+        let per_kind = if continuous_search {
+            let mut strategy = self.base.strategy.clone();
+            strategy.kind = kinds[0];
+            validate_continuous_grid(&strategy, continuous_ranges)?;
+            1
+        } else if self.parameter_space.is_empty() && strategy_selection {
             1
         } else {
             let mut maximum = 0;
@@ -179,6 +320,206 @@ impl RunExperimentSpec {
                 format!("实验最多接受 {MAX_EXPERIMENT_CANDIDATES} 个候选组合"),
             ));
         }
+        if !self.cost_sensitivity.is_empty() {
+            if self.search.is_none() || self.split_plan.is_none() {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "费用/滑点敏感性要求自适应搜索及训练/OOS切分",
+                ));
+            }
+            if self.cost_sensitivity.len() > 16 {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "费用/滑点敏感性场景最多 16 个",
+                ));
+            }
+            let mut names = BTreeSet::new();
+            for scenario in &self.cost_sensitivity {
+                if scenario.name.trim().is_empty()
+                    || scenario.name.len() > 64
+                    || !names.insert(scenario.name.as_str())
+                {
+                    return Err(AppError::new(
+                        AppErrorCategory::InvalidInput,
+                        "成本敏感性场景名称必须非空、唯一且不超过 64 字节",
+                    ));
+                }
+                if scenario.execution_cost_rules.is_some() == scenario.ashare_rules.is_some() {
+                    return Err(AppError::new(
+                        AppErrorCategory::InvalidInput,
+                        "成本情景必须且只能指定 execution_cost_rules 或 ashare_rules 之一",
+                    ));
+                }
+                if scenario
+                    .max_training_return_degradation_bps
+                    .is_some_and(|value| value > 10_000)
+                {
+                    return Err(AppError::new(
+                        AppErrorCategory::InvalidInput,
+                        "max_training_return_degradation_bps 必须在 0..=10000 基点内",
+                    ));
+                }
+                if scenario
+                    .max_neighborhood_training_return_degradation_bps
+                    .is_some_and(|value| value > 10_000)
+                {
+                    return Err(AppError::new(
+                        AppErrorCategory::InvalidInput,
+                        "max_neighborhood_training_return_degradation_bps 必须在 0..=10000 基点内",
+                    ));
+                }
+                if let Some(rules) = &scenario.execution_cost_rules {
+                    rules.validate().map_err(|error| {
+                        AppError::new(AppErrorCategory::InvalidInput, error.to_string())
+                    })?;
+                    if self.base.ashare_rules.is_some() {
+                        return Err(AppError::new(
+                            AppErrorCategory::InvalidInput,
+                            "A股基准回测不能使用通用 maker/taker 成本情景",
+                        ));
+                    }
+                }
+                if let Some(rules) = &scenario.ashare_rules {
+                    rules
+                        .validate()
+                        .map_err(|error| AppError::new(AppErrorCategory::InvalidInput, error))?;
+                }
+                if scenario.fill_model == crate::BacktestFillModel::OneTickSlippage
+                    && self.base.market_spec.is_none()
+                {
+                    return Err(AppError::new(
+                        AppErrorCategory::InvalidInput,
+                        "one_tick_slippage 成本敏感性要求 market_spec",
+                    ));
+                }
+            }
+        }
+        let search_budget = if let Some(search) = &self.search {
+            if self.split_plan.is_none() {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "随机/TPE 参数搜索必须配置 split_plan；候选选择只允许读取训练窗",
+                ));
+            }
+            if (!continuous_search && self.parameter_space.is_empty())
+                || !self.strategy_kinds.is_empty()
+            {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "随机/TPE 搜索只接受参数维度，不接受空参数集或 strategy_kinds",
+                ));
+            }
+            let search_space = if continuous_search {
+                continuous_domain_cardinality(continuous_ranges).ok_or_else(|| {
+                    AppError::new(AppErrorCategory::InvalidInput, "连续参数搜索值域无效")
+                })?
+            } else {
+                total as u128
+            };
+            if search.budget == 0
+                || search.budget > MAX_EXPERIMENT_CANDIDATES
+                || search.budget as u128 > search_space
+            {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    format!(
+                        "搜索 budget 必须在 1..={} 内，且不得超过参数空间可取的不同候选数",
+                        MAX_EXPERIMENT_CANDIDATES
+                    ),
+                ));
+            }
+            if search
+                .max_training_drawdown_bps
+                .is_some_and(|value| value > 10_000)
+            {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "max_training_drawdown_bps 必须在 0..=10000 基点内",
+                ));
+            }
+            if search
+                .neighborhood_radius
+                .is_some_and(|radius| !(1..=8).contains(&radius))
+            {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "neighborhood_radius 必须在 1..=8 内",
+                ));
+            }
+            if let Some(subwindows) = search.robustness_subwindows {
+                let train_bars = self
+                    .split_plan
+                    .as_ref()
+                    .map(|plan| plan.train_bars)
+                    .ok_or_else(|| {
+                        AppError::new(
+                            AppErrorCategory::InvalidInput,
+                            "稳健性目标必须配置训练/OOS切分",
+                        )
+                    })?;
+                let minimum_bars = u64::try_from(subwindows)
+                    .ok()
+                    .and_then(|count| count.checked_add(1));
+                if !(2..=8).contains(&subwindows)
+                    || minimum_bars.is_none_or(|minimum| train_bars < minimum)
+                {
+                    return Err(AppError::new(
+                        AppErrorCategory::InvalidInput,
+                        "robustness_subwindows 必须在 2..=8 内，且训练窗至少包含子窗数 + 1 根 Bar",
+                    ));
+                }
+            }
+            if search.minimum_training_robustness_score_bps.is_some()
+                && search.robustness_subwindows.is_none()
+            {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "minimum_training_robustness_score_bps 要求配置 robustness_subwindows",
+                ));
+            }
+            if let Some(pruning) = &search.early_pruning {
+                let train_bars = self
+                    .split_plan
+                    .as_ref()
+                    .map(|plan| plan.train_bars)
+                    .ok_or_else(|| {
+                        AppError::new(
+                            AppErrorCategory::InvalidInput,
+                            "早停剪枝必须配置训练窗切分计划",
+                        )
+                    })?;
+                if search.max_training_drawdown_bps.is_none()
+                    || pruning.min_training_bars < 2
+                    || pruning.min_training_bars > train_bars
+                {
+                    return Err(AppError::new(
+                        AppErrorCategory::InvalidInput,
+                        "早停剪枝要求配置最大训练回撤预算，且 min_training_bars 必须在 2..=train_bars 内",
+                    ));
+                }
+            }
+            if matches!(
+                search.algorithm,
+                ExperimentSearchAlgorithm::Tpe
+                    | ExperimentSearchAlgorithm::TpeKde
+                    | ExperimentSearchAlgorithm::ParetoTpe
+            ) && search.budget < 5
+            {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "TPE 搜索 budget 至少为 5，前 4 个试验用于随机启动",
+                ));
+            }
+            Some(search.budget)
+        } else {
+            if continuous_search {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "连续数值范围必须配置自适应搜索计划",
+                ));
+            }
+            None
+        };
         let mut base = self.base.clone();
         base.strategy.kind = kinds[0];
         base.strategy = normalized_strategy(&base.strategy, &self.parameter_space);
@@ -205,7 +546,7 @@ impl RunExperimentSpec {
                 ));
             }
         }
-        Ok(total)
+        Ok(search_budget.unwrap_or(total))
     }
 }
 
@@ -218,6 +559,8 @@ pub struct ExperimentCandidateResult {
     pub outcome: Option<BacktestOutcome>,
     /// Stable AppError JSON for a failed candidate; a failure does not hide other candidates.
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pruning: Option<ExperimentCandidatePruning>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -225,10 +568,28 @@ pub struct RunExperimentResult {
     pub schema_version: u32,
     pub experiment_id: String,
     pub spec_fingerprint: String,
+    /// Path-independent identity of the experiment inputs. Legacy reports omit both fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_run_spec_json: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_run_spec_fingerprint: Option<String>,
+    /// Identity of the actual BarFrame, including bars that are outside scoring windows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_data_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_manifest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_record: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_locations: Option<BTreeMap<String, String>>,
     pub total_candidates: usize,
     pub completed_candidates: usize,
     pub succeeded_candidates: usize,
     pub failed_candidates: usize,
+    #[serde(default)]
+    pub pruned_candidates: usize,
     pub candidates: Vec<ExperimentCandidateResult>,
     pub comparison: Option<CompareRunsResult>,
     /// 样本外评估。spec 没写切分计划时为 `None`。
@@ -237,20 +598,29 @@ pub struct RunExperimentResult {
     /// 基准对照列。spec 没请求基准时为空表。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub baselines: Vec<ExperimentBaselineReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search: Option<ExperimentSearchReport>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cost_sensitivity: Vec<ExecutionCostSensitivityResult>,
     pub artifact_path: String,
 }
 
 impl RunExperimentResult {
     pub fn from_json(payload: &str) -> Result<Self, AppError> {
-        serde_json::from_str(payload).map_err(|error| {
+        let result: Self = serde_json::from_str(payload).map_err(|error| {
             AppError::new(
                 AppErrorCategory::StorageFailure,
                 format!("RunExperimentResult JSON 无法读取: {error}"),
             )
-        })
+        })?;
+        validate_experiment_run_identity(&result)?;
+        validate_experiment_artifact_envelope(&result)?;
+        Ok(result)
     }
 
     pub fn to_json(&self) -> Result<String, AppError> {
+        validate_experiment_run_identity(self)?;
+        validate_experiment_artifact_envelope(self)?;
         serde_json::to_string(self).map_err(|error| {
             AppError::new(
                 AppErrorCategory::InternalInvariant,
@@ -359,212 +729,239 @@ fn run_experiment_inner(
         fingerprint.write_text(&identity.source_sha256);
     }
     let spec_fingerprint = format!("{:016x}", fingerprint.finish());
+    let payload = read_text(&spec.base.bars_path)?;
+    let input_frame = BarFrame::from_json(&payload).map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InvalidInput,
+            format!("BarFrame 校验失败 {}: {error:?}", spec.base.bars_path),
+        )
+    })?;
+    let input_data_fingerprint = format!(
+        "barframe:{}",
+        qx_data::fingerprint_bar_frame(&input_frame).map_err(|error| {
+            AppError::new(
+                AppErrorCategory::InvalidInput,
+                format!("BarFrame 内容指纹计算失败：{error}"),
+            )
+        })?
+    );
+    let canonical_run_spec = build_experiment_canonical_run_spec(
+        spec,
+        identity,
+        &spec_json,
+        &input_frame,
+        &input_data_fingerprint,
+        context,
+    )?;
+    let canonical_run_spec_json = canonical_run_spec.canonical_json().map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InternalInvariant,
+            format!("参数实验 CanonicalRunSpec 规范化失败: {error}"),
+        )
+    })?;
+    let canonical_run_spec_fingerprint = canonical_run_spec.fingerprint().map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InternalInvariant,
+            format!("参数实验 CanonicalRunSpec 指纹失败: {error}"),
+        )
+    })?;
     let root = PathBuf::from(&spec.base.output_dir).join(&spec.experiment_id);
-    let artifact_path = root
+    let report_index_path = root
         .join(format!("{}.experiment.json", spec.experiment_id))
         .to_string_lossy()
         .into_owned();
-    match std::fs::read_to_string(&artifact_path) {
-        Ok(existing) => {
-            return existing_result(&existing, &spec_fingerprint, &spec.experiment_id).map(Some)
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(AppError::from_io("读取既有实验报告", &error)),
+    let spec_artifact_path = root
+        .join(format!("{}.experiment.spec.json", spec.experiment_id))
+        .to_string_lossy()
+        .into_owned();
+    let persisted_input = serialize_experiment_input(&spec_json, context.code_commit(), identity)?;
+    if let Some(previous) =
+        recovery::resume_existing_experiment(recovery::ExistingExperimentResume {
+            report_index_path: &report_index_path,
+            spec_artifact_path: &spec_artifact_path,
+            persisted_input: &persisted_input,
+            spec_fingerprint: &spec_fingerprint,
+            canonical_run_spec: &canonical_run_spec,
+            canonical_run_spec_json: &canonical_run_spec_json,
+            canonical_run_spec_fingerprint: &canonical_run_spec_fingerprint,
+            input_data_fingerprint: &input_data_fingerprint,
+            experiment_id: &spec.experiment_id,
+            root: &root,
+            context,
+        })?
+    {
+        return Ok(Some(previous));
     }
     // Split bounds and resource limits are preflighted before any candidate is run. Keep the
     // validated BarFrame for the report instead of reading it a second time after the grid.
-    let evaluation_bars = if spec.split_plan.is_some() || !spec.baselines.is_empty() {
-        let payload = read_text(&spec.base.bars_path)?;
-        let frame = BarFrame::from_json(&payload).map_err(|error| {
+    let (evaluation_bars, evaluation_frame) = if spec.split_plan.is_some()
+        || !spec.baselines.is_empty()
+    {
+        let frame = input_frame;
+        let bars = frame.bars().map_err(|error| {
             AppError::new(
                 AppErrorCategory::InvalidInput,
-                format!("BarFrame 校验失败 {}: {error:?}", spec.base.bars_path),
+                format!("实验 BarFrame exact OHLCV 无效: {error:?}"),
             )
         })?;
-        let bars: Vec<_> = (&frame).into();
         if let Some(plan) = &spec.split_plan {
-            experiment_folds(plan, bars.len())?;
-        }
-        Some(bars)
-    } else {
-        None
-    };
-    let mut kinds = if spec.strategy_kinds.is_empty() {
-        vec![spec.base.strategy.kind]
-    } else {
-        spec.strategy_kinds.clone()
-    };
-    kinds.sort_by_key(|kind| kind.name());
-    let combinations = if spec.parameter_space.is_empty() {
-        vec![BTreeMap::new()]
-    } else {
-        expand_grid(&spec.parameter_space)
-    };
-    debug_assert_eq!(combinations.len() * kinds.len(), total);
-
-    let mut candidates = Vec::with_capacity(total);
-    for (index, (kind, parameters)) in kinds
-        .into_iter()
-        .flat_map(|kind| {
-            combinations
-                .iter()
-                .cloned()
-                .map(move |parameters| (kind, parameters))
-        })
-        .enumerate()
-    {
-        if cancellation.is_some_and(CancellationToken::is_cancelled) {
-            return Ok(None);
-        }
-        let ordinal = index + 1;
-        let mut candidate = spec.base.clone();
-        candidate.strategy.kind = kind;
-        candidate.run_id = format!("{}-{ordinal:04}", spec.experiment_id);
-        candidate.output_dir = root
-            .join(format!("run-{ordinal:04}"))
-            .to_string_lossy()
-            .into();
-        let outcome = match apply_parameters(&mut candidate.strategy, &parameters) {
-            Ok(()) => {
-                let run = match (identity, factory.as_deref_mut()) {
-                    (Some(identity), Some(factory)) => factory(&candidate)
-                        .map_err(|error| {
-                            AppError::new(
-                                AppErrorCategory::InvalidInput,
-                                format!("候选 {ordinal} 自定义策略 factory 失败: {error}"),
-                            )
-                        })
-                        .and_then(|strategy| {
-                            run_backtest_inner_with_experiment_strategy(
-                                &candidate,
-                                context,
-                                cancellation,
-                                identity.clone(),
-                                strategy,
-                            )
-                        }),
-                    (None, None) => run_backtest_inner(&candidate, context, cancellation),
-                    _ => Err(AppError::new(
-                        AppErrorCategory::InternalInvariant,
-                        "自定义策略实验身份与 factory 状态不一致",
-                    )),
-                };
-                match run {
-                    Ok(Some(outcome)) => Ok(outcome),
-                    Ok(None) => return Ok(None),
-                    Err(error) => Err(error),
+            let folds = experiment_folds(plan, bars.len())?;
+            if let Some(search) = &spec.search {
+                let neighborhood_cost_scenario_count = spec
+                    .cost_sensitivity
+                    .iter()
+                    .filter(|scenario| {
+                        scenario
+                            .max_neighborhood_training_return_degradation_bps
+                            .is_some()
+                    })
+                    .count();
+                if search.fold_local_search
+                    && fold_local_execution_count(
+                        folds.len(),
+                        search.budget,
+                        spec.cost_sensitivity.len(),
+                        neighborhood_cost_scenario_count,
+                    )
+                    .is_none_or(|runs| runs > MAX_FOLD_LOCAL_RUNS)
+                {
+                    return Err(AppError::new(
+                        AppErrorCategory::InvalidInput,
+                        format!(
+                            "折内外搜索候选与成本情景合计最多允许 {MAX_FOLD_LOCAL_RUNS} 次回测"
+                        ),
+                    ));
+                }
+                if !search.fold_local_search
+                    && search_execution_count(
+                        search.budget,
+                        spec.cost_sensitivity.len(),
+                        neighborhood_cost_scenario_count,
+                    )
+                    .is_none_or(|runs| runs > MAX_FOLD_LOCAL_RUNS)
+                {
+                    return Err(AppError::new(
+                        AppErrorCategory::InvalidInput,
+                        format!(
+                            "全局搜索候选与成本/邻域压力情景合计最多允许 {MAX_FOLD_LOCAL_RUNS} 次回测"
+                        ),
+                    ));
                 }
             }
-            Err(error) => Err(error),
-        };
-        candidates.push(match outcome {
-            Ok(outcome) => ExperimentCandidateResult {
-                ordinal,
-                strategy_kind: (!spec.strategy_kinds.is_empty()).then_some(kind.name().to_string()),
-                parameters,
-                outcome: Some(outcome),
-                error: None,
-            },
-            Err(error) => ExperimentCandidateResult {
-                ordinal,
-                strategy_kind: (!spec.strategy_kinds.is_empty()).then_some(kind.name().to_string()),
-                parameters,
-                outcome: None,
-                error: Some(error.to_json()),
-            },
-        });
-    }
-
-    let successful: Vec<_> = candidates
-        .iter()
-        .filter_map(|candidate| candidate.outcome.as_ref())
-        .collect();
-    let comparison = if successful.len() >= 2 {
-        let runs = successful
-            .iter()
-            .map(|outcome| ComparedRun {
-                run_id: outcome.run_id.clone(),
-                instrument: outcome.instrument.clone(),
-                data_fingerprint: outcome.data_fingerprint.clone(),
-                result_hash: outcome.result_hash.clone(),
-                return_bps: outcome.return_bps,
-                max_drawdown_bps: outcome.max_drawdown_bps,
-            })
-            .collect();
-        Some(compare_runs(
-            &CompareRunsSpec {
-                schema_version: COMPARE_RUNS_SCHEMA_VERSION,
-                runs,
-            },
-            context,
-        )?)
-    } else {
-        None
-    };
-    // 切分与基准都要 Bar 序列本身（基准用收盘价、切分用样本根数），所以只在**真被请求**时
-    // 才多读一次数据文件——没写这两格的 spec 走的还是原来那条路，一次多余 IO 都没有。
-    let (out_of_sample, baselines) = if let Some(bars) = evaluation_bars.as_deref() {
-        let baselines = evaluate_baselines(bars, &spec.baselines);
-        let out_of_sample = match &spec.split_plan {
-            Some(plan) => {
-                let report = evaluate_out_of_sample(plan, bars.len(), &candidates, || {
-                    cancellation.is_some_and(CancellationToken::is_cancelled)
-                })?;
-                let Some(report) = report else {
-                    return Ok(None);
-                };
-                Some(report)
-            }
-            None => None,
-        };
-        (out_of_sample, baselines)
-    } else {
-        (None, Vec::new())
-    };
-    let result = RunExperimentResult {
-        schema_version: RUN_EXPERIMENT_SCHEMA_VERSION,
-        experiment_id: spec.experiment_id.clone(),
-        spec_fingerprint,
-        total_candidates: total,
-        completed_candidates: candidates.len(),
-        succeeded_candidates: successful.len(),
-        failed_candidates: total - successful.len(),
-        candidates,
-        comparison,
-        out_of_sample,
-        baselines,
-        artifact_path: artifact_path.clone(),
-    };
-    if cancellation.is_some_and(CancellationToken::is_cancelled) {
-        return Ok(None);
-    }
-    let report_json = result.to_json()?;
-    std::fs::create_dir_all(&root)
-        .map_err(|error| AppError::from_io("创建实验产物目录", &error))?;
-    if let Err(write_error) = super::artifacts::write_text(&artifact_path, &report_json) {
-        // Concurrent identical requests can finish their candidates together. The first report
-        // wins; accept it only after reading and validating the exact experiment identity.
-        if let Ok(existing) = std::fs::read_to_string(&artifact_path) {
-            return existing_result(&existing, &result.spec_fingerprint, &result.experiment_id)
-                .map(Some);
         }
-        return Err(write_error);
-    }
-    Ok(Some(result))
+        (Some(bars), Some(frame))
+    } else {
+        (None, None)
+    };
+    let pruning_window = match (spec.search.as_ref(), evaluation_bars.as_deref()) {
+        (Some(search), Some(bars)) => search
+            .early_pruning
+            .as_ref()
+            .zip(search.max_training_drawdown_bps)
+            .map(|(early, max_drawdown_bps)| -> Result<_, AppError> {
+                let split_plan = spec.split_plan.as_ref().ok_or_else(|| {
+                    AppError::new(
+                        AppErrorCategory::InternalInvariant,
+                        "早停配置缺少 walk-forward split plan",
+                    )
+                })?;
+                let folds = experiment_folds(split_plan, bars.len()).map_err(|error| {
+                    AppError::new(
+                        AppErrorCategory::InvalidInput,
+                        format!("早停窗口的 walk-forward folds 无效: {}", error.message()),
+                    )
+                })?;
+                let training_bars = folds
+                    .first()
+                    .and_then(|fold| fold.train.get(1))
+                    .copied()
+                    .ok_or_else(|| {
+                        AppError::new(
+                            AppErrorCategory::InvalidInput,
+                            "早停窗口缺少首折训练 Bar 范围",
+                        )
+                    })?;
+                Ok(DrawdownPruningWindow {
+                    min_bars: usize::try_from(early.min_training_bars).map_err(|_| {
+                        AppError::new(
+                            AppErrorCategory::InvalidInput,
+                            "早停最小训练 Bar 数超过平台上限",
+                        )
+                    })?,
+                    training_bars,
+                    max_drawdown_bps,
+                })
+            })
+            .transpose()?,
+        _ => None,
+    };
+    let candidate_execution =
+        candidate_execution::execute_candidates(candidate_execution::CandidateExecutionRequest {
+            spec,
+            total,
+            root: &root,
+            context,
+            cancellation,
+            identity,
+            factory: factory.as_deref_mut(),
+            spec_fingerprint: &spec_fingerprint,
+            input_data_fingerprint: &input_data_fingerprint,
+            evaluation_bars: evaluation_bars.as_deref(),
+            pruning_window,
+        })?;
+    let Some(candidate_execution) = candidate_execution else {
+        return Ok(None);
+    };
+    let candidate_execution::CandidateExecutionResult {
+        combinations,
+        candidates,
+        search_trace,
+    } = candidate_execution;
+
+    let cost_sensitivity =
+        cost_sensitivity::execute_cost_sensitivity(cost_sensitivity::CostSensitivityRequest {
+            spec,
+            context,
+            cancellation,
+            identity,
+            factory: factory.as_deref_mut(),
+            candidates: &candidates,
+            search_trace: &search_trace,
+            combinations: &combinations,
+            root: &root,
+            spec_fingerprint: &spec_fingerprint,
+            input_data_fingerprint: &input_data_fingerprint,
+            evaluation_bar_count: evaluation_bars.as_ref().map(Vec::len),
+        })?;
+    let Some(cost_sensitivity) = cost_sensitivity else {
+        return Ok(None);
+    };
+
+    assemble_and_persist(ExperimentResultAssemblyInput {
+        spec,
+        context,
+        cancellation,
+        identity,
+        factory,
+        evaluation_bars,
+        evaluation_frame,
+        root,
+        spec_fingerprint,
+        input_data_fingerprint,
+        combinations,
+        total,
+        candidates,
+        search_trace,
+        cost_sensitivity,
+        canonical_run_spec,
+        canonical_run_spec_json,
+        canonical_run_spec_fingerprint,
+        persisted_input,
+        report_index_path,
+        spec_artifact_path,
+    })
 }
 
-fn existing_result(
-    payload: &str,
-    expected_fingerprint: &str,
-    experiment_id: &str,
-) -> Result<RunExperimentResult, AppError> {
-    let previous = RunExperimentResult::from_json(payload)?;
-    if previous.experiment_id != experiment_id || previous.spec_fingerprint != expected_fingerprint
-    {
-        return Err(AppError::new(
-            AppErrorCategory::Conflict,
-            format!("experiment_id {experiment_id} 已绑定不同实验规格"),
-        ));
-    }
-    Ok(previous)
+fn experiment_storage_error(message: impl Into<String>) -> AppError {
+    AppError::new(AppErrorCategory::StorageFailure, message)
 }

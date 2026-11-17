@@ -1,0 +1,14 @@
+$ python -c import sys,unittest; sys.path.insert(0,'python/tests'); from test_project_runs import ProjectRunTests; names=['test_darwin_proc_pidinfo_reads_microsecond_start_fields','test_macos_process_identity_prefers_microsecond_start_time','test_macos_process_identity_uses_process_start_time']; suite=unittest.TestSuite(ProjectRunTests(name) for name in names); raise SystemExit(not unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful())
+exit_code=0
+
+[stdout]
+
+[stderr]
+test_darwin_proc_pidinfo_reads_microsecond_start_fields (test_project_runs.ProjectRunTests.test_darwin_proc_pidinfo_reads_microsecond_start_fields) ... ok
+test_macos_process_identity_prefers_microsecond_start_time (test_project_runs.ProjectRunTests.test_macos_process_identity_prefers_microsecond_start_time) ... ok
+test_macos_process_identity_uses_process_start_time (test_project_runs.ProjectRunTests.test_macos_process_identity_uses_process_start_time) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.127s
+
+OK

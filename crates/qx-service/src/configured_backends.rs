@@ -9,13 +9,14 @@ use qx_control::ControlPlane;
 use qx_runtime::{load_control_state, RuntimeConfig, StorageBackend};
 use qx_scheduler::JobSpec;
 use qx_storage::{
-    ControlCommandQueue, ControlCommandQueueBackend, FileJobQueue, JobLease, JsonStateStore,
-    QueuedJob, StorageError,
+    ControlCommandQueue, ControlCommandQueueBackend, FileJobQueue, JobLease, JobQueueBackend,
+    JsonStateStore, QueuedJob, StorageError,
 };
 #[cfg(feature = "postgres")]
 use qx_storage::{PostgresControlCommandQueue, PostgresControlStore, PostgresJobQueue};
 #[cfg(feature = "sqlite")]
 use qx_storage::{SqliteControlCommandQueue, SqliteControlStore, SqliteJobQueue};
+use std::path::PathBuf;
 
 #[derive(Clone)]
 pub enum ControlStateBackend {
@@ -175,23 +176,20 @@ impl ConfiguredJobQueue {
         run: qx_scheduler::JobRun,
         enqueued_ts: u64,
     ) -> Result<(), StorageError> {
-        match self {
-            Self::Files(queue) => queue.enqueue(job, run, enqueued_ts).map(|_| ()),
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(queue) => queue.enqueue(job, run, enqueued_ts).map(|_| ()),
-            #[cfg(feature = "postgres")]
-            Self::Postgres(queue) => queue.enqueue(job, run, enqueued_ts).map(|_| ()),
-        }
+        JobQueueBackend::enqueue_job(self, job, run, enqueued_ts).map(|_| ())
     }
 
     pub fn available(&self, now: u64) -> Result<Vec<QueuedJob>, StorageError> {
-        match self {
-            Self::Files(queue) => queue.available(now),
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(queue) => queue.available(now),
-            #[cfg(feature = "postgres")]
-            Self::Postgres(queue) => queue.available(now),
-        }
+        JobQueueBackend::available_jobs(self, now)
+    }
+
+    pub fn available_for_owner(
+        &self,
+        now: u64,
+        worker_id: &str,
+        limit: usize,
+    ) -> Result<Vec<QueuedJob>, StorageError> {
+        JobQueueBackend::available_jobs_for_owner(self, now, worker_id, limit)
     }
 
     pub fn claim(
@@ -201,13 +199,7 @@ impl ConfiguredJobQueue {
         now: u64,
         lease_seconds: u64,
     ) -> Result<JobLease, StorageError> {
-        match self {
-            Self::Files(queue) => queue.claim(run_id, owner, now, lease_seconds),
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(queue) => queue.claim(run_id, owner, now, lease_seconds),
-            #[cfg(feature = "postgres")]
-            Self::Postgres(queue) => queue.claim(run_id, owner, now, lease_seconds),
-        }
+        JobQueueBackend::claim_job(self, run_id, owner, now, lease_seconds)
     }
 
     pub fn ack_at(
@@ -217,12 +209,108 @@ impl ConfiguredJobQueue {
         fencing_token: u64,
         now: u64,
     ) -> Result<(), StorageError> {
+        JobQueueBackend::ack_job_at(self, run_id, owner, fencing_token, now).map(|_| ())
+    }
+}
+
+impl JobQueueBackend for ConfiguredJobQueue {
+    fn enqueue_job(
+        &self,
+        job: JobSpec,
+        run: qx_scheduler::JobRun,
+        enqueued_ts: u64,
+    ) -> Result<PathBuf, StorageError> {
         match self {
-            Self::Files(queue) => queue.ack_at(run_id, owner, fencing_token, now).map(|_| ()),
+            Self::Files(queue) => JobQueueBackend::enqueue_job(queue, job, run, enqueued_ts),
             #[cfg(feature = "sqlite")]
-            Self::Sqlite(queue) => queue.ack_at(run_id, owner, fencing_token, now).map(|_| ()),
+            Self::Sqlite(queue) => JobQueueBackend::enqueue_job(queue, job, run, enqueued_ts),
             #[cfg(feature = "postgres")]
-            Self::Postgres(queue) => queue.ack_at(run_id, owner, fencing_token, now).map(|_| ()),
+            Self::Postgres(queue) => JobQueueBackend::enqueue_job(queue, job, run, enqueued_ts),
+        }
+    }
+
+    fn available_jobs(&self, now: u64) -> Result<Vec<QueuedJob>, StorageError> {
+        match self {
+            Self::Files(queue) => JobQueueBackend::available_jobs(queue, now),
+            #[cfg(feature = "sqlite")]
+            Self::Sqlite(queue) => JobQueueBackend::available_jobs(queue, now),
+            #[cfg(feature = "postgres")]
+            Self::Postgres(queue) => JobQueueBackend::available_jobs(queue, now),
+        }
+    }
+
+    fn available_jobs_for_owner(
+        &self,
+        now: u64,
+        worker_id: &str,
+        limit: usize,
+    ) -> Result<Vec<QueuedJob>, StorageError> {
+        match self {
+            Self::Files(queue) => {
+                JobQueueBackend::available_jobs_for_owner(queue, now, worker_id, limit)
+            }
+            #[cfg(feature = "sqlite")]
+            Self::Sqlite(queue) => {
+                JobQueueBackend::available_jobs_for_owner(queue, now, worker_id, limit)
+            }
+            #[cfg(feature = "postgres")]
+            Self::Postgres(queue) => {
+                JobQueueBackend::available_jobs_for_owner(queue, now, worker_id, limit)
+            }
+        }
+    }
+
+    fn claim_job(
+        &self,
+        run_id: u64,
+        worker: &str,
+        now: u64,
+        lease_seconds: u64,
+    ) -> Result<JobLease, StorageError> {
+        match self {
+            Self::Files(queue) => {
+                JobQueueBackend::claim_job(queue, run_id, worker, now, lease_seconds)
+            }
+            #[cfg(feature = "sqlite")]
+            Self::Sqlite(queue) => {
+                JobQueueBackend::claim_job(queue, run_id, worker, now, lease_seconds)
+            }
+            #[cfg(feature = "postgres")]
+            Self::Postgres(queue) => {
+                JobQueueBackend::claim_job(queue, run_id, worker, now, lease_seconds)
+            }
+        }
+    }
+
+    fn ack_job_at(
+        &self,
+        run_id: u64,
+        worker: &str,
+        fencing_token: u64,
+        now: u64,
+    ) -> Result<PathBuf, StorageError> {
+        match self {
+            Self::Files(queue) => {
+                JobQueueBackend::ack_job_at(queue, run_id, worker, fencing_token, now)
+            }
+            #[cfg(feature = "sqlite")]
+            Self::Sqlite(queue) => {
+                JobQueueBackend::ack_job_at(queue, run_id, worker, fencing_token, now)
+            }
+            #[cfg(feature = "postgres")]
+            Self::Postgres(queue) => {
+                JobQueueBackend::ack_job_at(queue, run_id, worker, fencing_token, now)
+            }
+        }
+    }
+
+    fn recover_expired_leases(&self, now: u64) -> Result<Vec<u64>, StorageError> {
+        match self {
+            Self::Files(queue) => JobQueueBackend::recover_expired_leases(queue, now),
+            #[cfg(feature = "sqlite")]
+            Self::Sqlite(queue) => JobQueueBackend::recover_expired_leases(queue, now),
+            #[cfg(feature = "postgres")]
+            Self::Postgres(queue) => JobQueueBackend::recover_expired_leases(queue, now),
         }
     }
 }
@@ -241,10 +329,13 @@ pub fn configured_job_queue(
     root: &Path,
 ) -> Result<ConfiguredJobQueue, String> {
     match config.storage.backend {
-        StorageBackend::Files => Ok(ConfiguredJobQueue::Files(FileJobQueue::new(runtime_path(
-            root,
-            &config.scheduler.job_queue_path,
-        )))),
+        StorageBackend::Files => Ok(ConfiguredJobQueue::Files(
+            FileJobQueue::with_pending_limit(
+                runtime_path(root, &config.scheduler.job_queue_path),
+                config.scheduler.max_pending_jobs,
+            )
+            .map_err(|error| format!("初始化有界文件 JobQueue 失败: {error:?}"))?,
+        )),
         StorageBackend::Sqlite => {
             #[cfg(not(feature = "sqlite"))]
             {
@@ -258,7 +349,7 @@ pub fn configured_job_queue(
                     .sqlite_path
                     .as_deref()
                     .ok_or_else(|| "SQLite backend 缺少 sqlite_path".to_string())?;
-                SqliteJobQueue::new(path)
+                SqliteJobQueue::with_pending_limit(path, config.scheduler.max_pending_jobs)
                     .map(ConfiguredJobQueue::Sqlite)
                     .map_err(|error| format!("初始化 SQLite JobQueue 失败: {error:?}"))
             }
@@ -272,9 +363,13 @@ pub fn configured_job_queue(
             #[cfg(feature = "postgres")]
             {
                 let dsn = postgres_dsn(config)?;
-                PostgresJobQueue::connect_with_pool_size(&dsn, config.storage.postgres_pool_size)
-                    .map(ConfiguredJobQueue::Postgres)
-                    .map_err(|error| format!("初始化 PostgreSQL JobQueue 失败: {error:?}"))
+                PostgresJobQueue::connect_with_pool_size_and_pending_limit(
+                    &dsn,
+                    config.storage.postgres_pool_size,
+                    config.scheduler.max_pending_jobs,
+                )
+                .map(ConfiguredJobQueue::Postgres)
+                .map_err(|error| format!("初始化 PostgreSQL JobQueue 失败: {error:?}"))
             }
         }
     }
@@ -303,4 +398,74 @@ pub fn configured_postgres_dsn(config: &RuntimeConfig) -> Result<Option<String>,
         return Ok(None);
     }
     postgres_dsn(config).map(Some)
+}
+
+#[cfg(test)]
+mod job_queue_backend_tests {
+    use super::*;
+    use qx_scheduler::{JobRun, JobStatus, JobWindow, RetryPolicy, Trigger};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn configured_file_queue_dispatches_the_production_trait_contract() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target")
+            .join(format!(
+                "qx-service-job-queue-contract-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("system clock must be after unix epoch")
+                    .as_nanos()
+            ));
+        let queue = ConfiguredJobQueue::Files(FileJobQueue::new(root.clone()));
+        let backend: &dyn JobQueueBackend = &queue;
+        let job = JobSpec {
+            job_id: "trait-contract".into(),
+            job_version: "v1".into(),
+            owner: "contract-test".into(),
+            enabled: true,
+            trigger: Trigger::Manual,
+            window: JobWindow::Any,
+            depends_on: Vec::new(),
+            input_refs: Vec::new(),
+            output_refs: Vec::new(),
+            timeout_seconds: 60,
+            retry_policy: RetryPolicy::default(),
+            concurrency_key: "trait-contract".into(),
+            idempotency_key: "trait-contract-daily".into(),
+            permission_scope: "research".into(),
+            audit_reason: "production trait dispatch".into(),
+            dry_run: true,
+        };
+        let run = JobRun {
+            run_id: job.stable_key("20260911"),
+            job_id: job.job_id.clone(),
+            trading_day: "20260911".into(),
+            attempt: 1,
+            status: JobStatus::Running,
+            manifest_digest: Some(7),
+            error_code: None,
+            next_retry_ts: None,
+            started_ts: 10,
+            deadline_ts: 70,
+        };
+        let run_id = run.run_id;
+
+        backend.enqueue_job(job, run, 10).unwrap();
+        let available = backend.available_jobs(10).unwrap();
+        assert_eq!(available.len(), 1);
+        assert_eq!(available[0].run.run_id, run_id);
+
+        let lease = backend
+            .claim_job(run_id, "contract-worker", 10, 10)
+            .unwrap();
+        assert_eq!(lease.fencing_token, 1);
+        backend
+            .ack_job_at(run_id, "contract-worker", lease.fencing_token, 11)
+            .unwrap();
+        assert!(backend.recover_expired_leases(11).unwrap().is_empty());
+        drop(queue);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

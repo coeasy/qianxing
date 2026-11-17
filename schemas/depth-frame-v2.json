@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/depth-frame-v2.json",
+  "title": "Qianxing DepthFrame v2",
+  "description": "Strict depth input preserving source price and quantity as ExactDecimal. Legacy raw fields must equal the toward-zero 1e-9 projection and are compatibility fields only.",
+  "type": "object",
+  "required": ["schema_version", "source", "instrument", "snapshots"],
+  "properties": {
+    "schema_version": {"const": 2},
+    "source": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"},
+    "instrument": {"$ref": "#/$defs/InstrumentId"},
+    "snapshots": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/OrderBookSnapshot"}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "InstrumentId": {
+      "type": "object",
+      "required": ["symbol", "venue"],
+      "properties": {
+        "symbol": {"type": "string", "minLength": 1},
+        "venue": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "ExactDecimal": {
+      "type": "object",
+      "required": ["coefficient", "scale"],
+      "properties": {
+        "coefficient": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)$"},
+        "scale": {"type": "integer", "minimum": 0, "maximum": 18}
+      },
+      "additionalProperties": false
+    },
+    "BookLevel": {
+      "type": "object",
+      "required": ["price", "qty", "price_exact", "qty_exact"],
+      "properties": {
+        "price": {"type": "integer", "minimum": 0},
+        "qty": {"type": "integer", "minimum": 0},
+        "price_exact": {"$ref": "#/$defs/ExactDecimal"},
+        "qty_exact": {"$ref": "#/$defs/ExactDecimal"}
+      },
+      "additionalProperties": false
+    },
+    "OrderBookSnapshot": {
+      "type": "object",
+      "required": ["instrument", "ts", "sequence", "bids", "asks"],
+      "properties": {
+        "instrument": {"$ref": "#/$defs/InstrumentId"},
+        "ts": {"type": "integer", "minimum": 1},
+        "sequence": {"type": "integer", "minimum": 1},
+        "bids": {"type": "array", "items": {"$ref": "#/$defs/BookLevel"}},
+        "asks": {"type": "array", "items": {"$ref": "#/$defs/BookLevel"}}
+      },
+      "additionalProperties": false
+    }
+  }
+}

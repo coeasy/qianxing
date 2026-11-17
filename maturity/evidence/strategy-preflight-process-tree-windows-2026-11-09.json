@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "dynamic_strategy_preflight_process_tree_cleanup",
+  "recorded_at_utc": "2026-11-09T11:27:57.778442Z",
+  "platform": "win32",
+  "timeout_seconds": 0.5,
+  "process_tree_cases": [
+    {
+      "case": "normal-return",
+      "parent_expected_timeout": false,
+      "timed_out": false,
+      "descendant_pid": 26128,
+      "descendant_reaped": true,
+      "elapsed_seconds": 0.1318
+    },
+    {
+      "case": "timeout",
+      "parent_expected_timeout": true,
+      "timed_out": true,
+      "descendant_pid": 13000,
+      "descendant_reaped": true,
+      "elapsed_seconds": 0.6899
+    }
+  ],
+  "detached_process_limit_documented": "POSIX children that deliberately start a new session escape the owned process group and require separate ownership; the Linux acceptance verifies this boundary and cleans up its fixture child."
+}

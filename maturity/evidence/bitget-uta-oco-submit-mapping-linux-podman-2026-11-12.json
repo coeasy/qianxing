@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "bitget_uta_oco_submit_mapping_local_validation",
+  "generated_at_utc": "2026-11-12T06:41:38Z",
+  "source": {
+    "code_base_commit": "f6b94bb4",
+    "worktree_dirty": true,
+    "dirty_paths_related_to_this_evidence": [
+      "crates/qx-adapter/src/ccxt.rs",
+      "crates/qx-adapter/src/ccxt/tests.rs",
+      "python/qianxing_ccxt/__init__.py",
+      "python/qianxing_ccxt/worker.py",
+      "python/tests/test_ccxt.py",
+      "python/tests/test_ccxt_worker.py"
+    ]
+  },
+  "environment": {
+    "host_os": "Windows 11",
+    "linux_runtime": "Podman 6.1.4",
+    "container_image": "mirror.gcr.io/library/rust:1.98.1-bookworm",
+    "dependency_resolution": "offline, locked"
+  },
+  "results": [
+    {
+      "command": "cargo test --offline --locked -j 2 -p qx-adapter bitget_uta_oco_group_request_is_limit_tp_plus_market_trigger_sl -- --nocapture",
+      "environment": "Podman Linux",
+      "selected_tests": 1,
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "python tests/test_ccxt.py CcxtTest.test_bitget_uta_oco_uses_strategy_endpoint_without_client_oid CcxtTest.test_bitget_uta_oco_rejects_unsupported_account_and_price_relationships",
+      "environment": "Windows fake-exchange unit tests",
+      "selected_tests": 2,
+      "passed": 2,
+      "failed": 0
+    },
+    {
+      "command": "python tests/test_ccxt_worker.py CcxtWorkerTest.test_jsonl_bitget_uta_oco_submit_uses_strategy_order_endpoint",
+      "environment": "Windows fake-exchange unit tests",
+      "selected_tests": 1,
+      "passed": 1,
+      "failed": 0
+    }
+  ],
+  "scope_limitations": [
+    "These checks cover exact local request construction, UTA/Spot fail-closed preflight, worker dispatch, and persistence of a returned strategy ID behind a reconciliation-required state.",
+    "No Bitget network request was made. Strategy-order lookup, cancel, sub-order recovery, private-stream behavior, the service control route, and Demo/production acceptance remain incomplete.",
+    "Bitget UTA OCO remains unavailable and unverified; these local request-shape checks do not authorize sandbox or production use."
+  ]
+}

@@ -1,0 +1,16 @@
+$ cargo test -p qx-cli --test app_three_entrypoints cli_and_python_read_the_same_replay_verified_multi_market --offline -- --test-threads=1
+exit_code=0
+
+[stdout]
+
+running 2 tests
+test multi_market_report_entrypoints::cli_and_python_read_the_same_replay_verified_multi_market_depth_event_page ... ok
+test multi_market_report_entrypoints::cli_and_python_read_the_same_replay_verified_multi_market_event_page ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 31 filtered out; finished in 9.56s
+
+
+[stderr]
+   Compiling qx-cli v0.3.0 (D:\aex_work\qianxing\crates\qx-cli)
+    Finished `test` profile [unoptimized] target(s) in 4.30s
+     Running tests\app_three_entrypoints.rs (target\debug\deps\app_three_entrypoints-d0b0e2c08291224a.exe)

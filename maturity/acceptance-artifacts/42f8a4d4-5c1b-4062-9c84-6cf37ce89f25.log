@@ -1,0 +1,5 @@
+pristine=4627
+mutant=0
+after-restore-with-poisoned-cache=0
+pattern=[\w\-.]+(?:/[\w\-.]+)+\.[A-Za-z0-9]{1,6}\A
+pyc=check_markdown_links.cpython-313.pyc mtime=1793613366 source_mtime=1793613366

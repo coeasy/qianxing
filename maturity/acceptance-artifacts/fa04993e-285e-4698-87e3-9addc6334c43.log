@@ -1,0 +1,34 @@
+LEG r13_gate_arch rc=0 seconds=115.60 bytes=68
+LEG r13_gate_ledger rc=0 seconds=6.84 bytes=104
+LEG r13_gate_pyfull rc=0 seconds=439.39 bytes=1791
+LEG r13_gate_ladder rc=0 seconds=0.28 bytes=265
+LEG r13_gate_pyc rc=0 seconds=0.45 bytes=0
+LEG r13_gate_diffcheck rc=0 seconds=0.93 bytes=23547
+SUMMARY_WRITTEN .task-tmp\r13_gate_summary.json
+R r13_gate_arch_checks=336
+R r13_gate_arch_rc=0
+R r13_gate_arch_seconds=115.27
+R r13_gate_arch_shards=4
+R r13_gate_diffcheck_lines=178
+R r13_gate_diffcheck_rc=0
+R r13_gate_ladder_rc=0
+R r13_gate_ladder_tests=1
+R r13_gate_ledger_binds=132
+R r13_gate_ledger_range=R01–R23
+R r13_gate_ledger_rc=0
+R r13_gate_ledger_scenes=23
+R r13_gate_py_failed_count=0
+R r13_gate_py_rc=0
+R r13_gate_py_seconds=438.278
+R r13_gate_py_skipped=5
+R r13_gate_py_tests=589
+R r13_gate_py_verdict=OK
+R r13_gate_pyc_files=55
+R r13_gate_pyc_rc=0
+R t_r13_gate_arch=115.6
+R t_r13_gate_diffcheck=0.93
+R t_r13_gate_ladder=0.28
+R t_r13_gate_ledger=6.84
+R t_r13_gate_pyc=0.45
+R t_r13_gate_pyfull=439.39
+legs_nonzero=-

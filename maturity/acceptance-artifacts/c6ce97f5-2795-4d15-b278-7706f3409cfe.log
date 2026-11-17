@@ -1,0 +1,50 @@
+$ cargo clippy --workspace --lib --bins --offline -- -D clippy::unwrap_used -D clippy::expect_used
+exit_code=0
+
+[stdout]
+
+[stderr]
+   Compiling zerocopy v0.8.56
+    Checking serde_core v1.0.229
+   Compiling qx-app v0.4.0 (D:\aex_work\qianxing\crates\qx-app)
+    Checking windows-sys v0.61.2
+    Checking qx-process-io v0.4.0 (D:\aex_work\qianxing\crates\qx-process-io)
+   Compiling qx-python v0.4.0 (D:\aex_work\qianxing\crates\qx-python)
+   Compiling qx-cli v0.4.0 (D:\aex_work\qianxing\crates\qx-cli)
+    Checking contract-tests v0.4.0 (D:\aex_work\qianxing\crates\contract-tests)
+    Checking anstyle-query v1.1.5
+    Checking anstyle-wincon v3.0.11
+    Checking anstream v1.0.0
+    Checking clap_builder v4.6.7
+    Checking serde_json v1.0.151
+    Checking serde v1.0.229
+    Checking qx-core v0.4.0 (D:\aex_work\qianxing\crates\qx-core)
+    Checking clap v4.6.7
+    Checking ahash v0.8.12
+    Checking hashbrown v0.14.5
+    Checking hashlink v0.9.1
+    Checking rusqlite v0.32.1
+    Checking qx-guanxing v0.4.0 (D:\aex_work\qianxing\crates\qx-guanxing)
+    Checking qx-risk v0.4.0 (D:\aex_work\qianxing\crates\qx-risk)
+    Checking qx-control v0.4.0 (D:\aex_work\qianxing\crates\qx-control)
+    Checking qx-strategy v0.4.0 (D:\aex_work\qianxing\crates\qx-strategy)
+    Checking qx-scheduler v0.4.0 (D:\aex_work\qianxing\crates\qx-scheduler)
+    Checking qx-protocol v0.4.0 (D:\aex_work\qianxing\crates\qx-protocol)
+    Checking qx-genglu v0.4.0 (D:\aex_work\qianxing\crates\qx-genglu)
+    Checking qx-plugin v0.4.0 (D:\aex_work\qianxing\crates\qx-plugin)
+    Checking qx-datastruct v0.4.0 (D:\aex_work\qianxing\crates\qx-datastruct)
+    Checking qx-zhenlu v0.4.0 (D:\aex_work\qianxing\crates\qx-zhenlu)
+    Checking qx-factor v0.4.0 (D:\aex_work\qianxing\crates\qx-factor)
+    Checking qx-storage v0.4.0 (D:\aex_work\qianxing\crates\qx-storage)
+    Checking qx-data v0.4.0 (D:\aex_work\qianxing\crates\qx-data)
+    Checking qx-execution v0.4.0 (D:\aex_work\qianxing\crates\qx-execution)
+    Checking qx-spec v0.4.0 (D:\aex_work\qianxing\crates\qx-spec)
+    Checking qx-provider v0.4.0 (D:\aex_work\qianxing\crates\qx-provider)
+    Checking qx-xingban v0.4.0 (D:\aex_work\qianxing\crates\qx-xingban)
+    Checking qx-adapter v0.4.0 (D:\aex_work\qianxing\crates\qx-adapter)
+    Checking qx-runtime v0.4.0 (D:\aex_work\qianxing\crates\qx-runtime)
+    Checking qx-orchestrator v0.4.0 (D:\aex_work\qianxing\crates\qx-orchestrator)
+    Checking qx-api v0.4.0 (D:\aex_work\qianxing\crates\qx-api)
+    Checking qx-sdk v0.4.0 (D:\aex_work\qianxing\crates\qx-sdk)
+    Checking qx-service v0.4.0 (D:\aex_work\qianxing\crates\qx-service)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 31.02s

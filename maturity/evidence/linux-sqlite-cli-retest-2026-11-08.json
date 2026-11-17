@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-08",
+  "platform": "linux-x86_64",
+  "distribution": "Ubuntu 24.04 on Simular Box",
+  "rust_version": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "python_version": "Python 3.12.3",
+  "source_state": "dirty-worktree",
+  "validation": {
+    "command": "cargo test -p qx-cli -j 1 --quiet",
+    "exit_code": 0,
+    "passed": 696,
+    "failed": 0,
+    "ignored": 0,
+    "harnesses": 14,
+    "python_executable": ".tmp-release-prep/linux-wheel-venv/bin/python",
+    "build_contention": false,
+    "notes": "The prior seven Linux timeout failures did not recur when tests ran without a concurrent Release link. This is the qx-cli default SQLite feature set; it does not cover the PostgreSQL/NATS feature matrix or live services."
+  },
+  "release_build": {
+    "command": "cargo build --release --locked -p qx-cli --no-default-features --features sqlite",
+    "status": "in_progress",
+    "box_process_ids": {
+      "cargo": 41597,
+      "rustc": 41612
+    },
+    "box_log": ".tmp-release-prep/linux-release-rebuild-retry-2026-11-08/build.log",
+    "fresh_artifact_verified": false,
+    "notes": "Final qx-cli LTO link is running as a detached Box process. The rustc worker remains CPU-active; exit status and output hash are pending."
+  }
+}

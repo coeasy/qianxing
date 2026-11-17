@@ -23,14 +23,7 @@ struct PaperSubmitCase {
 }
 
 fn paper_submit_case(label: &str, client_id: u64, with_market_quote: bool) -> PaperSubmitCase {
-    let dir = std::env::temp_dir().join(format!(
-        "qianxing-cli-{label}-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let dir = temp_cli_case_dir(&format!("paper-submit-{label}"));
     let data_dir = dir.join("data");
     std::fs::create_dir_all(&data_dir).unwrap();
     let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
@@ -190,6 +183,7 @@ fn paper_submit_refreshes_under_account_lock_before_reusing_cash() {
             dry_run: false,
         }
     };
+    let first_now = runtime_timestamp_ms();
     let first = paper_submit_match_attempt(
         &config,
         &case.config_path,
@@ -198,13 +192,12 @@ fn paper_submit_refreshes_under_account_lock_before_reusing_cash() {
         &worker,
         &mut first_pipeline,
         &spread_store,
-        10,
+        first_now,
     );
     assert!(
         first.is_ok(),
         "first order should consume most of the available 1,000 USDT: {first:?}"
     );
-
     let second = paper_submit_match_attempt(
         &config,
         &case.config_path,
@@ -213,7 +206,7 @@ fn paper_submit_refreshes_under_account_lock_before_reusing_cash() {
         &worker,
         &mut second_pipeline,
         &spread_store,
-        11,
+        first_now.saturating_add(1),
     );
     let second = second.expect_err("a stale pre-submit balance must not authorize a second order");
     assert!(
@@ -300,6 +293,166 @@ fn paper_submit_order_with_market_quote_still_reaches_executed() {
     let pipeline = LiveEventPipeline::open(&case.data_dir, paper_account_log(), "USDT").unwrap();
     assert_eq!(pipeline.orders().len(), 1, "成交事实要留在同一本账户日志");
     assert!(queue_of(&case).pending().unwrap().is_empty());
+    let _ = std::fs::remove_dir_all(&case.dir);
+}
+
+#[test]
+fn paper_submit_rejects_a_market_quote_received_more_than_thirty_seconds_ago() {
+    let case = paper_submit_case("paper-submit-stale-market-quote", 8030, true);
+    let received_at = runtime_timestamp_ms().saturating_sub(30_001);
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    LiveEventPipeline::open(&case.data_dir, paper_account_log(), "USDT")
+        .unwrap()
+        .ingest(RuntimeEventEnvelope::market_quote(
+            instrument,
+            QuoteTick::new(
+                received_at,
+                Price::from_i64(99),
+                Quantity::from_i64(1_000),
+                Price::from_i64(100),
+                Quantity::from_i64(1_000),
+                received_at,
+            ),
+            received_at,
+            received_at,
+            "paper-submit-stale-market-quote",
+        ))
+        .unwrap();
+    let execution_echo_at = runtime_timestamp_ms();
+    LiveEventPipeline::open(&case.data_dir, paper_account_log(), "USDT")
+        .unwrap()
+        .ingest(RuntimeEventEnvelope::market_quote(
+            InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+            QuoteTick::new(
+                execution_echo_at,
+                Price::from_i64(99),
+                Quantity::from_i64(1_000),
+                Price::from_i64(100),
+                Quantity::from_i64(1_000),
+                execution_echo_at,
+            ),
+            execution_echo_at,
+            execution_echo_at,
+            "paper-execution:market:BTCUSDT.BINANCE:stale-quote-echo",
+        ))
+        .unwrap();
+
+    let error = run_paper_submit_order(&case.config_path, &case.command_path)
+        .expect_err("an execution echo must not refresh stale market data");
+    assert!(error.contains("Paper 最新行情已过期"), "{error}");
+    assert!(error.contains("command_id") && error.contains("request_id"));
+    assert_eq!(terminal_record(&case, 8030).0, CommandStatus::Failed);
+    let pipeline = LiveEventPipeline::open(&case.data_dir, paper_account_log(), "USDT").unwrap();
+    assert!(
+        pipeline.orders().is_empty(),
+        "stale quote must not create an order"
+    );
+    assert!(queue_of(&case).pending().unwrap().is_empty());
+    let _ = std::fs::remove_dir_all(&case.dir);
+}
+
+/// The one-shot process must not share the resident worker's lease owner. A same-owner lease
+/// reuses its fencing token and would let both processes execute the same accepted command.
+#[test]
+fn paper_one_shot_defers_to_a_resident_worker_lease_without_changing_control_state() {
+    let case = paper_submit_case("paper-submit-worker-lease-handoff", 8005, true);
+    let command: ControlCommand =
+        serde_json::from_str(&std::fs::read_to_string(&case.command_path).unwrap()).unwrap();
+    let queue = queue_of(&case);
+    let lease_now = lease_clock(runtime_timestamp_ms());
+    queue.enqueue(command.clone(), lease_now).unwrap();
+    let worker_lease = queue
+        .claim(command.command_id, "paper-execution", lease_now, 30)
+        .unwrap();
+
+    run_paper_submit_order(&case.config_path, &case.command_path)
+        .expect("已由常驻 worker 持有的命令应安全移交，而不是争用同一租约");
+
+    assert_eq!(terminal_record(&case, 8005).0, CommandStatus::Accepted);
+    let lease_path = case
+        .data_dir
+        .join("control-queue")
+        .join("commands")
+        .join("8005.lease.json");
+    let current_lease: qx_storage::ControlCommandLease =
+        serde_json::from_str(&std::fs::read_to_string(lease_path).unwrap()).unwrap();
+    assert_eq!(
+        current_lease, worker_lease,
+        "one-shot handoff must leave the resident worker's fencing lease intact"
+    );
+    assert!(
+        queue
+            .pending()
+            .unwrap()
+            .iter()
+            .any(|item| item.command.command_id == 8005),
+        "handed-off command remains available to its lease owner"
+    );
+    let _ = std::fs::remove_dir_all(&case.dir);
+}
+
+/// The queue is a delivery index; an Accepted control command is the recovery source when queue
+/// enqueue failed before writing an item. The resident worker must recreate and execute it.
+#[test]
+fn paper_submit_enqueue_failure_preserves_accepted_command_for_worker_recovery() {
+    let case = paper_submit_case("paper-submit-enqueue-failure", 8007, true);
+    let queue_path = case.data_dir.join("control-queue");
+    std::fs::write(&queue_path, b"block queue directory creation")
+        .expect("create a deterministic queue storage failure");
+
+    let error = run_paper_submit_order(&case.config_path, &case.command_path)
+        .expect_err("queue persistence failure must be reported to the caller");
+    assert!(
+        error.contains("已受理，但写入队列失败")
+            && error.contains("命令仍保留为 Accepted")
+            && error.contains("Paper Execution worker"),
+        "the caller must be told the command is durable and recoverable: {error}"
+    );
+    assert_eq!(
+        terminal_record(&case, 8007).0,
+        CommandStatus::Accepted,
+        "a failed queue index must not fabricate a Failed control-plane terminal state"
+    );
+    assert!(queue_path.is_file(), "the injected failure must be active");
+    let pipeline = LiveEventPipeline::open(&case.data_dir, paper_account_log(), "USDT").unwrap();
+    assert!(
+        pipeline.orders().is_empty(),
+        "the one-shot submit path must not execute before a durable queue item exists"
+    );
+    drop(pipeline);
+
+    std::fs::remove_file(&queue_path).expect("remove the injected queue failure");
+    run_paper_execution_worker(&case.config_path, "paper-execution", true)
+        .expect("resident worker should recover the Accepted command from the control store");
+
+    assert_eq!(terminal_record(&case, 8007).0, CommandStatus::Executed);
+    assert!(queue_of(&case).pending().unwrap().is_empty());
+    let pipeline = LiveEventPipeline::open(&case.data_dir, paper_account_log(), "USDT").unwrap();
+    assert_eq!(pipeline.orders().len(), 1);
+    assert_eq!(pipeline.orders()[0].status, OrderStatus::Filled);
+    let _ = std::fs::remove_dir_all(&case.dir);
+}
+
+#[test]
+fn paper_worker_requeues_an_accepted_command_missing_from_the_queue() {
+    let case = paper_submit_case("paper-submit-queue-recovery", 8006, true);
+    let command: ControlCommand =
+        serde_json::from_str(&std::fs::read_to_string(&case.command_path).unwrap()).unwrap();
+    let control = ControlStateBackend::Files(JsonStateStore::new(&case.data_dir));
+    control
+        .transact(|plane| plane.submit_as(command, Permission::Trading, runtime_timestamp_ms()))
+        .expect("persist an Accepted command as if the queue write failed")
+        .1
+        .unwrap();
+    assert!(queue_of(&case).pending().unwrap().is_empty());
+
+    run_paper_execution_worker(&case.config_path, "paper-execution", true)
+        .expect("resident worker should reconcile the Accepted control command into its queue");
+
+    assert_eq!(terminal_record(&case, 8006).0, CommandStatus::Executed);
+    assert!(queue_of(&case).pending().unwrap().is_empty());
+    let pipeline = LiveEventPipeline::open(&case.data_dir, paper_account_log(), "USDT").unwrap();
+    assert_eq!(pipeline.orders().len(), 1);
     let _ = std::fs::remove_dir_all(&case.dir);
 }
 

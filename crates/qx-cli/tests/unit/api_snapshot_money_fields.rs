@@ -5,8 +5,8 @@
 //! 长得一样。这里钉住三件结果各自不同的事：算得出的按自己的来源算、算不出的必须缺席而不是零、
 //! 以及"缺席"与"零"在哈希与线格式上都不是同一份状态。
 //!
-//! V11 Q68 把同一条纪律推到持仓行：读模型用 Ledger 自己拼出来的那一行同样没有
-//! 未实现盈亏与保证金来源，交易所报了零的那一行则必须把零留在原地。
+//! V11 Q68 把同一条纪律推到持仓行：没有冻结规格时，读模型不得把未实现盈亏或保证金
+//! 缺席伪装成零；规格到位后的 PnL 生产者与验收由 `api_snapshot_pnl_fields.rs` 单独覆盖。
 //!
 //! V13 R26 把账户级已实现/未实现盈亏接上生产者（前者取 Ledger 逐条持仓累计的已实现盈亏之和、
 //! 后者取与 `equity_raw` 同源的现货乘数尺子），于是"这一层算不出哪几格"从五格收到三格
@@ -15,11 +15,14 @@
 use super::*;
 
 fn paper_snapshot(config: &RuntimeConfig) -> AccountSnapshot {
-    load_api_account_snapshots(config)
-        .unwrap()
-        .into_iter()
-        .find(|snapshot| snapshot.header.account_id == "main")
-        .expect("paper 拓扑必须投影出 main 账户快照")
+    qx_service::api_read_model::load_api_account_snapshots_with_market_specs(
+        config,
+        &workspace_binance_spot_market_specs(),
+    )
+    .unwrap()
+    .into_iter()
+    .find(|snapshot| snapshot.header.account_id == "main")
+    .expect("paper 拓扑必须投影出 main 账户快照")
 }
 
 /// 成交费用合计与权益里的持仓价值是两回事：把 `available_raw` 抄成 `equity_raw`，
@@ -33,6 +36,11 @@ fn available_is_the_settlement_cash_and_not_a_copy_of_equity() {
     seed_paper_fill_with_fee(&data_dir, &config);
 
     let snapshot = paper_snapshot(&config);
+    assert_eq!(
+        snapshot.margin_raw,
+        Some(0),
+        "完整的 Paper 估值输入应发布 initial_margin"
+    );
     let settlement = snapshot
         .cash_raw
         .get("USDT")
@@ -94,7 +102,6 @@ fn uncomputed_money_is_absent_rather_than_zero() {
 
     let snapshot = paper_snapshot(&config);
     for (name, value) in [
-        ("margin_raw", snapshot.margin_raw),
         ("frozen_raw", snapshot.frozen_raw),
         ("funding_raw", snapshot.funding_raw),
     ] {
@@ -102,7 +109,7 @@ fn uncomputed_money_is_absent_rather_than_zero() {
     }
     // 线格式侧：缺席要印成 null，不能印成一个合法的整数 0。
     let wire = snapshot.to_wire_json().unwrap();
-    for name in ["margin_raw", "frozen_raw", "funding_raw"] {
+    for name in ["frozen_raw", "funding_raw"] {
         assert!(
             wire.contains(&format!("\"{name}\":null")),
             "{name} 未算过时线格式必须印 null: {wire}"
@@ -110,8 +117,8 @@ fn uncomputed_money_is_absent_rather_than_zero() {
     }
     let stable = snapshot.to_json().unwrap();
     assert!(
-        stable.contains("\"margin_raw\":null"),
-        "稳定 JSON 同样不得把未算填成 0: {stable}"
+        stable.contains("\"margin_raw\":0"),
+        "已算出的零保证金应保留数值 0: {stable}"
     );
     let _ = std::fs::remove_dir_all(root);
 }
@@ -192,8 +199,11 @@ fn overflowing_fee_total_is_refused_instead_of_wrapping() {
         assert_eq!(pipeline.ledger().cash_for("main", "USDT"), i128::MIN);
     }
 
-    let error =
-        load_api_account_snapshots(&config).expect_err("费用合计回绕时不能发布一个口径错误的快照");
+    let error = qx_service::api_read_model::load_api_account_snapshots_with_market_specs(
+        &config,
+        &std::collections::BTreeMap::new(),
+    )
+    .expect_err("费用合计回绕时不能发布一个口径错误的快照");
     assert!(
         error.contains("溢出") && error.contains("main"),
         "溢出必须点名账户和溢出本身: {error}"
@@ -201,11 +211,9 @@ fn overflowing_fee_total_is_refused_instead_of_wrapping() {
     let _ = std::fs::remove_dir_all(root);
 }
 
-/// 读模型自己用 Ledger 拼出来的那一行持仓同样没有"未实现盈亏"和"占用的保证金"：
-/// 这一层只有成交与现金，那两个量要按冻结的 market spec 逐标的算。写死 0 会让一个
-/// 上涨 5% 的仓位长期报着"没有浮亏"（V11 Q68）。
+/// 账户持仓 PnL 已在冻结规格和行情齐全时计算；本层仍没有保证金生产者，所以不得将它写成零。
 #[test]
-fn ledger_fallback_position_row_leaves_uncomputed_money_absent() {
+fn ledger_fallback_position_row_leaves_uncomputed_margin_absent() {
     let root = temp_cli_case_dir("api-money-fields-row");
     let data_dir = root.join("data");
     std::fs::create_dir_all(&data_dir).unwrap();
@@ -219,21 +227,18 @@ fn ledger_fallback_position_row_leaves_uncomputed_money_absent() {
         .get(&instrument)
         .expect("paper 成交必须投影出一行持仓");
     assert_ne!(row.quantity_raw, 0, "夹具必须真的留下一笔持仓");
-    assert_eq!(
-        (row.unrealized_pnl_raw, row.margin_raw),
-        (None, None),
-        "本层算不出这两个钱字段，必须报未算而不是 0"
+    assert!(
+        row.unrealized_pnl_raw.is_some(),
+        "冻结市场规格和标记价已提供时，行 PnL 必须有计算结果"
     );
-    // 逐行断言要读解析后的 JSON：账户级标量在本层同样是 null，整串 `contains` 会
-    // 被它先命中而永远为真。
+    assert_eq!(row.margin_raw, None, "本层算不出保证金，必须保持未算");
+    // 逐行断言要读解析后的 JSON：保证金必须保持 null，不能被别处的标量同名字段误命中。
     let wire: serde_json::Value = serde_json::from_str(&snapshot.to_wire_json().unwrap()).unwrap();
     let json_row = &wire["positions"]["BTCUSDT.BINANCE"];
-    for name in ["unrealized_pnl_raw", "margin_raw"] {
-        assert!(
-            json_row[name].is_null(),
-            "{name} 未经交易所上报时线格式必须印 null: {json_row}"
-        );
-    }
+    assert!(
+        json_row["margin_raw"].is_null(),
+        "margin_raw 未经交易所上报时线格式必须印 null: {json_row}"
+    );
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -379,6 +384,7 @@ fn venue_reported_row_keeps_reported_zero_and_unreported_absent() {
                     venue_id: "paper".into(),
                     positions: vec![AccountPositionSnapshot {
                         instrument: instrument.clone(),
+                        settlement_currency: None,
                         quantity: Quantity::from_i64(1),
                         average_price: Some(Price::from_i64(100)),
                         mark_price: Some(Price::from_i64(105)),
@@ -390,6 +396,7 @@ fn venue_reported_row_keeps_reported_zero_and_unreported_absent() {
                         leverage: None,
                         margin_mode: None,
                         position_side: Some("long".into()),
+                        exact_amounts: None,
                     }],
                 },
                 1,

@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "kind": "windows_wheel_release_preflight",
+  "candidate_version": "0.4.0",
+  "generated_at_utc": "2026-11-10T11:16:48Z",
+  "source": {
+    "commit": "4e2bdf8a480c2df83a55ac1594ea1693581c76d3",
+    "worktree": "clean detached worktree",
+    "tagged": false,
+    "published": false
+  },
+  "environment": {
+    "platform": "windows-x86_64",
+    "os": "Windows 11",
+    "rust": "1.98.1",
+    "python": "3.13.13",
+    "wheel_tag": "cp310-abi3-win_amd64"
+  },
+  "artifacts": {
+    "directory": "dist/release-candidate-v0.4.0-windows-x86_64-4e2bdf8a-artifacts/",
+    "wheel": {
+      "file": "qianxing-0.4.0-cp310-abi3-win_amd64.whl",
+      "size_bytes": 22876718,
+      "sha256": "59811b7d743c408019e6d8270f1cde2e29962b4e2b8336ad720861aae7e1e71d",
+      "stable_abi_check": "passed",
+      "clean_venv_install": "passed",
+      "native_import_and_e2e_smoke": {
+        "result": "passed",
+        "summary": "17 strategies; 70 rows; fills=1; A-share fills=1; classic_selection=13/13; parameter_grid=4/4; accounts=2; account_overflow_preflight=true; depth_account_overflow_preflight=true; multileg=1/2; depth_fills=1; custom_fills=1; run_handle=succeeded; verified=true"
+      }
+    },
+    "cli": {
+      "file": "qx-cli-v0.4.0-Windows-X64.exe",
+      "size_bytes": 43974656,
+      "sha256": "c5476b9ec54ccf6d0af7b1f74c13d0568aaf7082d36428266322ae59bea50e4a",
+      "identity": "qianxing 0.4.0 (build 4e2bdf8, target x86_64-pc-windows-msvc, profile release, schemas 844f6d99abdf26d44a2e20d53344c7ac415d02275540a62595896b0ff8b36e24)",
+      "version_check": "passed",
+      "ashare_quickstart": {
+        "result": "passed",
+        "steps": 5,
+        "files": 16,
+        "fills": 1,
+        "result_hash": "a294bca0f96cc85b",
+        "network_accessed": false,
+        "orders_sent": false
+      }
+    },
+    "sha256_sums": "SHA256SUMS"
+  },
+  "hosted_ci": {
+    "run_number": 450,
+    "run_id": 42801795603,
+    "conclusion": "success",
+    "jobs_total": 33,
+    "jobs_succeeded": 33,
+    "jobs_failed": 0,
+    "url": "https://github.com/coeasy/qianxing/actions/runs/42801795603"
+  },
+  "limitations": [
+    "Unpublished Windows candidate; no GitHub Release, crates.io, or PyPI upload was performed.",
+    "Linux and macOS artifacts are validated through hosted CI and are not in this Windows candidate directory.",
+    "Authenticated venue acceptance remains unavailable without authorized credentials.",
+    "Live account margin semantics remain unresolved; the Paper producer is implemented and validated."
+  ]
+}

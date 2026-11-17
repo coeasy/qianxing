@@ -1,0 +1,14 @@
+$ cargo test -p qx-cli --bin qx-cli -- --test-threads=1 builtin_worker_validates_declared_and_algorithm_capabilities_before_dispatch
+exit_code=0
+
+[stdout]
+
+running 1 test
+test workers::strategy_worker::tests::builtin_worker_validates_declared_and_algorithm_capabilities_before_dispatch ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 496 filtered out; finished in 0.03s
+
+
+[stderr]
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.71s
+     Running unittests src/main.rs (/target/debug/deps/qx_cli-acbee3721f46a1de)

@@ -68,12 +68,20 @@ pub(crate) fn run_strategy_backtest_with_quality_manifest(
     }
     // 同一份身份必须跟着产物走：只印在 stdout 上的指纹，事后拿着摘要无从复核（V11 Q66）。
     let input = qx_app::backtest_input_identity::barframe_input_provenance(frame_path, &manifest);
+    let bars_content_sha256 =
+        qx_data::sha256_hex_bytes(&std::fs::read(frame_path).map_err(|error| {
+            format!(
+                "读取策略 BarFrame 原始字节失败 {}: {error}",
+                frame_path.display()
+            )
+        })?);
     let strategy_bindings =
         qx_service::backtest_bindings::strategy_batch::strategy_batch_backtest_bindings(
             &config,
             runtime_path,
             &manifest,
-            bars.len(),
+            &frame,
+            &bars_content_sha256,
         )?;
     for binding in strategy_bindings {
         let bundle_fingerprint = binding.dataset_bundle_fingerprint.as_deref();

@@ -1,0 +1,11 @@
+old=20 new=20 removed=0 added=0 leg_rc=101
+new_sorted_sha=ff15dbf2d579a772 old_sorted_sha=ff15dbf2d579a772
+subset_no_new_red=True
+counts_self_consistent=True
+empty_roster_matches_zero_rc=True
+removed_names=
+still_red_count=20 still_red_sha=ff15dbf2d579a772
+gun_extra_name_in_new_subset_false=False (want False)
+gun_drop_still_red_from_old_breaks_subset=True (want True) victim=tests::api_endpoint_table_routes::each_endpoint_table_lists_exactly_the_dispatch_routes
+gun_empty_roster_with_nonzero_rc_true=True (want True: 名册空+rc!=0 必须判不一致)
+all_as_expected=True (6/6)

@@ -1,0 +1,15 @@
+$ cargo test -p qx-cli --bin qx-cli venue_runtime::paper_worker::pipeline::tests --offline
+exit_code=0
+
+[stdout]
+
+running 2 tests
+test venue_runtime::paper_worker::pipeline::tests::paper_e2e_quote_keeps_default_and_supports_fixture_price_override ... ok
+test venue_runtime::paper_worker::pipeline::tests::paper_e2e_quote_rejects_nonpositive_values ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 469 filtered out; finished in 0.00s
+
+
+[stderr]
+    Finished `test` profile [unoptimized] target(s) in 0.78s
+     Running unittests src\main.rs (target\debug\deps\qx_cli-f4bb28e5802ee70c.exe)

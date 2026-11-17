@@ -7,8 +7,9 @@ const KEYLESS_ROUTES: [&str; 2] = ["/scheduler/runs", "/control/audit"];
 
 /// 与 `read_scope::MODEL_FILTER_ROUTES` 逐格相等：路由名 + 它真认的收窄键。接线判据那条会用
 /// 源码取数把它核回来，这里这一格是文档侧的承诺。
-const MODEL_FILTER_ROUTES: [(&str, &[&str]); 2] = [
+const MODEL_FILTER_ROUTES: [(&str, &[&str]); 3] = [
     ("/account/ledger", &["account_id"]),
+    ("/account/order-groups", &["account_id", "venue_id"]),
     ("/reconcile/reports", &["account_id", "venue_id"]),
 ];
 
@@ -37,7 +38,7 @@ fn semantics_row(route: &str) -> String {
     panic!("「非 200 口径」那张表里没有 {route} 这一行：这张表的口径需要重新核对")
 }
 
-/// 两份现读模型：账簿三条、对账报告三条，两个账户各带不同 venue。
+/// 三类现读模型：账簿、对账报告与订单组；跨账户与跨 venue 过滤都必须生效。
 ///
 /// 收窄是否真的生效只能靠"跨账户互不可见"证明：单账户用例过滤前后条数一样，看不出有没有
 /// 真的按键筛过。
@@ -57,6 +58,7 @@ fn scoped_service() -> ApiService {
             multiplier: 1,
             position_side: None,
             leverage: None,
+            exact_amounts: None,
         }
     };
     let report = |worker_id: &str, account_id: &str, venue_id: &str| ReconcileReportSnapshot {
@@ -87,7 +89,79 @@ fn scoped_service() -> ApiService {
     state
         .reconcile_reports
         .insert("w3".into(), report("w3", "shadow", "okx"));
-    ApiService::new(state)
+    let groups = [
+        protective_group("main-oco", 7100, "main", "BTC/USDT.OKX"),
+        protective_group("shadow-oco", 7200, "shadow", "BTC/USDT.BINANCE"),
+    ];
+    let models = qx_api::ApiQueryModels {
+        job_runs: Vec::new(),
+        ledger_entries: state.ledger_entries.clone(),
+        reconcile_reports: state.reconcile_reports.values().cloned().collect(),
+        order_groups: groups.into(),
+    };
+    ApiService::new(state).with_query_models_provider(move || Ok(models.clone()))
+}
+
+fn protective_group(
+    group_id: &str,
+    first_client_id: u64,
+    account_id: &str,
+    instrument: &str,
+) -> qx_core::OrderGroupState {
+    let instrument = InstrumentId::parse(instrument).unwrap();
+    let protective_order = |client_id, kind, trigger| qx_core::Order {
+        client_id,
+        instrument: instrument.clone(),
+        side: Side::Sell,
+        qty: Quantity::ZERO,
+        limit: None,
+        status: OrderStatus::PendingSubmit,
+        filled: Quantity::ZERO,
+        account_id: account_id.into(),
+        trace: None,
+        policy: None,
+        exact_amounts: Some(qx_core::ExactOrderAmounts {
+            quantity: qx_core::ExactDecimal::parse("1").unwrap(),
+            limit_price: None,
+            filled: qx_core::ExactDecimal::ZERO,
+            quote_budget: None,
+            quote_filled: qx_core::ExactDecimal::ZERO,
+            market_reference_price: None,
+            conditional: Some(qx_core::ConditionalOrderIntent {
+                kind,
+                trigger_price: Some(qx_core::ExactDecimal::parse(trigger).unwrap()),
+                trigger_price_type: None,
+                trailing_percent: None,
+                trailing_amount: None,
+                trailing_trigger_price: None,
+            }),
+        }),
+    };
+    let intent = qx_core::OrderGroupIntent::new(
+        group_id,
+        qx_core::OrderGroupKind::Oco,
+        qx_core::OrderGroupExecution::NativeRequired,
+        vec![
+            qx_core::OrderGroupLegIntent {
+                role: qx_core::OrderGroupLegRole::TakeProfit,
+                order: protective_order(
+                    first_client_id,
+                    qx_core::ConditionalOrderKind::TakeProfit,
+                    "110",
+                ),
+            },
+            qx_core::OrderGroupLegIntent {
+                role: qx_core::OrderGroupLegRole::StopLoss,
+                order: protective_order(
+                    first_client_id + 1,
+                    qx_core::ConditionalOrderKind::StopLoss,
+                    "90",
+                ),
+            },
+        ],
+    )
+    .unwrap();
+    qx_core::OrderGroupState::from_intent(intent).unwrap()
 }
 
 fn array_body(response: &qx_api::ApiResponse) -> Vec<serde_json::Value> {
@@ -129,10 +203,37 @@ fn keyless_read_routes_refuse_a_query_they_cannot_honor() {
     }
 }
 
-/// R31 行为判据：两条模型过滤读面的收窄键真的在结果集上生效，而且跨账户互不可见。
+/// 模型过滤读面的收窄键真的在结果集上生效，而且跨账户互不可见。
 #[test]
 fn model_filter_routes_honor_the_account_scope() {
     let service = scoped_service();
+
+    let all_groups = array_body(&service.handle("GET", "/account/order-groups", "", 1));
+    assert_eq!(all_groups.len(), 2, "无键订单组读面返回全部持久组");
+    let main_groups =
+        array_body(&service.handle("GET", "/account/order-groups?account_id=main", "", 2));
+    assert_eq!(main_groups.len(), 1);
+    assert_eq!(
+        main_groups[0]["intent"]["group_id"].as_str(),
+        Some("main-oco")
+    );
+    let venue_groups =
+        array_body(&service.handle("GET", "/account/order-groups?venue_id=binance", "", 3));
+    assert_eq!(venue_groups.len(), 1);
+    assert_eq!(
+        venue_groups[0]["intent"]["group_id"].as_str(),
+        Some("shadow-oco")
+    );
+    let uppercase_venue_groups =
+        array_body(&service.handle("GET", "/account/order-groups?venue_id=BINANCE", "", 3));
+    assert_eq!(uppercase_venue_groups, venue_groups);
+    let disjoint = array_body(&service.handle(
+        "GET",
+        "/account/order-groups?account_id=main&venue_id=binance",
+        "",
+        4,
+    ));
+    assert!(disjoint.is_empty(), "账户与 venue 必须同时匹配");
 
     let all = array_body(&service.handle("GET", "/account/ledger", "", 1));
     assert_eq!(all.len(), 3, "不带键的账簿读面照旧读整份现读模型");
@@ -178,6 +279,11 @@ fn reconcile_reports_narrow_by_venue_alone() {
 
     let by_venue = array_body(&service.handle("GET", "/reconcile/reports?venue_id=okx", "", 1));
     assert_eq!(by_venue.len(), 2, "只给 venue 也要能收窄: {by_venue:?}");
+    assert_eq!(
+        array_body(&service.handle("GET", "/reconcile/reports?venue_id=OKX", "", 1)),
+        by_venue,
+        "venue ID 的查询大小写不应改变同一报告范围"
+    );
     for report in &by_venue {
         assert_eq!(report["venue_id"].as_str(), Some("okx"));
     }
@@ -264,7 +370,7 @@ fn model_filter_routes_refuse_the_keys_their_data_cannot_honor() {
     );
 }
 
-/// #205 不能被读成"读面开始拒绝查询串"：带键的七条投影读面依旧按 `account_id`/`venue_id`
+/// #205 不能被读成"读面开始拒绝查询串"：带键的八条投影读面依旧按 `account_id`/`venue_id`
 /// 收窄，形状非法回 400、投影缺失回 404，走的不是上面那条通道（V13 R2 #191）。
 #[test]
 fn projection_scoped_routes_keep_their_own_key_contract() {
@@ -303,17 +409,18 @@ fn projection_scoped_routes_keep_their_own_key_contract() {
         .step_by(2)
         .chain(std::iter::once("/account/snapshot/diff"))
         .collect::<Vec<_>>();
-    // 取数区间一旦挪偏，这个循环会一颗判据都不发就过去：七条带键读面加 `diff` 共八条，缺一即红。
+    // 取数区间一旦挪偏，这个循环会一颗判据都不发就过去：八条带键读面加 `diff` 共九条，缺一即红。
     assert_eq!(
         refusal_scope.len(),
-        8,
+        9,
         "这一格的覆盖面挪了：{refusal_scope:?}"
     );
     for route in refusal_scope {
-        for (query, name) in [
-            ("?acount_id=ghost", "acount_id"),
-            ("?account_id=a&venue_id=paper&limit=10", "limit"),
-        ] {
+        let mut refused_queries = vec![("?acount_id=ghost", "acount_id")];
+        if route != "/account/activity" {
+            refused_queries.push(("?account_id=a&venue_id=paper&limit=10", "limit"));
+        }
+        for (query, name) in refused_queries {
             let response = service.handle("GET", &format!("{route}{query}"), "", 6);
             assert_eq!(
                 response.status, 400,
@@ -333,6 +440,21 @@ fn projection_scoped_routes_keep_their_own_key_contract() {
         !cursor.body.contains("不接受查询参数"),
         "事件读面认 `after`，它不能被上面那张表一起拒掉: {}",
         cursor.body
+    );
+    let activity_cursor = service.handle(
+        "GET",
+        "/account/activity?account_id=missing&venue_id=paper&after=0&limit=20",
+        "",
+        8,
+    );
+    assert_eq!(activity_cursor.status, 404, "合法分页键应进入账户投影查找");
+    assert!(
+        activity_cursor
+            .body
+            .contains("account_projection_not_found")
+            && !activity_cursor.body.contains("不接受查询参数"),
+        "账户活动读面接受 after/limit 并按缺失投影返回 404: {}",
+        activity_cursor.body
     );
 }
 
@@ -496,8 +618,12 @@ fn keyed_and_keyless_route_lists_are_disjoint_and_both_live() {
         routes.iter().cloned().collect()
     };
     let filter_set = set(&filter);
-    assert_eq!(scoped.len(), 7, "带键读面是七条，见接口文档那段");
-    assert_eq!(filter.len(), 2, "模型过滤读面是两条：账簿流水与对账报告");
+    assert_eq!(scoped.len(), 8, "带键投影读面含七条兼容入口和账户活动报告");
+    assert_eq!(
+        filter.len(),
+        3,
+        "模型过滤读面是三条：账簿流水、订单组与对账报告"
+    );
     assert_eq!(
         set(&keyless),
         set(&KEYLESS_ROUTES

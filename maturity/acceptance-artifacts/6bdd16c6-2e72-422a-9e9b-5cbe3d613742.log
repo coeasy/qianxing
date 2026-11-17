@@ -1,0 +1,30 @@
+$ cargo test -p qx-cli --bin qx-cli workers::strategy_worker::execution_updates::replay::tests --offline
+exit_code=0
+
+[stdout]
+
+running 17 tests
+test workers::strategy_worker::execution_updates::replay::tests::account_snapshots_replay_for_non_python_strategy_hosts ... ok
+test workers::strategy_worker::execution_updates::replay::tests::c_abi_checkpoint_binding_tracks_verified_plugin_digest ... ok
+test workers::strategy_worker::execution_updates::replay::tests::cursor_advancement_is_monotonic_and_durable_shape_round_trips ... ok
+test workers::strategy_worker::execution_updates::replay::tests::cursor_fencing_uses_run_identity_and_rejects_only_stale_same_run_owners ... ok
+test workers::strategy_worker::execution_updates::replay::tests::execution_ranges_are_part_of_idempotency_without_changing_market_manifest ... ok
+test workers::strategy_worker::execution_updates::replay::tests::external_process_checkpoint_binding_tracks_artifact_digest_and_fails_closed ... ok
+test workers::strategy_worker::execution_updates::replay::tests::frozen_range_retry_replays_multiple_partial_fills_without_absorbing_new_tail ... ok
+test workers::strategy_worker::execution_updates::replay::tests::replay_emits_event_log_bound_fill_with_pre_fill_order_snapshot ... ok
+test workers::strategy_worker::execution_updates::replay::tests::authorized_revision_migration_replaces_only_strategy_state_and_persists_receipt ... ok
+test workers::strategy_worker::execution_updates::replay::tests::replay_reconstructs_prior_order_state_and_emits_only_the_requested_strategy_range ... ok
+test workers::strategy_worker::execution_updates::replay::tests::cursor_v2_migrates_to_monotone_commit_generation ... ok
+test workers::strategy_worker::execution_updates::replay::tests::class_checkpoint_and_execution_cursor_commit_as_one_recoverable_snapshot ... ok
+test workers::strategy_worker::execution_updates::replay::tests::cursor_commit_generation_accepts_descending_stable_run_ids_and_fences_stale_snapshots ... ok
+test workers::strategy_worker::execution_updates::replay::tests::cursor_load_recovers_backup_after_interrupted_atomic_replace ... ok
+test workers::strategy_worker::execution_updates::replay::tests::cursor_write_lock_rejects_an_owner_fenced_out_after_its_snapshot ... ok
+test workers::strategy_worker::execution_updates::replay::tests::failed_checkpoint_cursor_write_preserves_committed_state_and_cleans_temp_file ... ok
+test workers::strategy_worker::execution_updates::replay::tests::prepared_evaluation_round_trips_and_recovers_interrupted_replace ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 464 filtered out; finished in 0.03s
+
+
+[stderr]
+    Finished `test` profile [unoptimized] target(s) in 1.07s
+     Running unittests src\main.rs (target\debug\deps\qx_cli-f4bb28e5802ee70c.exe)

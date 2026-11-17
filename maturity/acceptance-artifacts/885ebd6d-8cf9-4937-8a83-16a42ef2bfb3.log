@@ -1,0 +1,111 @@
+pre-sha tool=4ead5b9f9d3bea31 doc=dcf0bcff5022de1c
+shots fired=9 tally={'KILL': 4, 'EQUIV': 1, 'REFUSE': 4} declared={'KILL': 4, 'EQUIV': 1, 'REFUSE': 4}
+OK 1 mutated the file
+BAD 1 turned exactly the declared leg red | rc=1 nonzero='s1_mdlinks_rc' tail=1_pointers_citations_gated=36
+R s1_pointers_citations_local_only=150
+R s1_pointers_head_face=10
+R s1_pointers_head_rows=10
+R s1_pointers_local_only=146
+R s1_pointers_other_links=25
+R s1_pointers_rc=0
+R s1_pointers_scanned_files=78
+R t_s1_mdlinks=1.69
+R t_s1_pointers=60.08
+legs_nonzero=s1_mdlinks_rc
+
+OK 1 face mdlinks_rc
+OK 1 face mdlinks_citations_bad
+OK 1 face pointers_citations_case_mismatched
+OK 1 face pointers_citations_gated
+OK 1 face pointers_rc
+OK restore hashes match pre-sha (shot 1)
+OK 2 mutated the file
+BAD 2 stayed green | rc=0 nonzero='-' tail=ned=4618
+R s2_pointers_citations_gated=36
+R s2_pointers_citations_local_only=150
+R s2_pointers_head_face=10
+R s2_pointers_head_rows=10
+R s2_pointers_local_only=146
+R s2_pointers_other_links=25
+R s2_pointers_rc=0
+R s2_pointers_scanned_files=78
+R t_s2_mdlinks=1.78
+R t_s2_pointers=66.98
+legs_nonzero=-
+
+OK 2 face mdlinks_citations_examined
+OK 2 face mdlinks_citations_bad
+OK 2 face pointers_citations_examined
+OK 2 face pointers_citations_gated
+OK restore hashes match pre-sha (shot 2)
+OK 3 mutated the file
+BAD 3 turned exactly the declared leg red | rc=1 nonzero='s3_pointers_rc' tail=_pointers_citations_gated=37
+R s3_pointers_citations_local_only=151
+R s3_pointers_head_face=10
+R s3_pointers_head_rows=10
+R s3_pointers_local_only=146
+R s3_pointers_other_links=25
+R s3_pointers_rc=1
+R s3_pointers_scanned_files=78
+R t_s3_mdlinks=2.33
+R t_s3_pointers=66.01
+legs_nonzero=s3_pointers_rc
+
+OK 3 face mdlinks_rc
+OK 3 face pointers_citations_gated
+OK 3 face pointers_citation_baseline
+OK 3 face pointers_rc
+OK restore hashes match pre-sha (shot 3)
+BAD 4 turned exactly the declared leg red | rc=1 nonzero='s4_pointers_rc' tail=_pointers_citations_gated=36
+R s4_pointers_citations_local_only=150
+R s4_pointers_head_face=10
+R s4_pointers_head_rows=10
+R s4_pointers_local_only=146
+R s4_pointers_other_links=25
+R s4_pointers_rc=1
+R s4_pointers_scanned_files=78
+R t_s4_mdlinks=1.82
+R t_s4_pointers=60.54
+legs_nonzero=s4_pointers_rc
+
+OK 4 face pointers_citations_gated
+OK 4 face pointers_citation_baseline
+OK 4 face pointers_rc
+OK restore hashes match pre-sha (shot 4)
+OK 5 refused by the driver
+OK 5 refusal never reached a verdict line
+OK restore hashes match pre-sha (shot 5)
+OK 6 mutated the file
+OK 6 refused by the driver
+OK 6 refusal never reached a verdict line
+OK restore hashes match pre-sha (shot 6)
+OK 7 mutated the file
+OK 7 refused by the driver
+OK 7 refusal never reached a verdict line
+OK restore hashes match pre-sha (shot 7)
+OK 8 mutated the file
+BAD 8 turned exactly the declared leg red | rc=1 nonzero='s8_pointers_rc' tail=_pointers_citations_gated=41
+R s8_pointers_citations_local_only=155
+R s8_pointers_head_face=10
+R s8_pointers_head_rows=10
+R s8_pointers_local_only=146
+R s8_pointers_other_links=25
+R s8_pointers_rc=1
+R s8_pointers_scanned_files=78
+R t_s8_mdlinks=2.14
+R t_s8_pointers=60.71
+legs_nonzero=s8_pointers_rc
+
+OK 8 face pointers_citations_local_only
+OK 8 face pointers_citations_build
+OK 8 face pointers_citations_gated
+OK 8 face pointers_rc
+OK 8 face mdlinks_rc
+OK restore hashes match pre-sha (shot 8)
+OK 9 mutated the file
+OK 9 refused by the driver
+OK 9 refusal never reached a verdict line
+OK restore hashes match pre-sha (shot 9)
+CHECKS total=50 ok=45 bad=5
+VERDICT FAILED
+battery_rc=1

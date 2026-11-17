@@ -1,0 +1,8 @@
+$ python tools/accept_strategy_deployment_lifecycle.py --binary target/debug/qx-cli.exe --runtime-template deploy/qianxing.runtime.paper-strategy.example.json --openssl D:/dev/miniforge3/Library/bin/openssl.exe --storage-backend postgres --evidence-out maturity/evidence/r13-strategy-deployment-lifecycle-windows-postgres-2026-11-05.json
+exit_code=1
+
+[stdout]
+{"schema_version": 1, "kind": "qianxing_strategy_deployment_lifecycle_acceptance", "run_id": "b45ed1f3604f4d469e1a5c86c512e553", "environment": "windows_local_postgres_paper_loopback", "storage_backend": "postgres", "operator_id": "console-operator", "worker_id": "strategy-r09-b45ed1f3604f", "effects": {"venue_worker_started": false, "orders_sent": false, "external_network_access": false}, "operations": [], "outcome": "failed", "error": "RuntimeError: supervised API exited early with code 2", "supervisor_exit_code": 2, "console_exit_code": null, "log_sha256": {"supervisor": "2be545eeb99a4aa2093c792764f8064b602550fed81cfac0783f7dfc885c53f7", "console": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}
+Evidence: maturity/evidence/r13-strategy-deployment-lifecycle-windows-postgres-2026-11-05.json
+
+[stderr]

@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "bitget_uta_oco_domain_shape_local_validation",
+  "generated_at_utc": "2026-11-12T06:31:18Z",
+  "source": {
+    "code_base_commit": "0edf9354",
+    "worktree_dirty": true,
+    "dirty_paths_related_to_this_evidence": [
+      "crates/qx-core/src/order_group.rs"
+    ]
+  },
+  "environment": {
+    "host_os": "Windows 11",
+    "linux_runtime": "Podman 6.1.4",
+    "container_image": "mirror.gcr.io/library/rust:1.98.1-bookworm",
+    "dependency_resolution": "offline, locked"
+  },
+  "results": [
+    {
+      "command": "cargo test --offline --locked -j 2 -p qx-core oco_accepts_native_limit_take_profit_with_conditional_stop_loss -- --nocapture",
+      "environment": "Podman Linux",
+      "selected_tests": 1,
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "cargo test --offline --locked -j 2 -p qx-core order_group::tests -- --nocapture",
+      "environment": "Podman Linux",
+      "selected_tests": 8,
+      "passed": 8,
+      "failed": 0
+    },
+    {
+      "command": "cargo test --offline --locked -j 2 -p qx-core oco_accepts_native_limit_take_profit_with_conditional_stop_loss -- --nocapture",
+      "environment": "Windows 11",
+      "passed": false,
+      "failure": "MSVC alloca.c build failed with D8050 before compiling qx-core tests"
+    }
+  ],
+  "scope_limitations": [
+    "The change validates only the shared order-group shape for a direct limit take-profit leg paired with a conditional stop-loss leg.",
+    "No Bitget adapter mapping, UTA API request, cancellation, reconciliation, private stream, or exchange call is included in this stage.",
+    "Bitget UTA OCO remains unavailable and unverified; this domain test does not authorize sandbox or production use."
+  ]
+}

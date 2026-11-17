@@ -44,6 +44,30 @@ impl StrategyDecision {
             let mut policy = intent.policy.unwrap_or_default();
             policy.reduce_only = intent.reduce_only;
             policy.post_only = intent.post_only;
+            let exact_amounts = intent
+                .qty_exact
+                .map(|quantity| qx_core::ExactOrderAmounts {
+                    quantity,
+                    limit_price: intent.limit_price_exact,
+                    filled: qx_core::ExactDecimal::ZERO,
+                    quote_budget: None,
+                    quote_filled: qx_core::ExactDecimal::ZERO,
+                    market_reference_price: None,
+                    conditional: None,
+                })
+                .or_else(|| {
+                    intent
+                        .quote_budget
+                        .map(|budget| qx_core::ExactOrderAmounts {
+                            quantity: qx_core::ExactDecimal::ZERO,
+                            limit_price: None,
+                            filled: qx_core::ExactDecimal::ZERO,
+                            quote_budget: Some(budget),
+                            quote_filled: qx_core::ExactDecimal::ZERO,
+                            market_reference_price: None,
+                            conditional: None,
+                        })
+                });
             let order = Order {
                 client_id: intent.intent_id,
                 instrument: intent.instrument.clone(),
@@ -54,12 +78,15 @@ impl StrategyDecision {
                 filled: Quantity::ZERO,
                 account_id: context.account_id.clone(),
                 trace: Some(OrderTrace {
+                    run_id: None,
                     strategy_id: Some(context.strategy_id.clone()),
                     signal_id: Some(self.signal_id),
                     intent_id: Some(intent.intent_id),
                     rule_version: Some(context.strategy_version.clone()),
                 }),
                 policy: Some(policy),
+
+                exact_amounts,
             };
             if let Err(error) = order.validate() {
                 orders.truncate(original_len);

@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "ccxt_native_oco_child_amendment_local_validation",
+  "recorded_at_utc": "2026-11-13",
+  "source_revision": "3ae118bb21b92b699c4906af9ecaf5360be95f1f",
+  "environment": {
+    "os": "Windows 11",
+    "rustc": "1.98.1 (48a229cea 2026-09-01)",
+    "temporary_directory": "target/qianxing-test-temp"
+  },
+  "commands": [
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "--quiet",
+        "-p",
+        "qx-core",
+        "-p",
+        "qx-zhenlu",
+        "-p",
+        "qx-service",
+        "-p",
+        "qx-adapter",
+        "--",
+        "--test-threads=1"
+      ],
+      "environment": "TEMP and TMP point to target/qianxing-test-temp",
+      "exit_code": 0,
+      "selected_tests": 534,
+      "passed": 533,
+      "ignored": 1,
+      "failed": 0,
+      "result": "passed"
+    },
+    {
+      "argv": ["cargo", "fmt", "--all", "--", "--check"],
+      "exit_code": 0,
+      "result": "passed"
+    },
+    {
+      "argv": ["git", "diff", "--check"],
+      "exit_code": 0,
+      "result": "passed"
+    }
+  ],
+  "coverage": [
+    "OrderGroupState durably stores a pending amendment overlay, keeps the group behind ReconcileRequired, confirms venue terms, and safely aborts only when the original terms remain authoritative.",
+    "Only a reconciled triggered native OCO child on the supported OKX/Bitget CCXT route is eligible; quantity and limit terms may change while conditional trigger terms remain fixed.",
+    "Account EventLog recovery keeps unresolved amendments fenced, commits confirmed OMS terms, or releases an overlay only when no pending amendment fact exists and prior terms are unchanged.",
+    "Order lifecycle transitions and monotonic fill facts are checked before committing an amendment snapshot.",
+    "CCXT request construction preserves a conditional sidecar and rejects trigger-term changes."
+  ],
+  "scope_limitations": [
+    "This implementation covers triggered native OCO child quantity/limit amendments for the CCXT OKX and Bitget path; it does not implement Bracket group amendments or changing trigger terms.",
+    "This is local Windows Rust test evidence only. No private exchange API was called and no order was changed.",
+    "OKX and Bitget sandbox lifecycle acceptance and Binance native OCO group amendment are not established by this evidence."
+  ]
+}

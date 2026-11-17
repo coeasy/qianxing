@@ -1,0 +1,10 @@
+SHOT crypto/runtime_only rc=0 result_hash=45038cdcb863b87f data_fingerprint=barframe:613fdc1dc0b779e7 bundle_equal_deploy=True
+SHOT crypto/explicit rc=0 result_hash=67c176977ad0f81d data_fingerprint=barframe:613fdc1dc0b779e7 bundle_equal_deploy=True
+  FACE crypto result_hash      runtime_only=45038cdcb863b87f explicit=67c176977ad0f81d state=moved
+  FACE crypto data_fingerprint runtime_only=barframe:613fdc1dc0b77 explicit=barframe:613fdc1dc0b77 state=same
+SHOT ashare/runtime_only rc=0 result_hash=4d4d3e3ba1f18b87 data_fingerprint=dataset-bundle:099c5f20c38bc423 bundle_equal_deploy=True
+SHOT ashare/explicit rc=0 result_hash=6e120606d81369b5 data_fingerprint=dataset-bundle:099c5f20c38bc423 bundle_equal_deploy=True
+  FACE ashare result_hash      runtime_only=4d4d3e3ba1f18b87 explicit=6e120606d81369b5 state=moved
+  FACE ashare data_fingerprint runtime_only=dataset-bundle:099c5f2 explicit=dataset-bundle:099c5f2 state=same
+READINGS .task-tmp\r7_shape_readings.json
+SHAPE_PROBE_OK 每个形状都在 landed 字节上跑通；两种敲法是否同数见上面 FACE 行

@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "kind": "qianxing_acceptance_human_review",
+  "work_package": "R07",
+  "acceptance_id": "R07-AC01",
+  "reviewed_at": "2026-11-05",
+  "decision": "accepted_for_windows_local_acceptance",
+  "reviewed_run_ids": [
+    "a32ae74d-0f84-4e8c-971a-1de56927a357",
+    "af7564e8-9a37-4ba2-be7b-2f7a353b6e53",
+    "caca4fb9-3793-4f59-ab1c-572aac0b7e83"
+  ],
+  "reviewed_artifacts": [
+    "python/qianxing/project_runs.py",
+    "python/tests/test_project_runs.py",
+    "python/tests/test_project_run_disk_full.py",
+    "docs/strategy-project-runs.md",
+    "maturity/acceptance-artifacts/a32ae74d-0f84-4e8c-971a-1de56927a357.log",
+    "maturity/acceptance-artifacts/af7564e8-9a37-4ba2-be7b-2f7a353b6e53.log",
+    "maturity/acceptance-artifacts/caca4fb9-3793-4f59-ab1c-572aac0b7e83.log",
+    "tools/accept_project_run_identity.py",
+    ".github/workflows/ci.yml"
+  ],
+  "findings": [
+    "Windows ENOSPC injection at result.json writes a failed run receipt; ENOSPC at final run.json persistence propagates and leaves the prior preparing state rather than a false success.",
+    "The process identity code records start-time identity for Windows/Linux and on macOS prefers proc_pidinfo microsecond start fields with a ps lstart fallback and explicit source precision.",
+    "Windows-hosted unit tests exercise the macOS proc_pidinfo structure and selection/fallback behavior, but they mock the macOS API and are not a native macOS check."
+  ],
+  "limitations": [
+    "Linux and native macOS process/status acceptance remain outstanding; targeted Linux /proc and macOS proc_pidinfo/ps-fallback runners are configured but have not yet produced evidence.",
+    "Native macOS proc_pidinfo timestamp behavior and actual fallback precision have not been verified on macOS."
+  ]
+}

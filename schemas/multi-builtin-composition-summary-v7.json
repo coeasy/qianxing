@@ -5,7 +5,7 @@
   "description": "Durable, replay-bound composition summary emitted by the independent-account built-in two-leg backtest. Raw i128 values are decimal strings where the producer serializes them as strings.",
   "type": "object",
   "required": [
-    "accounts", "assumptions", "bars", "execution_attempt_count", "execution_attempts",
+    "accounts", "artifact_locations", "assumptions", "bars", "execution_attempt_count", "execution_attempts",
     "execution_costs", "fill_model", "fills", "funding_bps", "groups", "input",
     "input_data_hash", "instrument", "leg_summaries", "legs", "margin_model",
     "market_specs", "metrics", "pending_reconcile", "primary_instrument",
@@ -72,7 +72,11 @@
         "primary_initial_cash": {"$ref": "#/$defs/rawInteger"},
         "reference_initial_cash": {"$ref": "#/$defs/rawInteger"},
         "primary_final_equity_raw": {"$ref": "#/$defs/rawInteger"},
-        "reference_final_equity_raw": {"$ref": "#/$defs/rawInteger"}
+        "reference_final_equity_raw": {"$ref": "#/$defs/rawInteger"},
+        "primary_initial_cash_exact": {"$ref": "#/$defs/exactDecimal"},
+        "reference_initial_cash_exact": {"$ref": "#/$defs/exactDecimal"},
+        "primary_final_equity_exact": {"$ref": "#/$defs/exactDecimal"},
+        "reference_final_equity_exact": {"$ref": "#/$defs/exactDecimal"}
       },
       "additionalProperties": false
     },
@@ -126,6 +130,17 @@
       },
       "additionalProperties": false
     },
+    "artifact_locations": {
+      "type": "object",
+      "required": ["equity", "fills", "run_manifest", "summary"],
+      "properties": {
+        "equity": {"type": "string", "minLength": 1},
+        "fills": {"type": "string", "minLength": 1},
+        "run_manifest": {"type": "string", "minLength": 1},
+        "summary": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
     "dataset_quality": {"$ref": "#/$defs/datasetQuality"},
     "input_data_hash": {"$ref": "#/$defs/sha256"},
     "instrument": {"type": "string", "minLength": 1},
@@ -147,6 +162,26 @@
       },
       "additionalProperties": false
     },
+    "metrics_exact": {
+      "type": "object",
+      "required": ["equity"],
+      "properties": {
+        "equity": {
+          "type": "object",
+          "required": ["initial", "final", "return", "return_bps", "max_drawdown", "max_drawdown_bps"],
+          "properties": {
+            "initial": {"$ref": "#/$defs/exactDecimal"},
+            "final": {"$ref": "#/$defs/exactDecimal"},
+            "return": {"$ref": "#/$defs/exactDecimal"},
+            "return_bps": {"type": "string", "pattern": "^-?[0-9]+$"},
+            "max_drawdown": {"$ref": "#/$defs/exactDecimal"},
+            "max_drawdown_bps": {"type": "string", "pattern": "^[0-9]+$"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "execution_attempt_count": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
     "execution_attempts": {"type": "array", "items": {"$ref": "#/$defs/executionAttempt"}},
     "bars": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
@@ -159,6 +194,16 @@
   },
   "$defs": {
     "rawInteger": {"type": "string", "pattern": "^-?[0-9]+$"},
+    "exactDecimalWire": {
+      "type": "object",
+      "required": ["coefficient", "scale"],
+      "properties": {
+        "coefficient": {"type": "string", "pattern": "^-?[0-9]+$"},
+        "scale": {"type": "integer", "minimum": 0, "maximum": 18}
+      },
+      "additionalProperties": false
+    },
+    "exactDecimal": {"type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]*[1-9])?$"},
     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "inputLeg": {
       "type": "object",
@@ -254,6 +299,12 @@
         "filled_qty_raw": {"type": "integer"},
         "remaining_qty_raw": {"type": "integer"},
         "price_raw": {"type": ["integer", "null"]},
+        "price_exact": {
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "#/$defs/exactDecimalWire"}
+          ]
+        },
         "reason": {"enum": ["filled", "partially_filled", "model_partial_fill", "bar_participation_partial", "model_declined", "limit_not_marketable", "probability_miss", "no_capacity", "participation_limit_exhausted", "queue_baseline_unavailable", "queue_ahead_remains", "no_visible_liquidity", "market_halted", "side_blocked", "invalid_model_output"]},
         "displayed_qty_raw": {"type": ["integer", "null"]},
         "queue_ahead_before_raw": {"type": ["integer", "null"]},

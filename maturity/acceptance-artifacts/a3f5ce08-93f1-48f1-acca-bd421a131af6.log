@@ -1,0 +1,31 @@
+{
+  "readings": {
+    "landed": {
+      "chain_rc": 0,
+      "data_fingerprint": "dataset-bundle:099c5f20c38bc423",
+      "result_hash": "4d4d3e3ba1f18b87",
+      "bars": "6",
+      "fills": "1",
+      "return_bps": "1",
+      "steps": {
+        "doctor": 0,
+        "backtest": 0,
+        "report": 0,
+        "status": 0
+      }
+    }
+  },
+  "checks": {
+    "init_copies_deploy_bytes_byte_for_byte": true,
+    "landed_chain_all_rc_zero": true,
+    "landed_fingerprint_equals_round7_candidate": true,
+    "landed_shot_prints_result_line": true,
+    "corrupt_bundle_bytes_differ_from_landed": true,
+    "corrupt_shot_blocked": true,
+    "corrupt_shot_prints_no_result_line": true
+  },
+  "expected_fingerprint": "dataset-bundle:099c5f20c38bc423",
+  "bundle_sha16": "7d412448505daa4a",
+  "frame_sha16": "07aca52393be3010",
+  "bin_sha16": "38ae3a14075fb863"
+}

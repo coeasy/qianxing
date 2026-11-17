@@ -68,14 +68,17 @@ fn blocked_group_and_pending_leg(
 /// 且拒绝原因按 `FAIL_CLOSED:` 分类，且不留任何事实。
 #[test]
 fn gateway_blocks_next_leg_of_reconcile_required_group_and_classifies_fail_closed() {
-    let root = std::env::temp_dir().join(format!(
-        "qianxing-exec-spread-barrier-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join(format!(
+            "qianxing-exec-spread-barrier-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
     let (store, command) = blocked_group_and_pending_leg(&root, "groups");
     let mut state = PortState::default();
     // 行情侧完全配合：Venue 直接给出 Accepted + Fill，唯一能挡住它的就是屏障。
@@ -118,14 +121,17 @@ fn gateway_blocks_next_leg_of_reconcile_required_group_and_classifies_fail_close
 /// 带风控的提交入口共用同一道网关内屏障（`submit_command_with_risk` 那一行）。
 #[test]
 fn gateway_risk_submit_entry_shares_the_same_spread_barrier() {
-    let root = std::env::temp_dir().join(format!(
-        "qianxing-exec-spread-barrier-risk-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join(format!(
+            "qianxing-exec-spread-barrier-risk-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
     let (store, command) = blocked_group_and_pending_leg(&root, "groups");
     let mut state = PortState::default();
     let mut venue = PortVenue {
@@ -152,14 +158,17 @@ fn gateway_risk_submit_entry_shares_the_same_spread_barrier() {
 /// "跳过屏障"不再是一个可选项，只能拒绝提交。
 #[test]
 fn grouped_leg_without_injected_group_store_fails_closed_instead_of_skipping() {
-    let root = std::env::temp_dir().join(format!(
-        "qianxing-exec-spread-barrier-nostore-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join(format!(
+            "qianxing-exec-spread-barrier-nostore-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
     std::fs::create_dir_all(&root).unwrap();
     let order = port_order(403);
     let command = ControlCommand {
@@ -199,14 +208,17 @@ fn grouped_leg_without_injected_group_store_fails_closed_instead_of_skipping() {
 /// 而不是载荷本身不合法或 Venue 被配坏。
 #[test]
 fn clean_group_still_submits_its_next_leg_through_the_gateway() {
-    let root = std::env::temp_dir().join(format!(
-        "qianxing-exec-spread-barrier-clean-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join(format!(
+            "qianxing-exec-spread-barrier-clean-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
     let first = port_order(401);
     let second = port_order(402);
     let mut group = SpreadOrderGroup::new(
@@ -269,5 +281,157 @@ fn clean_group_still_submits_its_next_leg_through_the_gateway() {
         .unwrap();
     assert_eq!(state.orders.len(), 1);
     assert_eq!(state.orders[0].status, OrderStatus::Filled);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+struct PanicAfterVenueEffect(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+impl VenuePort for PanicAfterVenueEffect {
+    fn venue_id(&self) -> &str {
+        "port-test"
+    }
+
+    fn capabilities(&self) -> qx_zhenlu::venue_capabilities::VenueCapabilities {
+        qx_zhenlu::venue_capabilities::PAPER_VENUE_CAPABILITIES
+    }
+
+    fn execution_readiness(&self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn submit_order(
+        &mut self,
+        _order: qx_core::Order,
+        _ts: u64,
+    ) -> Result<Vec<ExecutionEvent>, String> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        panic!("simulated process loss after venue accepted request but before response");
+    }
+
+    fn cancel_order(
+        &mut self,
+        _client_order_id: u64,
+        _ts: u64,
+    ) -> Result<Vec<ExecutionEvent>, String> {
+        unreachable!("fault-injection venue is submit-only")
+    }
+}
+
+fn grouped_submit_command(group_id: &str, order: &qx_core::Order) -> ControlCommand {
+    ControlCommand {
+        command_id: order.client_id,
+        request_id: format!("spread-leg-{}", order.client_id),
+        operator_id: "basis-arbitrage".into(),
+        reason: "multi-leg order".into(),
+        kind: CommandKind::SubmitOrder,
+        target: order.client_id.to_string(),
+        payload: BTreeMap::from([
+            ("order_json".into(), serde_json::to_string(order).unwrap()),
+            ("spread_group_id".into(), group_id.into()),
+        ]),
+        permission: Permission::Trading,
+        dry_run: false,
+    }
+}
+
+/// A crash after the venue side effect but before its response must leave a durable fence.
+/// A sibling command is delayed without being made terminal, then can proceed after the first
+/// leg's authoritative snapshot clears the in-flight intent.
+#[test]
+fn lost_submit_response_fences_sibling_leg_and_keeps_retryable_state() {
+    let root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join(format!(
+            "qianxing-exec-spread-submit-fence-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+    let first = port_order(411);
+    let second = port_order(412);
+    let group_id = "spread-submit-fence";
+    let group = SpreadOrderGroup::new(
+        group_id,
+        "basis-arbitrage",
+        vec![
+            SpreadOrderLeg {
+                leg_id: "first".into(),
+                venue_id: "binance".into(),
+                order: first.clone(),
+            },
+            SpreadOrderLeg {
+                leg_id: "second".into(),
+                venue_id: "okx".into(),
+                order: second.clone(),
+            },
+        ],
+    )
+    .unwrap();
+    let mut store = FileSpreadOrderGroupStore::new(root.join("groups")).unwrap();
+    store.save(&group).unwrap();
+    let effects = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut state = PortState::default();
+    let mut source_seq = 0_u64;
+    let mut venue = PanicAfterVenueEffect(effects.clone());
+    let first_command = grouped_submit_command(group_id, &first);
+    let first_attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        ExecutionGateway::new(&mut venue, &mut state, "worker-first", 10, &mut source_seq)
+            .with_spread_group_store(&store)
+            .submit_command(&first_command)
+    }));
+    assert!(
+        first_attempt.is_err(),
+        "fault injection must stop after the venue effect"
+    );
+    assert_eq!(effects.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(
+        state.orders.len(),
+        1,
+        "the durable local order intent precedes Venue"
+    );
+    assert_eq!(
+        store
+            .load(group_id)
+            .unwrap()
+            .unwrap()
+            .submission_in_flight_order_id,
+        Some(first.client_id),
+        "the group must retain the unresolved venue side effect across restart"
+    );
+
+    let mut sibling_venue = NeverCalledVenue;
+    let sibling_result = ExecutionGateway::new(
+        &mut sibling_venue,
+        &mut state,
+        "worker-second",
+        11,
+        &mut source_seq,
+    )
+    .with_spread_group_store(&store)
+    .submit_command(&grouped_submit_command(group_id, &second));
+    let sibling_error = sibling_result.unwrap_err();
+    assert!(sibling_error.starts_with("RETRYABLE:"), "{sibling_error}");
+    assert_eq!(
+        state.orders.len(),
+        1,
+        "sibling was not registered or submitted"
+    );
+    assert_eq!(effects.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    let mut accepted = first;
+    accepted.status = OrderStatus::Accepted;
+    store.apply_order_snapshot(group_id, &accepted).unwrap();
+    assert_eq!(
+        store
+            .load(group_id)
+            .unwrap()
+            .unwrap()
+            .submission_in_flight_order_id,
+        None,
+        "authoritative acceptance releases the fence for the queued retry"
+    );
     let _ = std::fs::remove_dir_all(root);
 }

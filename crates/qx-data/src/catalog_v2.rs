@@ -46,6 +46,12 @@ pub struct DatasetQualityReport {
     /// Bar 时间戳间隔，供回测读侧独立复算缺口数；旧 v2 清单缺此格时保持可读但不可作独立复核。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interval_ms: Option<u64>,
+    /// UTC millisecond cutoff used when a provider snapshot excludes unfinished candles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acquisition_cutoff_ms: Option<u64>,
+    /// Number of provider rows excluded because their candle had not closed by the cutoff.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excluded_unclosed_rows: Option<u64>,
     pub timezone: String,
     pub corporate_action_coverage: bool,
     pub usable_tiers: Vec<String>,
@@ -105,6 +111,13 @@ impl DatasetManifestV2 {
         }
         if self.quality_report.interval_ms == Some(0) {
             return Err("数据集清单 v2 质量报告 interval_ms 若在场必须为正".into());
+        }
+        if self.quality_report.acquisition_cutoff_ms.is_some()
+            != self.quality_report.excluded_unclosed_rows.is_some()
+        {
+            return Err(
+                "数据集清单 v2 必须同时声明 acquisition_cutoff_ms 与 excluded_unclosed_rows".into(),
+            );
         }
         if !self
             .quality_report
@@ -205,6 +218,8 @@ mod tests {
                 out_of_order_rows: 0,
                 missing_intervals: 0,
                 interval_ms: Some(1),
+                acquisition_cutoff_ms: None,
+                excluded_unclosed_rows: None,
                 timezone: "Asia/Shanghai".into(),
                 corporate_action_coverage: true,
                 usable_tiers: vec!["bar".into(), "l1".into()],
@@ -242,6 +257,16 @@ mod tests {
         let mut manifest = sample();
         manifest.quality_report.missing_intervals = 3;
         assert_eq!(manifest.warnings().len(), 1);
+    }
+
+    #[test]
+    fn dataset_v2_requires_complete_acquisition_quality_metadata() {
+        let mut manifest = sample();
+        manifest.quality_report.acquisition_cutoff_ms = Some(180_000);
+        assert!(manifest.validate().is_err());
+
+        manifest.quality_report.excluded_unclosed_rows = Some(1);
+        manifest.validate().unwrap();
     }
 
     /// T1-2：版本不匹配必须给出**具名**拒绝——文案里同时点名「读到的版本」与「本构建只认的版本」。

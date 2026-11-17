@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-10",
+  "purpose": "Hosted CI validation for the A-share quickstart release candidate",
+  "source": {
+    "commit": "fab22609f9b6f9346aafbd9edd450c6d59eb39fe",
+    "branch": "codex/release-windows-longpaths",
+    "pull_request": "https://github.com/coeasy/qianxing/pull/3",
+    "run_id": 42772794151,
+    "run_url": "https://github.com/coeasy/qianxing/actions/runs/42772794151",
+    "event": "pull_request"
+  },
+  "result": {
+    "workflow_conclusion": "success",
+    "jobs_total": 30,
+    "jobs_succeeded": 30,
+    "jobs_failed": 0,
+    "jobs_cancelled": 0
+  },
+  "acceptance": {
+    "rust_workspace": "success",
+    "feature_matrix": ["sqlite", "postgres", "nats", "postgres+nats", "prepared-evaluation"],
+    "linux_postgres_storage_recovery": "success",
+    "backend_service_contracts": "success",
+    "paper_runtime_contracts": "success",
+    "cpp_sdk": ["windows-latest", "macos-latest", "ubuntu-latest"],
+    "python_wheels": {
+      "platforms": ["ubuntu-latest", "macos-latest", "windows-latest"],
+      "python_versions": ["3.10", "3.11", "3.12", "3.13"],
+      "jobs_succeeded": 12
+    },
+    "performance_regression_gate": "success",
+    "architecture_shards": "4/4 success",
+    "venue_testnet": {
+      "offline_fail_closed_checks": "success",
+      "authenticated_testnet_roundtrip": "skipped",
+      "reason": "Testnet credentials were not available to the workflow."
+    }
+  },
+  "release_boundary": {
+    "tag_workflow_run": false,
+    "github_release_published": false,
+    "pypi_release_published": false,
+    "production_approval": false,
+    "notes": "This pull-request run validates the source revision, hosted platform builds, and CI contracts. It does not create tag release artifacts or establish authenticated testnet or production approval."
+  }
+}

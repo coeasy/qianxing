@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "kind": "qianxing_acceptance_human_review",
+  "work_package": "R04",
+  "acceptance_id": "R04-AC01",
+  "reviewed_at": "2026-11-05",
+  "decision": "accepted_for_windows_local_acceptance",
+  "reviewed_run_ids": [
+    "b025f0ae-14f4-49c3-927e-eb3e7b40fb58",
+    "6ec702ae-2442-4b9d-9b48-5c7e8d5d7c9c",
+    "58a4978a-f9ca-46c9-a38c-700c3ddbb56b",
+    "e66153be-8147-4434-872b-adac7d0be687"
+  ],
+  "reviewed_artifacts": [
+    "tools/check_architecture.py",
+    "tools/accept_strategy_process_tree.py",
+    "maturity/evidence/strategy-preflight-process-tree-windows-2026-10-29.json",
+    "docs/strategy-project-runs.md",
+    "maturity/acceptance-artifacts/6ec702ae-2442-4b9d-9b48-5c7e8d5d7c9c.log",
+    "maturity/acceptance-artifacts/58a4978a-f9ca-46c9-a38c-700c3ddbb56b.log",
+    "maturity/acceptance-artifacts/58a4978a-f9ca-46c9-a38c-700c3ddbb56b.source-tree.json",
+    "python/qianxing/process_tree.py",
+    "maturity/acceptance-artifacts/e66153be-8147-4434-872b-adac7d0be687.log",
+    "maturity/acceptance-artifacts/e66153be-8147-4434-872b-adac7d0be687.source-tree.json"
+  ],
+  "findings": [
+    "The static boundary check is recorded as passed and verifies the project-run static metadata path remains separate from dynamic strategy preflight imports.",
+    "Windows 11 dynamic acceptance confirms descendants that outlive their direct parent are reaped after both normal return and timeout.",
+    "The evidence and documentation state that POSIX children deliberately starting a new session escape the owned process group.",
+    "After adding POSIX cleanup for descendants that remain after a normal response, the Windows 11 return/timeout process-tree regression acceptance still passes. Linux CI now contains a detached new-session child case that records the ownership boundary and reaps the fixture child.",
+    "The Windows process-tree acceptance still passes after the Linux-only zombie-aware exit probe was added to the POSIX detached-session fixture."
+  ],
+  "limitations": [
+    "Linux/POSIX dynamic cleanup has not been run.",
+    "The detached-session cleanup boundary has been documented but not measured on Linux/POSIX."
+  ]
+}

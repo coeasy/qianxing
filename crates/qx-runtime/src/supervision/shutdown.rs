@@ -1,7 +1,7 @@
 //! 停机请求的生产者与带预算的 worker 汇合阶梯。
 //!
 //! `ShutdownToken` 只描述"已经请求停机"，它需要一个真的会响的生产者；这里把进程收到
-//! 的终止请求（Ctrl+C / SIGINT，以及 Unix 下的 SIGTERM）落成一次
+//! 的终止请求（Ctrl+C / SIGINT、Windows 控制台事件，以及 Unix 下的 SIGTERM）落成一次
 //! [`RuntimeSupervisor::request_shutdown`]，并按 `shutdown_timeout_ms` 给汇合设上限。
 
 use super::*;
@@ -12,10 +12,41 @@ static STDIN_LISTENER_INSTALLED: AtomicBool = AtomicBool::new(false);
 
 const POLL_INTERVAL_MS: u64 = 50;
 pub const WORKER_STOP_CHANNEL_ENV: &str = "QX_WORKER_STOP_CHANNEL";
+/// Supervisor-provided immutable deployment revision for strategy cursor ownership.
+pub const STRATEGY_DEPLOYMENT_REVISION_ENV: &str = "QX_STRATEGY_DEPLOYMENT_REVISION";
+/// Supervisor-provided verified content-addressed artifact for a strategy revision.
+pub const STRATEGY_DEPLOYMENT_BUNDLE_ENV: &str = "QX_STRATEGY_DEPLOYMENT_BUNDLE";
 pub const WORKER_STOP_CHANNEL_STDIN_EOF: &str = "stdin-eof-v1";
 
+#[cfg(not(windows))]
 extern "C" fn record_shutdown(_signal: libc::c_int) {
     SHUTDOWN_SIGNALLED.store(true, Ordering::Release);
+}
+
+#[cfg(windows)]
+extern "system" fn record_console_shutdown(control_type: u32) -> i32 {
+    const CTRL_C_EVENT: u32 = 0;
+    const CTRL_BREAK_EVENT: u32 = 1;
+    if matches!(control_type, CTRL_C_EVENT | CTRL_BREAK_EVENT) {
+        SHUTDOWN_SIGNALLED.store(true, Ordering::Release);
+        1
+    } else {
+        0
+    }
+}
+
+#[cfg(windows)]
+fn install_console_shutdown_handler() {
+    type Handler = Option<extern "system" fn(u32) -> i32>;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn SetConsoleCtrlHandler(handler: Handler, add: i32) -> i32;
+    }
+
+    unsafe {
+        SetConsoleCtrlHandler(Some(record_console_shutdown), 1);
+    }
 }
 
 /// 把进程级终止请求接到停机令牌上；幂等，可在每个 worker 入口调用。
@@ -24,7 +55,11 @@ pub fn install_shutdown_signals() -> bool {
     if HANDLER_INSTALLED.swap(true, Ordering::AcqRel) {
         return false;
     }
+    #[cfg(windows)]
+    install_console_shutdown_handler();
+    #[cfg(not(windows))]
     let handler = record_shutdown as *const () as libc::sighandler_t;
+    #[cfg(not(windows))]
     unsafe {
         libc::signal(libc::SIGINT, handler);
         libc::signal(libc::SIGTERM, handler);

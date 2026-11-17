@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "binance_oco_recovery_linux_podman_local_validation",
+  "generated_at_utc": "2026-11-12T02:52:07Z",
+  "source": {
+    "git_head": "6f46c0bc",
+    "worktree_dirty": true,
+    "dirty_paths_related_to_this_evidence": [
+      "crates/qx-adapter/src/binance.rs",
+      "crates/qx-core/src/order_group.rs",
+      "crates/qx-service/src/binance_execution_host.rs",
+      "crates/qx-service/src/binance_reconcile_host.rs",
+      "docs/牵星全量优化方案与竞品超越路线图-2026-11-11.md"
+    ]
+  },
+  "environment": {
+    "os": "Linux",
+    "container_image": "mirror.gcr.io/library/rust:1.98.1-bookworm",
+    "container_runtime": "Podman",
+    "rustc": "1.98.1",
+    "dependency_resolution": "offline, locked"
+  },
+  "commands": [
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-j",
+        "2",
+        "-p",
+        "qx-core",
+        "oco_peer_expiry_resolves_partial_execution_and_empty_expiry"
+      ],
+      "exit_code": 0,
+      "selected_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "relevant_tests": [
+        "order_group::tests::oco_peer_expiry_resolves_partial_execution_and_empty_expiry"
+      ]
+    },
+    {
+      "argv": [
+        "cargo",
+        "check",
+        "--offline",
+        "--locked",
+        "-j",
+        "2",
+        "-p",
+        "qx-adapter",
+        "-p",
+        "qx-service",
+        "-p",
+        "qx-cli"
+      ],
+      "exit_code": 0,
+      "result": "passed"
+    }
+  ],
+  "scope_limitations": [
+    "Validation covers local Rust compilation and the OCO expiry state reducer only.",
+    "No Binance API request was made; endpoint parameter and response-field behavior, account permissions, and Binance Testnet restart recovery remain unverified.",
+    "Binance order-list cancellation and private-stream order-group reduction remain incomplete; this is not sandbox or production acceptance evidence."
+  ]
+}

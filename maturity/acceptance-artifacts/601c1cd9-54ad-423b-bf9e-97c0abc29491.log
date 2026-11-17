@@ -1,0 +1,27 @@
+$ python -c import os,runpy,subprocess,sys; x=runpy.run_path("tools/check_architecture.py",run_name="gate_module"); [x[n]() for n in ("python_strategy_host_client_module_check","python_strategy_host_process_client_module_check","python_strategy_provider_module_check","builtin_strategy_host_module_check","c_abi_strategy_host_module_check","python_runtime_host_capability_forwarding_check","native_trust_check","resource_lifecycle_and_lock_reentrancy_check","strategy_deployment_dependency_tree_check")]; sys.exit(1 if x["failures"] else subprocess.call(["cargo","check","-p","qx-cli","-j","1"],env={**os.environ,"CARGO_PROFILE_DEV_DEBUG":"0"}))
+exit_code=0
+
+[stdout]
+[PASS] Python Strategy worker lifecycle、capability acknowledgment、checkpoint protocol 与 frozen dependency path 由 python_client 唯一拥有并保持 facade 入口
+[PASS] 共享 Strategy process spawn、host provider environment 与 capability acknowledgment 由 process_client 唯一拥有
+[PASS] Python strategy provider selection/配置由 providers 子模块唯一拥有，凭证仍与普通 worker 环境隔离，host facade 保留启动顺序
+[PASS] 内置 Rust 策略的配置装配、双腿数据读取、确定事件投递与共享 contract 输出由 builtin 子模块唯一拥有，保留稳定入口
+[PASS] C ABI trusted loader、checkpoint/callback 校验、错误映射与执行回调排序由 c_abi adapter 唯一拥有，保留调用门面
+[PASS] Rust Runtime class and module-function capability catalogs reach strategy observations and isolated workers
+[PASS] in-process 原生策略的信任门模块在盘（qx-cli/src/native_trust.rs）
+[PASS] 信任门提供「是否放行」与「三元组匹配」两个判定，且都不是测试专用
+[PASS] `load_c_abi_strategy` 在 `dlopen` 之前先过信任门（挡在加载之前，而不是加载之后）
+[PASS] 配置面暴露 `c_abi_trusted_native`（缺省 false）与 `c_abi_target_triple` 两格
+[PASS] 信任门开关缺省为 false（默认拒绝，不是默认放行）
+[PASS] PostgreSQL 控制面事务在同步审计尾部之前必须先放掉池内连接锁
+[PASS] CCXT 子进程 spawn 之后的管道取失败必须先把子进程收掉
+[PASS] 监督器唯一的 stdin 取用在失败路径上先把 worker 挂进台账（两处 push：None 那一格与正常那一格）
+[PASS] 监督器不在取用失败处就地 kill+wait：回收只有 stop_managed_children 那一处（按预算轮询 try_wait）
+[PASS] Strategy worker 收尾与共享环临时文件由 qx-orchestrator 托管
+[PASS] 部署 revision 持有严格校验、内容寻址的 Python 依赖树 manifest 与 schema
+[PASS] 部署写侧按受信根解析模块名、复制有界 Python 源树及显式资源并保存 manifest
+[PASS] 注册表与 supervisor 每次按 manifest 校验完整源树后才装载入口文件
+[PASS] 冻结树根加入 Python 搜索路径且入口必须位于该根内
+
+[stderr]
+    Finished `dev` profile [unoptimized] target(s) in 0.57s

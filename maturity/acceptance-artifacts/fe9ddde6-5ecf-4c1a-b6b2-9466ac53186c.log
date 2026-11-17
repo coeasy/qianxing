@@ -1,0 +1,31 @@
+$ cargo test -p qx-cli --features sqlite,postgres --bin qx-cli workers::strategy_worker::prepared_command_replay::tests::runtime_strategy_checkpoint_is_restored_by_a_new_worker_process --offline -j 1 -- --nocapture
+exit_code=101
+
+[stdout]
+
+[stderr]
+   Compiling qx-cli v0.3.0 (D:\aex_work\qianxing\crates\qx-cli)
+error[E0603]: function import `utc_schedule_tick` is private
+   --> crates\qx-cli\src\workers\strategy_worker\prepared_command_replay.rs:910:45
+    |
+910 |         let trading_day = crate::scheduler::utc_schedule_tick(crate::runtime_timestamp_ms()).0;
+    |                                             ^^^^^^^^^^^^^^^^^ private function import
+    |
+note: the function import `utc_schedule_tick` is defined here...
+   --> crates\qx-cli\src\scheduler.rs:8:5
+    |
+  8 |     utc_schedule_tick, validate_job_owners, JobSpec, JobStatus, LiveStrategyJobInput, ScheduleTick,
+    |     ^^^^^^^^^^^^^^^^^
+note: ...and refers to the function `utc_schedule_tick` which is defined here
+   --> crates\qx-scheduler\src\lib.rs:27:33
+    |
+ 27 |     unsupported_dispatch_shape, utc_schedule_tick, validate_job_owners, LiveStrategyJobInput,
+    |                                 ^^^^^^^^^^^^^^^^^ you could import this directly
+help: import `utc_schedule_tick` directly
+    |
+910 -         let trading_day = crate::scheduler::utc_schedule_tick(crate::runtime_timestamp_ms()).0;
+910 +         let trading_day = qx_scheduler::utc_schedule_tick(crate::runtime_timestamp_ms()).0;
+    |
+
+For more information about this error, try `rustc --explain E0603`.
+error: could not compile `qx-cli` (bin "qx-cli" test) due to 1 previous error

@@ -1,0 +1,15 @@
+$ cargo test -p qx-cli --bin qx-cli strategy_host::process_client::capability_dispatch_tests --offline -- --test-threads=1
+exit_code=0
+
+[stdout]
+
+running 2 tests
+test strategy_host::process_client::capability_dispatch_tests::external_worker_acknowledges_constructed_host_catalog_before_ready ... ok
+test strategy_host::process_client::capability_dispatch_tests::external_worker_rejects_requirements_before_launch_and_mismatched_dispatch_ack ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 481 filtered out; finished in 0.25s
+
+
+[stderr]
+    Finished `test` profile [unoptimized] target(s) in 0.92s
+     Running unittests src\main.rs (target\debug\deps\qx_cli-f4bb28e5802ee70c.exe)

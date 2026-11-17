@@ -7,6 +7,7 @@ struct NativeBuyThenClose {
     submitted: bool,
     positions_at_update: Vec<i128>,
     cash_at_update: Vec<i128>,
+    fill_event_seqs: Vec<u64>,
 }
 
 impl Strategy for NativeBuyThenClose {
@@ -29,6 +30,10 @@ impl Strategy for NativeBuyThenClose {
                 policy: None,
                 reduce_only: false,
                 post_only: false,
+
+                qty_exact: None,
+                limit_price_exact: None,
+                quote_budget: None,
             }]
         };
         Ok(StrategyDecision {
@@ -79,8 +84,24 @@ impl Strategy for NativeBuyThenClose {
                 policy: None,
                 reduce_only: true,
                 post_only: false,
+
+                qty_exact: None,
+                limit_price_exact: None,
+                quote_budget: None,
             }],
         }))
+    }
+
+    fn on_strategy_fill_update_v2(
+        &mut self,
+        context: &StrategyContext,
+        update: &qx_strategy::StrategyFillUpdateV2,
+    ) -> Result<Option<StrategyDecision>, String> {
+        update.validate_for(context)?;
+        self.fill_event_seqs.push(update.event_seq);
+        let legacy = serde_json::to_string(&update.legacy_projection())
+            .map_err(|error| error.to_string())?;
+        self.on_order_update(context, &legacy)
     }
 }
 
@@ -108,12 +129,16 @@ fn native_strategy_adapter_uses_the_same_order_book_causal_path() {
         cash: std::collections::BTreeMap::new(),
         available_margin_raw: Some(10_000),
         risk_state: "ready".into(),
+        positions_exact: std::collections::BTreeMap::new(),
+        cash_exact: std::collections::BTreeMap::new(),
+        available_margin_exact: None,
     };
     let mut strategy = NativeOrderBookStrategy::new(
         NativeBuyThenClose {
             submitted: false,
             positions_at_update: Vec::new(),
             cash_at_update: Vec::new(),
+            fill_event_seqs: Vec::new(),
         },
         context,
     );
@@ -142,6 +167,7 @@ fn native_order_book_fill_update_queues_a_risk_checked_next_snapshot_order() {
             submitted: false,
             positions_at_update: Vec::new(),
             cash_at_update: Vec::new(),
+            fill_event_seqs: Vec::new(),
         },
         StrategyContext {
             strategy_id: "native-book-fill".into(),
@@ -150,6 +176,9 @@ fn native_order_book_fill_update_queues_a_risk_checked_next_snapshot_order() {
             venue_id: "paper".into(),
             data_fingerprint: "book-fill-1".into(),
             as_of: 1,
+            positions_exact: std::collections::BTreeMap::new(),
+            cash_exact: std::collections::BTreeMap::new(),
+            available_margin_exact: None,
             positions: std::collections::BTreeMap::new(),
             cash: std::collections::BTreeMap::new(),
             available_margin_raw: Some(10_000 * SCALE),
@@ -164,6 +193,15 @@ fn native_order_book_fill_update_queues_a_risk_checked_next_snapshot_order() {
         .unwrap();
     assert_eq!(report.fills.len(), 2);
     assert_eq!(strategy.strategy.positions_at_update, vec![SCALE, 0]);
+    let committed_fill_seqs: Vec<_> = report
+        .event_log
+        .events()
+        .iter()
+        .filter_map(|event| {
+            matches!(&event.kind, qx_core::EventKind::Filled { .. }).then_some(event.seq)
+        })
+        .collect();
+    assert_eq!(strategy.strategy.fill_event_seqs, committed_fill_seqs);
     assert!(strategy.strategy.cash_at_update[0] > 0);
     assert!(strategy.strategy.cash_at_update[0] < 10_000 * SCALE);
     assert_eq!(

@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "ashare_rules_on_cli_backtest_throughput",
+  "generated_at_utc": "2026-10-22T03:04:53Z",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "measurement_source_fingerprint": "120262fd2ff81c4be74bdac6fe7fcaec62d62e2c2e9488d079f5cad7852a8d32",
+  "measurement_source_fingerprint_schema": 2,
+  "binary": "D:\\aex_work\\qianxing\\target\\release\\qx-cli.exe",
+  "binary_sha256": "de6b1604e0ee290fbc5db7e6a04d3fcba2e6add3dd6a7347a3eec32c951796d4",
+  "scenario": "qx-cli backtest builtin ema_cross with A-share rules, fee model, published SSE/SZSE 2024-2025 calendar, and PIT-visible corporate action",
+  "profile_coverage_claim": false,
+  "resource_measurement": {
+    "peak_rss_field": "peak_rss_bytes",
+    "process_tree_peak_rss_field": "process_tree_peak_rss_bytes",
+    "method": "Windows process PeakWorkingSetSize; Linux VmHWM; macOS 10ms RSS sampling",
+    "process_tree_method": "optional psutil 10ms aggregate RSS sampling across qx-cli and descendants",
+    "scope": "process tree excludes shared-system cache; tree RSS may miss short spikes"
+  },
+  "profile_target_status_updated": false,
+  "limitations": [
+    "synthetic deterministic minute bars; not market-data quality evidence",
+    "calendar uses published SSE/SZSE annual holiday schedules for 2024-2025; ad-hoc closures outside those notices are not modeled",
+    "throughput measurement does not prove every T+1, lot, limit, suspension, or corporate-action behavior branch",
+    "does not exercise Paper worker lifecycle or broker integration"
+  ],
+  "workloads": [
+    {
+      "bars": 1000,
+      "corporate_actions": 1,
+      "repeats": 3,
+      "instrument": "001000.SZSE",
+      "result_hash": "a5e61ed10738a444",
+      "single_action_control_result_hash": null,
+      "action_effect_verified": null,
+      "p50_ms": 271.918,
+      "p95_ms": 274.153,
+      "peak_rss_bytes_max": 8863744,
+      "peak_rss_samples": 3,
+      "process_tree_peak_rss_bytes_max": 6934528,
+      "process_tree_peak_rss_samples": 3,
+      "peak_process_count": 1,
+      "bars_per_second_at_p50": 3677.58,
+      "rejected_orders_last_repeat": 32,
+      "rules_binding_observed": true,
+      "cost_binding_observed": true,
+      "calendar_fixture": "SSE/SZSE published 2024-2025 holiday schedule; sessions 09:30-11:30 / 13:00-15:00",
+      "input_sha256": {
+        "bar_frame": "0646341276220248d95c265f9ef54f7f98eb28cd7f8691dab7d46ce186caef56",
+        "calendar_runtime": "5a58c56ad0eb42678e156a9aa3ce38dfbb510063a2c6c89ec760172c9bf24cc2",
+        "calendar_source_fixture": "2a6ea8e0f7ac6e8b72fe6f64dcf030827449252939e0cb13ff2ccbc1835df4c9",
+        "corporate_actions": "dd464a6e3422eb5b45a2a5f98e4736f7bcc0cb251d42d08266b4ab82b2bca47e",
+        "runtime_config": "ee9c1cf861b00c3df3eca53adace098c57a1ca2ec092045e159f8fce85d7fb85",
+        "rules": "8abd17af9ddf45906c83610b1da677da9255117a1e90ec38072911d859a7eacb",
+        "market_spec": "496c6fc65812a2fb940d451b72673695c703283ca8ae6e2f2dcec5cdb13420e0"
+      },
+      "corporate_action": {
+        "count": 1,
+        "type": "cash_dividend",
+        "ex_date": "2024-01-08",
+        "published_at": "2024-01-01T00:00:00+08:00",
+        "pit_visible_before_ex_date": true
+      },
+      "deterministic_across_repeats": true
+    },
+    {
+      "bars": 8000,
+      "corporate_actions": 1,
+      "repeats": 3,
+      "instrument": "008000.SZSE",
+      "result_hash": "fbfc6bd1aef61427",
+      "single_action_control_result_hash": null,
+      "action_effect_verified": null,
+      "p50_ms": 325.426,
+      "p95_ms": 327.171,
+      "peak_rss_bytes_max": 11681792,
+      "peak_rss_samples": 3,
+      "process_tree_peak_rss_bytes_max": 10186752,
+      "process_tree_peak_rss_samples": 3,
+      "peak_process_count": 1,
+      "bars_per_second_at_p50": 24583.14,
+      "rejected_orders_last_repeat": 258,
+      "rules_binding_observed": true,
+      "cost_binding_observed": true,
+      "calendar_fixture": "SSE/SZSE published 2024-2025 holiday schedule; sessions 09:30-11:30 / 13:00-15:00",
+      "input_sha256": {
+        "bar_frame": "325c91442d0987c784606c9d81fb0617311a6ba373d7a100d60f36f523144466",
+        "calendar_runtime": "b711e3330554d44575cb2de691903c0d97fdb87fe3c1b5ae74497f6aa8d757f2",
+        "calendar_source_fixture": "2a6ea8e0f7ac6e8b72fe6f64dcf030827449252939e0cb13ff2ccbc1835df4c9",
+        "corporate_actions": "69cbadfa6f813d474c92f725b6d96457baafe2bc0ac362be8e00ffd375a49eda",
+        "runtime_config": "bb1311878f942bb586a7451ba801c3b41e8e38614bc1588ad2831bc171d4a8e8",
+        "rules": "8abd17af9ddf45906c83610b1da677da9255117a1e90ec38072911d859a7eacb",
+        "market_spec": "496c6fc65812a2fb940d451b72673695c703283ca8ae6e2f2dcec5cdb13420e0"
+      },
+      "corporate_action": {
+        "count": 1,
+        "type": "cash_dividend",
+        "ex_date": "2024-02-26",
+        "published_at": "2024-01-01T00:00:00+08:00",
+        "pit_visible_before_ex_date": true
+      },
+      "deterministic_across_repeats": true
+    },
+    {
+      "bars": 64000,
+      "corporate_actions": 1,
+      "repeats": 3,
+      "instrument": "064000.SZSE",
+      "result_hash": "1c35546ca0727c7c",
+      "single_action_control_result_hash": null,
+      "action_effect_verified": null,
+      "p50_ms": 546.551,
+      "p95_ms": 578.304,
+      "peak_rss_bytes_max": 42704896,
+      "peak_rss_samples": 3,
+      "process_tree_peak_rss_bytes_max": 41459712,
+      "process_tree_peak_rss_samples": 3,
+      "peak_process_count": 1,
+      "bars_per_second_at_p50": 117097.84,
+      "rejected_orders_last_repeat": 2064,
+      "rules_binding_observed": true,
+      "cost_binding_observed": true,
+      "calendar_fixture": "SSE/SZSE published 2024-2025 holiday schedule; sessions 09:30-11:30 / 13:00-15:00",
+      "input_sha256": {
+        "bar_frame": "7d413872c68de4a0508859a387a0ffcd88e0e9b4e57eedcbbf920bdc23247cec",
+        "calendar_runtime": "16ccc4d94cb7ad2affb692962d6c100d7141b5b2540e6d36b176b72f9617806f",
+        "calendar_source_fixture": "2a6ea8e0f7ac6e8b72fe6f64dcf030827449252939e0cb13ff2ccbc1835df4c9",
+        "corporate_actions": "3eb7d5d8cb76defe11b67c20628b04f9da7e4208fcb7b483c35e00f40dbfeee3",
+        "runtime_config": "53ce36767bec44226a2b058dcf65a6408be447d075fae5d3e04d5a9906483509",
+        "rules": "8abd17af9ddf45906c83610b1da677da9255117a1e90ec38072911d859a7eacb",
+        "market_spec": "496c6fc65812a2fb940d451b72673695c703283ca8ae6e2f2dcec5cdb13420e0"
+      },
+      "corporate_action": {
+        "count": 1,
+        "type": "cash_dividend",
+        "ex_date": "2024-06-05",
+        "published_at": "2024-01-01T00:00:00+08:00",
+        "pit_visible_before_ex_date": true
+      },
+      "deterministic_across_repeats": true
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+$ python tools/check_strategy_refactor_ledger.py
+exit_code=1
+
+[stdout]
+
+[stderr]
+Strategy refactor ledger validation failed:
+- 314606c9-ff54-4c92-be2c-247d69d5011a: input is absent from its source manifest: maturity/acceptance-artifacts/a712ac43-ed15-4cf5-9ec0-9a31a8943bb1.log
+- 314606c9-ff54-4c92-be2c-247d69d5011a: input is absent from its source manifest: maturity/acceptance-artifacts/2dedb286-ab53-4978-9af1-a8d739af42ab.log

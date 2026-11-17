@@ -1,0 +1,99 @@
+{
+  "rows": [
+    {
+      "profile": "base",
+      "init_rc": 0,
+      "declared": null,
+      "bars": null,
+      "backtest_rc": 2,
+      "fingerprint": "",
+      "fail_line": "[qx-cli · CLI] 统一策略回测失败: 跨语言回测必须配置 strategy.python_module、external_executable 或 c_abi_library"
+    },
+    {
+      "profile": "builtin",
+      "init_rc": 0,
+      "declared": "qianxing.dataset-bundle.bar-frame.example.json",
+      "bars": "qianxing.bar-frame.example.json",
+      "backtest_rc": 0,
+      "fingerprint": "dataset-bundle:4ba99b02bd8a0454",
+      "fail_line": ""
+    },
+    {
+      "profile": "paper",
+      "init_rc": 0,
+      "declared": null,
+      "bars": null,
+      "backtest_rc": 2,
+      "fingerprint": "",
+      "fail_line": "[qx-cli · CLI] 统一策略回测失败: 跨语言回测必须配置 strategy.python_module、external_executable 或 c_abi_library"
+    },
+    {
+      "profile": "ccxt",
+      "init_rc": 0,
+      "declared": null,
+      "bars": null,
+      "backtest_rc": 2,
+      "fingerprint": "",
+      "fail_line": "[qx-cli · CLI] 统一策略回测失败: 内置策略回测 instrument 不一致: strategy=BTC/USDT:USDT.OKX frame=BTCUSDT.BINANCE"
+    },
+    {
+      "profile": "ashare",
+      "init_rc": 0,
+      "declared": "qianxing.dataset-bundle.ashare.example.json",
+      "bars": "qianxing.ashare.bar-frame.example.json",
+      "backtest_rc": 0,
+      "fingerprint": "dataset-bundle:099c5f20c38bc423",
+      "fail_line": ""
+    },
+    {
+      "profile": "multi-venue",
+      "init_rc": 0,
+      "declared": null,
+      "bars": "data/qianxing-multi-venue-arbitrage/btc-usdt-okx.bar-frame.json",
+      "backtest_rc": 2,
+      "fingerprint": "",
+      "fail_line": "[qx-cli · CLI] 统一策略回测失败: 双腿套利必须配置 reference_instrument；runtime_config=.task-tmp\\test-tmp\\guard-census-1793496168\\multi-venue\\qianxing.runtime.json"
+    },
+    {
+      "profile": "backtest",
+      "init_rc": 0,
+      "declared": null,
+      "bars": null,
+      "backtest_rc": 0,
+      "fingerprint": "barframe:613fdc1dc0b779e7",
+      "fail_line": ""
+    },
+    {
+      "profile": "research-local",
+      "init_rc": 0,
+      "declared": null,
+      "bars": null,
+      "backtest_rc": 0,
+      "fingerprint": "barframe:613fdc1dc0b779e7",
+      "fail_line": ""
+    },
+    {
+      "profile": "crypto-paper",
+      "init_rc": 0,
+      "declared": null,
+      "bars": null,
+      "backtest_rc": 2,
+      "fingerprint": "",
+      "fail_line": "[qx-cli · CLI] 统一策略回测失败: 跨语言回测必须配置 strategy.python_module、external_executable 或 c_abi_library"
+    },
+    {
+      "profile": "crypto-sandbox-acceptance",
+      "init_rc": 0,
+      "declared": null,
+      "bars": null,
+      "backtest_rc": 2,
+      "fingerprint": "",
+      "fail_line": "[qx-cli · CLI] 统一策略回测失败: 内置策略回测 instrument 不一致: strategy=BTC/USDT:USDT.OKX frame=BTCUSDT.BINANCE"
+    }
+  ],
+  "counts": {
+    "none": 6,
+    "dataset-bundle": 2,
+    "barframe": 2
+  }
+}

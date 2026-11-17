@@ -1,0 +1,6 @@
+$ go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/ci.yml .github/workflows/python-wheels.yml
+exit_code=0
+
+[stdout]
+
+[stderr]

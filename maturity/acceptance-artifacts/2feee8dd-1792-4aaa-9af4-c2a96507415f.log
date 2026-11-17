@@ -1,0 +1,13 @@
+DIRTY  docs/archive/baseline/2026-10-10-baseline.md
+DIRTY  docs/archive/自研量化框架审计与重构方案-V13-逐轮执行记录.md
+DIRTY  docs/competitive-analysis/牵星Qianxing-架构不合理清单与优化重构方案-2026-10-10.md
+DIRTY  docs/competitive-analysis/竞品全景图与架构对标-牵星Qianxing-2026-10-10.md
+DIRTY  docs/gpui-kit桌面端策略研究平台-可行性评估与调研方案-2026-10-10.md
+DIRTY  docs/牵星Qianxing-详细开发计划与实施路线图-2026-10-10.md
+DIRTY  docs/自研量化框架审计与重构方案-V13.md
+
+correctly parsed live tracked dirty paths: 258
+newly dirtied by this round: 7
+quoted-form paths left in the dirty set (must be 0): 0
+documents whose HEAD bytes already carry one of the 4 miscased spellings: 7
+worktree copy of those spellings now present in the same 7 docs (must be 0): 1

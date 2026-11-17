@@ -49,12 +49,13 @@ fn bar(instrument: &InstrumentId, ts: u64, offset: i128) -> MarketEvent {
         low_raw: open.min(close) - lower_wick + offset,
         close_raw: close + offset,
         volume_raw: (100 + i128::from(ts % 7) * 13) * scale,
+        exact_ohlcv: None,
     }
 }
 
 fn context(instrument: &InstrumentId) -> StrategyContext {
     StrategyContext {
-        strategy_id: format!("builtin-{}", instrument.symbol),
+        strategy_id: format!("builtin-{}", instrument.symbol()),
         strategy_version: "builtin-v1".into(),
         account_id: "main".into(),
         venue_id: instrument.venue.to_string(),
@@ -64,6 +65,9 @@ fn context(instrument: &InstrumentId) -> StrategyContext {
         cash: BTreeMap::new(),
         available_margin_raw: Some(1_000_000),
         risk_state: "ready".into(),
+        positions_exact: BTreeMap::new(),
+        cash_exact: BTreeMap::new(),
+        available_margin_exact: None,
     }
 }
 
@@ -100,6 +104,7 @@ fn run(
         reference_instrument: reference.clone(),
         primary_policy: None,
         reference_policy: None,
+        allow_short: true,
     };
     // 装配失败本身就是一种"结果变了"：参数体检若还去管不上场的旋钮，这里就会与基线分叉。
     let Ok(mut strategy) = BuiltinStrategy::new(config) else {

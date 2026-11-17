@@ -9,12 +9,15 @@ use qx_core::{AccountBalance, Money};
 use qx_runtime::LiveEventPipeline;
 
 fn open_pipeline(tag: &str) -> (std::path::PathBuf, LiveEventPipeline) {
-    let root = std::env::temp_dir().join(format!(
-        "qianxing-balance-absence-{}-{}-{}",
-        std::process::id(),
-        tag,
-        std::time::UNIX_EPOCH.elapsed().unwrap().as_nanos()
-    ));
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/test-temp")
+        .join(format!(
+            "qianxing-balance-absence-{}-{}-{}",
+            std::process::id(),
+            tag,
+            std::time::UNIX_EPOCH.elapsed().unwrap().as_nanos()
+        ));
+    std::fs::create_dir_all(&root).unwrap();
     let pipeline = LiveEventPipeline::open(&root, "binance-main", "USDT").unwrap();
     (root, pipeline)
 }
@@ -25,6 +28,8 @@ fn balance(asset: &str, free: i64, locked: i64) -> AccountBalance {
         free: Money::from_i64(free),
         locked: Money::from_i64(locked),
         borrowed: Money::ZERO,
+        net_cash_balance: None,
+        exact_amounts: None,
     }
 }
 

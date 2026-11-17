@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-28T14:44:15.456069+08:00",
+  "scope": "local example backtests and selected market/report regressions; not entire framework acceptance",
+  "results": [
+    {
+      "command": "cargo test -p qx-cli --test backtest_contracts -- --test-threads=2",
+      "passed": 50,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p qx-xingban --lib ashare",
+      "passed": 37,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p qx-cli --test cli_behavior_parity ashare_runs_export_documents_and_compare_on_the_same_input",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "python -m unittest discover -s tools -p test_local_backtest_validation.py",
+      "passed": 4,
+      "failed": 0
+    }
+  ],
+  "unique_test_cases_passed": 92,
+  "evidence_archive_crc": "verified",
+  "evidence_archive_members": 72,
+  "archive_bytes_match_originals": true,
+  "html_asset_references": "local_or_inline_and_existing",
+  "windows_space_path_validation": "../backtest-validation-2026-10-28-spaces/validation.json",
+  "remaining_plan_gaps": [
+    "complete deployment management",
+    "observed live trading readiness",
+    "prepared submission recovery journal",
+    "cross-host acceptance"
+  ]
+}

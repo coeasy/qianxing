@@ -80,7 +80,14 @@ pub fn api_policy_from_runtime(config: &RuntimeConfig) -> ApiPolicy {
 /// Create an API service with the operator policy owned by the same runtime snapshot.
 pub fn api_service_from_runtime(state: ApiState, config: &RuntimeConfig) -> ApiService {
     if config.api.operators.is_empty() {
-        ApiService::new(state)
+        let service = ApiService::new(state);
+        if config.api.transport == ApiTransport::Plaintext
+            && config.environment.eq_ignore_ascii_case("paper")
+        {
+            service.with_local_paper_control()
+        } else {
+            service
+        }
     } else {
         ApiService::with_policy(state, api_policy_from_runtime(config))
     }
@@ -175,6 +182,13 @@ pub fn serve_api(
 
     let result = match transport {
         ApiTransport::Plaintext => {
+            let publisher_stop = Arc::new(AtomicBool::new(false));
+            let mut publisher_thread =
+                crate::strategy_deployment_publisher::spawn_strategy_deployment_publisher(
+                    config.clone(),
+                    runtime_timestamp_ms,
+                    Arc::clone(&publisher_stop),
+                )?;
             let projection_stop = Arc::new(AtomicBool::new(false));
             let mut projection_thread =
                 spawn_api_projection_bridge(&config, service.clone(), Arc::clone(&projection_stop));
@@ -187,12 +201,14 @@ pub fn serve_api(
                 Ok(worker) => worker,
                 Err(error) => {
                     stop_api_projection_bridge(&projection_stop, &mut projection_thread);
+                    stop_api_projection_bridge(&publisher_stop, &mut publisher_thread);
                     return Err(error);
                 }
             };
             let result =
                 qx_runtime::host::join_worker_handle(&supervisor, worker, "API", &api_worker_id);
             stop_api_projection_bridge(&projection_stop, &mut projection_thread);
+            stop_api_projection_bridge(&publisher_stop, &mut publisher_thread);
             result
         }
         ApiTransport::Mtls => {
@@ -222,6 +238,13 @@ pub fn serve_api(
                 tls.client_ca.clone(),
             );
             let store = qx_api::TlsConfigStore::new(server_config);
+            let publisher_stop = Arc::new(AtomicBool::new(false));
+            let mut publisher_thread =
+                crate::strategy_deployment_publisher::spawn_strategy_deployment_publisher(
+                    config.clone(),
+                    runtime_timestamp_ms,
+                    Arc::clone(&publisher_stop),
+                )?;
             let projection_stop = Arc::new(AtomicBool::new(false));
             let mut projection_thread =
                 spawn_api_projection_bridge(&config, service.clone(), Arc::clone(&projection_stop));
@@ -260,6 +283,7 @@ pub fn serve_api(
                     reload_stop.store(true, Ordering::Release);
                     let _ = reload_thread.join();
                     stop_api_projection_bridge(&projection_stop, &mut projection_thread);
+                    stop_api_projection_bridge(&publisher_stop, &mut publisher_thread);
                     return Err(error);
                 }
             };
@@ -272,6 +296,7 @@ pub fn serve_api(
             reload_stop.store(true, Ordering::Release);
             let _ = reload_thread.join();
             stop_api_projection_bridge(&projection_stop, &mut projection_thread);
+            stop_api_projection_bridge(&publisher_stop, &mut publisher_thread);
             result
         }
     };

@@ -15,6 +15,8 @@
 //!
 //! * `Ledger::valuate`：吃一份 [`ValuationContext`]，内部按规格/汇率派发到 1 的正确方法，
 //!   再叠上保证金占用，吐一份 [`ValuationResult`]。调用方不再需要知道该调哪个 `equity_*`。
+//! * `Ledger::valuate_exact`：用同一规格选择规则对齐精确现金、数量和可选精确标记价；
+//!   Bar/深度回测不再分别挑选 scale-aware 原语。
 //!   它的实现落在 `crate::ledger::query`（本仓不允许在 `ledger/` 目录外另起 `impl Ledger`，
 //!   见门禁「账簿归约实现按资产类别分文件」）。
 //! * [`MarginState::valuate`]：把保证金账户口径折成**同一个** [`ValuationResult`]；
@@ -25,7 +27,7 @@
 
 use crate::error::{QxError, QxResult};
 use crate::identity::InstrumentId;
-use crate::numeric::{Money, Price};
+use crate::numeric::{ExactDecimal, Money, Price};
 use crate::trading::{MarginState, TradingInstrumentSpec};
 use std::collections::BTreeMap;
 
@@ -108,6 +110,28 @@ impl<'a> ValuationContext<'a> {
     /// 覆盖跨币种汇率表（链式）。
     pub fn with_fx(mut self, fx_rates: &'a BTreeMap<String, Price>) -> Self {
         self.fx_rates = fx_rates;
+        self
+    }
+}
+
+/// Scale-aware equity context. The raw mark map remains present for legacy projections; when
+/// `exact_marks` is supplied, exact-mark valuation requires a frozen market specification.
+#[derive(Clone, Copy, Debug)]
+pub struct ExactValuationContext<'a> {
+    pub valuation: ValuationContext<'a>,
+    pub exact_marks: Option<&'a BTreeMap<InstrumentId, ExactDecimal>>,
+}
+
+impl<'a> ExactValuationContext<'a> {
+    pub fn new(valuation: ValuationContext<'a>) -> Self {
+        Self {
+            valuation,
+            exact_marks: None,
+        }
+    }
+
+    pub fn with_exact_marks(mut self, marks: &'a BTreeMap<InstrumentId, ExactDecimal>) -> Self {
+        self.exact_marks = Some(marks);
         self
     }
 }

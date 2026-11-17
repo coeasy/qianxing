@@ -1,0 +1,7 @@
+$ D:\dev\miniforge3\python.exe tools/check_strategy_refactor_ledger.py
+exit_code=0
+
+[stdout]
+Strategy refactor ledger: R01-R23 valid; 23 acceptance scenarios and 317 artifact-bound runs validated.
+
+[stderr]

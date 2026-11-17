@@ -1246,6 +1246,8 @@ mod tests {
             input_event_hash: "input".into(),
             output_event_hash: "output".into(),
             runtime_version: "runtime".into(),
+            canonical_run_spec_json: None,
+            canonical_run_spec_fingerprint: None,
         };
         let outcomes = SchedulerWorker::run_cron_tick_with_manifest(
             &mut scheduler,
@@ -1290,6 +1292,8 @@ mod tests {
             input_event_hash: "input".into(),
             output_event_hash: "output".into(),
             runtime_version: "runtime".into(),
+            canonical_run_spec_json: None,
+            canonical_run_spec_fingerprint: None,
         };
         let mut scheduler = Scheduler::default();
         let mut event_job = job("on-fill", vec![]);
@@ -1367,6 +1371,8 @@ mod tests {
             input_event_hash: "input".into(),
             output_event_hash: "output".into(),
             runtime_version: "runtime".into(),
+            canonical_run_spec_json: None,
+            canonical_run_spec_fingerprint: None,
         };
         let mut executor = RecordingExecutor {
             calls: Vec::new(),

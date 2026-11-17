@@ -1,0 +1,30 @@
+$ cargo test -p qx-cli --features sqlite,postgres --bin qx-cli workers::strategy_worker::execution_updates::cursor_state::postgres_tests::postgres_cursor_imports_legacy_file_and_fences_stale_progress --offline -- --ignored --exact --nocapture
+exit_code=101
+
+[stdout]
+
+running 1 test
+test workers::strategy_worker::execution_updates::cursor_state::postgres_tests::postgres_cursor_imports_legacy_file_and_fences_stale_progress ... FAILED
+
+failures:
+
+failures:
+    workers::strategy_worker::execution_updates::cursor_state::postgres_tests::postgres_cursor_imports_legacy_file_and_fences_stale_progress
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 485 filtered out; finished in 0.00s
+
+
+[stderr]
+   Compiling qx-storage v0.3.0 (D:\aex_work\qianxing\crates\qx-storage)
+   Compiling qx-runtime v0.3.0 (D:\aex_work\qianxing\crates\qx-runtime)
+   Compiling qx-api v0.3.0 (D:\aex_work\qianxing\crates\qx-api)
+   Compiling qx-orchestrator v0.3.0 (D:\aex_work\qianxing\crates\qx-orchestrator)
+   Compiling qx-service v0.3.0 (D:\aex_work\qianxing\crates\qx-service)
+   Compiling qx-cli v0.3.0 (D:\aex_work\qianxing\crates\qx-cli)
+    Finished `test` profile [unoptimized] target(s) in 32.05s
+     Running unittests src\main.rs (target\debug\deps\qx_cli-c8e1dbef86020219.exe)
+
+thread 'workers::strategy_worker::execution_updates::cursor_state::postgres_tests::postgres_cursor_imports_legacy_file_and_fences_stale_progress' (34492) panicked at crates\qx-cli\src\workers\strategy_worker\execution_updates\cursor_state.rs:699:14:
+create legacy cursor directory: Os { code: 5, kind: PermissionDenied, message: "拒绝访问。" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p qx-cli --bin qx-cli`

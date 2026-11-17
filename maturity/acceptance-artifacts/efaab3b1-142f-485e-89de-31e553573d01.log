@@ -1,0 +1,46 @@
+stale-path citations (basename matches exactly one tracked file, path differs): 356
+  in live documents (not changelog/archive): 184 across 19 files
+  in changelog/archive prose: 172 across 22 files
+  distinct stale spellings: 196 -> distinct real targets: 162
+
+=== live documents
+  cpp/README.md:5  include/qianxing_strategy.h  ->  cpp/include/qianxing_strategy.h
+  cpp/README.md:6  examples/jsonl_strategy.cpp  ->  cpp/examples/jsonl_strategy.cpp
+  cpp/README.md:10  include/qianxing_app.hpp  ->  cpp/include/qianxing_app.hpp
+  cpp/README.md:22  include/qianxing_ring.hpp  ->  cpp/include/qianxing_ring.hpp
+  deploy/README.md:594  crates/qx-cli/src/pipeline_metrics_report.rs  ->  crates/qx-service/src/pipeline_metrics_report.rs
+  docs/architecture-local-server-refactor-review-2026-10-28.md:87  qx-strategy/src/capabilities.rs  ->  crates/qx-api/src/app_surface/capabilities.rs
+  docs/architecture-local-server-refactor-review-2026-10-28.md:407  strategy_worker/admission.rs  ->  crates/qx-api/src/admission.rs
+  docs/architecture-local-server-refactor-review-2026-10-28.md:456  cases/run_experiment/persistence.rs  ->  crates/qx-api/src/app_runs/persistence.rs
+  docs/architecture-local-server-refactor-review-2026-10-28.md:459  experiment_search/rng.rs  ->  crates/qx-xingban/src/rng.rs
+  docs/architecture-local-server-refactor-review-2026-10-28.md:462  cases/run_experiment/identity.rs  ->  crates/qx-core/src/identity.rs
+  docs/architecture-local-server-refactor-review-2026-10-28.md:486  run_multi_market_depth_experiment/identity.rs  ->  crates/qx-core/src/identity.rs
+  docs/architecture-local-server-refactor-review-2026-10-28.md:495  report_multi_market/diagnostics.rs  ->  crates/qx-strategy/src/diagnostics.rs
+  docs/architecture-local-server-refactor-review-2026-10-28.md:562  report_multi_market_depth/diagnostics.rs  ->  crates/qx-strategy/src/diagnostics.rs
+  docs/architecture-local-server-refactor-review-2026-10-28.md:568  report_xlsx/strategy_diagnostics.rs  ->  crates/qx-cli/src/strategy_diagnostics.rs
+  docs/competitive-analysis/牵星Qianxing-架构不合理清单与优化重构方案-2026-10-10.md:151  qx-xingban/src/orderbook_backtest.rs  ->  crates/qx-xingban/src/orderbook_backtest.rs
+  docs/competitive-analysis/牵星Qianxing-架构不合理清单与优化重构方案-2026-10-10.md:160  qx-core/src/sourcing.rs  ->  crates/qx-core/src/sourcing.rs
+  docs/competitive-analysis/竞品全景图与架构对标-牵星Qianxing-2026-10-10.md:121  qx-core/src/clock.rs  ->  crates/qx-core/src/clock.rs
+  docs/module-map.md:73  workers/strategy_worker/admission.rs  ->  crates/qx-api/src/admission.rs
+  docs/qianxing-架构设计与工业级优化改进方案-2026-10-06.md:181  tests/event_log_seq_index.rs  ->  crates/qx-core/tests/event_log_seq_index.rs
+  docs/qianxing-架构设计与工业级优化改进方案-2026-10-06.md:274  qx-xingban/tests/no_lookahead.rs  ->  crates/qx-xingban/tests/no_lookahead.rs
+  docs/qianxing-架构设计与工业级优化改进方案-2026-10-06.md:1226  qx-api/src/ws.rs  ->  crates/qx-api/src/ws.rs
+  docs/qianxing-架构设计与工业级优化改进方案-2026-10-06.md:1229  src/console.rs  ->  crates/qx-api/src/console.rs
+  docs/牵星Qianxing-GitHub竞品与架构深度复核及优化重构方案-2026-10-25.md:980  qx-adapter/src/binance.rs  ->  crates/qx-adapter/src/binance.rs
+  docs/牵星Qianxing-GitHub竞品与架构深度复核及优化重构方案-2026-10-25.md:980  qx-app/src/cases/run_experiment.rs  ->  crates/qx-app/src/cases/run_experiment.rs
+  docs/牵星Qianxing-GitHub竞品与架构深度复核及优化重构方案-2026-10-25.md:980  qx-cli/src/report_multi_market.rs  ->  crates/qx-cli/src/report_multi_market.rs
+  docs/牵星Qianxing-GitHub竞品与架构深度复核及优化重构方案-2026-10-25.md:985  qx-api/src/app_surface/research_artifacts.rs  ->  crates/qx-api/src/app_surface/research_artifacts.rs
+  docs/牵星Qianxing-GitHub竞品与架构深度复核及优化重构方案-2026-10-25.md:1446  qx-api/src/app_surface/research_artifacts.rs  ->  crates/qx-api/src/app_surface/research_artifacts.rs
+  docs/牵星Qianxing-GitHub竞品与架构深度复核及优化重构方案-2026-10-25.md:1446  qx-app/src/report_read.rs  ->  crates/qx-app/src/report_read.rs
+  docs/牵星Qianxing-GitHub竞品与架构深度复核及优化重构方案-2026-10-25.md:1555  qx-adapter/src/binance.rs  ->  crates/qx-adapter/src/binance.rs
+  docs/牵星Qianxing-GitHub竞品与架构深度复核及优化重构方案-2026-10-25.md:1555  qx-api/src/app_surface/research_artifacts.rs  ->  crates/qx-api/src/app_surface/research_artifacts.rs
+  docs/牵星Qianxing-GitHub竞品与架构深度复核及优化重构方案-2026-10-25.md:1555  qx-app/src/cases/run_experiment.rs  ->  crates/qx-app/src/cases/run_experiment.rs
+  docs/牵星Qianxing-GitHub竞品与架构深度复核及优化重构方案-2026-10-25.md:1621  qx-api/src/app_surface/research_artifacts.rs  ->  crates/qx-api/src/app_surface/research_artifacts.rs
+  docs/牵星Qianxing-GitHub竞品与架构重构决策主方案-2026-10-25.md:259  qx-app/src/report_read.rs  ->  crates/qx-app/src/report_read.rs
+  docs/牵星Qianxing-GitHub竞品对标与架构优化重构执行方案-2026-10-25.md:113  qx-api/src/app_surface/research_artifacts.rs  ->  crates/qx-api/src/app_surface/research_artifacts.rs
+  docs/牵星Qianxing-GitHub竞品对标与架构优化重构执行方案-2026-10-25.md:123  qx-adapter/src/binance.rs  ->  crates/qx-adapter/src/binance.rs
+  docs/牵星Qianxing-GitHub竞品对标与架构优化重构执行方案-2026-10-25.md:123  qx-api/src/app_surface/research_artifacts.rs  ->  crates/qx-api/src/app_surface/research_artifacts.rs
+  docs/牵星Qianxing-GitHub竞品对标与架构优化重构执行方案-2026-10-25.md:123  qx-app/src/cases/run_experiment.rs  ->  crates/qx-app/src/cases/run_experiment.rs
+  docs/牵星Qianxing-GitHub竞品对标与架构优化重构执行方案-2026-10-25.md:505  qx-api/src/app_surface/research_artifacts.rs  ->  crates/qx-api/src/app_surface/research_artifacts.rs
+  docs/牵星Qianxing-GitHub竞品对标与架构优化重构执行方案-2026-10-25.md:505  qx-app/src/cases/run_experiment.rs  ->  crates/qx-app/src/cases/run_experiment.rs
+  docs/牵星Qianxing-GitHub竞品对标与架构优化重构执行方案-2026-10-25.md:646  qx-adapter/src/binance.rs  ->  crates/qx-adapter/src/binance.rs

@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "evidence_id": "order-group-atomic-replace-windows-2026-11-12",
+  "recorded_at": "2026-11-12",
+  "scope": "durable atomic replacement of order-group snapshots",
+  "environment": {
+    "os": "Windows",
+    "workspace_commit_before_change": "80241512"
+  },
+  "verification": [
+    {
+      "command": "cargo test --offline --locked -j 1 -p qx-core atomic_file",
+      "result": "passed",
+      "passed": 2,
+      "failed": 0,
+      "assertions": [
+        "replacement updates an existing state file",
+        "a failed replacement preserves the existing destination and removes the temporary file"
+      ]
+    },
+    {
+      "command": "cargo test --offline --locked -j 1 -p qx-zhenlu --test order_group_store file_order_group_store_is_idempotent_and_restores_reduced_state",
+      "result": "passed",
+      "passed": 1,
+      "failed": 0,
+      "assertions": [
+        "order-group state is updated repeatedly",
+        "a newly opened store restores the last reduced state and venue identities"
+      ]
+    },
+    {
+      "command": "python tools/check_architecture.py",
+      "result": "passed",
+      "passed": 1633,
+      "failed": 0
+    }
+  ],
+  "limitations": [
+    "No process-kill or physical disk failure injection was performed.",
+    "If replacement succeeds but a subsequent parent-directory sync fails, the caller must reload to determine the visible state.",
+    "No exchange API was called; OKX, Binance, and Bitget maturity is unchanged.",
+    "Workspace-wide cargo fmt --check reports pre-existing formatting differences outside this change."
+  ]
+}

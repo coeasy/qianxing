@@ -2,12 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://qianxing.local/schemas/provider-depth-backtest-spec-v1.json",
   "title": "Qianxing ProviderDepthBacktestSpec v1",
-  "description": "Provider Quote fetch, immutable L1/L2 freeze with source identity, and shared Rust depth backtest input. Runtime binds exactly one instrument, Quote/tick request, required data tier, and matching optional market spec.",
+  "description": "Provider Quote fetch, immutable L1/L2 freeze with source identity, owner-supplied DatasetSnapshotContextV1, and shared Rust depth backtest input.",
   "type": "object",
   "required": [
     "schema_version",
     "data_request",
-    "backtest"
+    "backtest",
+    "timezone",
+    "snapshot_context"
   ],
   "properties": {
     "schema_version": {
@@ -18,6 +20,14 @@
     },
     "backtest": {
       "$ref": "#/$defs/DepthBacktestSpec"
+    },
+    "timezone": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": ".*\\S.*"
+    },
+    "snapshot_context": {
+      "$ref": "dataset-snapshot-context-v1.json"
     }
   },
   "additionalProperties": false,
@@ -123,6 +133,13 @@
             "null"
           ],
           "minimum": 0
+        },
+        "min_notional_raw": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "exact_rules": {
+          "$ref": "#/$defs/ExactTradingRules"
         }
       }
     },
@@ -566,12 +583,25 @@
         },
         "reserved_capital_raw": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 0
+        },
+        "reserved_capital_exact": {
+          "$ref": "#/$defs/ExactDecimal"
         },
         "strategy": {
           "$ref": "#/$defs/BuiltinStrategySpec"
         }
       },
+      "allOf": [
+        {
+          "if": { "required": ["reserved_capital_exact"] },
+          "then": { "properties": { "reserved_capital_raw": { "minimum": 0 } } }
+        },
+        {
+          "if": { "not": { "required": ["reserved_capital_exact"] } },
+          "then": { "properties": { "reserved_capital_raw": { "minimum": 1 } } }
+        }
+      ],
       "additionalProperties": false
     },
     "PortfolioBacktestConfig": {
@@ -587,7 +617,10 @@
         },
         "primary_reserved_capital_raw": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 0
+        },
+        "primary_reserved_capital_exact": {
+          "$ref": "#/$defs/ExactDecimal"
         },
         "additional_strategies": {
           "type": "array",
@@ -597,6 +630,16 @@
           }
         }
       },
+      "allOf": [
+        {
+          "if": { "required": ["primary_reserved_capital_exact"] },
+          "then": { "properties": { "primary_reserved_capital_raw": { "minimum": 0 } } }
+        },
+        {
+          "if": { "not": { "required": ["primary_reserved_capital_exact"] } },
+          "then": { "properties": { "primary_reserved_capital_raw": { "minimum": 1 } } }
+        }
+      ],
       "additionalProperties": false
     },
     "ProtectiveExitSpec": {
@@ -1162,6 +1205,26 @@
           "minimum": 0,
           "maximum": 10000
         },
+        "funding_bps": {
+          "type": "integer",
+          "minimum": -10000,
+          "maximum": 10000
+        },
+        "funding_events": {
+          "type": "array",
+          "maxItems": 100000,
+          "items": {
+            "type": "object",
+            "required": ["instrument", "settlement_ts", "rate_bps"],
+            "properties": {
+              "instrument": { "$ref": "#/$defs/InstrumentId" },
+              "settlement_ts": { "type": "integer", "minimum": 1 },
+              "rate_bps": { "type": "integer", "minimum": -10000, "maximum": 10000 },
+              "funding_interval_ms": { "type": "integer", "minimum": 60000, "maximum": 86400000 }
+            },
+            "additionalProperties": false
+          }
+        },
         "output_dir": {
           "type": "string",
           "minLength": 1,
@@ -1364,6 +1427,53 @@
               "type": "null"
             }
           ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExactDecimal": {
+      "type": "object",
+      "required": [
+        "coefficient",
+        "scale"
+      ],
+      "properties": {
+        "coefficient": {
+          "type": "string",
+          "pattern": "^-?(0|[1-9][0-9]*)$"
+        },
+        "scale": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExactTradingRules": {
+      "type": "object",
+      "required": [
+        "contract_size",
+        "price_tick",
+        "quantity_step",
+        "minimum_quantity",
+        "minimum_notional"
+      ],
+      "properties": {
+        "contract_size": {
+          "$ref": "#/$defs/ExactDecimal"
+        },
+        "price_tick": {
+          "$ref": "#/$defs/ExactDecimal"
+        },
+        "quantity_step": {
+          "$ref": "#/$defs/ExactDecimal"
+        },
+        "minimum_quantity": {
+          "$ref": "#/$defs/ExactDecimal"
+        },
+        "minimum_notional": {
+          "$ref": "#/$defs/ExactDecimal"
         }
       },
       "additionalProperties": false

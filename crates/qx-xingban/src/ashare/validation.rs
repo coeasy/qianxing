@@ -3,7 +3,7 @@ use serde_json::Value;
 
 /// Validate one or more public company-action rows through the rule-domain path.
 /// Suspension rows are projected to a no-op action for numeric validation because
-/// the run loader stores their timestamps in a separate halt schedule.
+/// they gate trading availability instead of generating ledger entries.
 pub fn validate_corporate_action_json(payload: &str) -> Result<(), String> {
     let mut document: Value =
         serde_json::from_str(payload).map_err(|error| format!("公司行为 JSON 无效: {error}"))?;

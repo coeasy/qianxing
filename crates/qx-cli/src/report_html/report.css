@@ -1,0 +1,78 @@
+:root { color-scheme: light; --ink:#17243a; --muted:#607087; --line:#dce4ee; --blue:#225ccd; }
+* { box-sizing:border-box; }
+[hidden] { display:none !important; }
+html { scroll-behavior:smooth; }
+body { margin:0; background:#f3f6fb; color:var(--ink); font:14px/1.65 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif; }
+main { width:100%; max-width:1240px; min-width:0; margin:0 auto; padding:28px 24px 56px; }
+main > *, section, article, details, figure { min-width:0; max-width:100%; }
+header { padding:24px; border:1px solid var(--line); border-radius:14px; background:#fff; border-top:4px solid var(--blue); }
+h1 { margin:0 0 8px; font-size:26px; letter-spacing:.02em; }
+h2 { margin:0 0 14px; font-size:18px; }
+h3 { font-size:15px; }
+p { margin:8px 0 14px; }
+a { color:var(--blue); text-underline-offset:3px; }
+code, pre { font-family:ui-monospace,Consolas,monospace; font-size:12px; overflow-wrap:anywhere; word-break:break-word; }
+code { background:#f1f5fa; padding:2px 4px; border-radius:4px; }
+pre { margin:0; white-space:pre-wrap; max-height:460px; overflow:auto; padding:14px; background:#f6f8fc; }
+.sub, .foot, .fills-note, .chart-note, figcaption { color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
+.report-nav { display:flex; flex-wrap:wrap; gap:8px; margin:14px 0; }
+.report-nav a { padding:6px 12px; border:1px solid var(--line); background:white; border-radius:7px; text-decoration:none; }
+.disclaimer, .fidelity-note { padding:12px 16px; background:#fff8e7; border-left:4px solid #dca628; color:#71541a; border-radius:5px; font-size:13px; }
+.cards { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:18px 0; }
+.card { min-width:0; padding:15px; display:flex; flex-direction:column; gap:6px; background:white; border:1px solid var(--line); border-radius:10px; }
+.card .k { font-size:12px; color:var(--muted); }
+.card .v { font-size:21px; font-weight:600; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.up { color:#b6323d; } .down { color:#12734d; } .neutral { color:var(--ink); }
+.cred, .prov, .fills, .event-trace, .interactive-research, .strategy-diagnostics, .report-detail { margin:20px 0; padding:20px; background:white; border:1px solid var(--line); border-radius:12px; }
+.fidelity { margin:20px 0; }
+.fidelity-grid, .detail-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+.fidelity article { min-width:0; background:white; border:1px solid var(--line); border-radius:10px; padding:16px; }
+table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:12px; font-variant-numeric:tabular-nums; }
+th, td { text-align:left; padding:9px 10px; vertical-align:top; border-bottom:1px solid #e8edf4; overflow-wrap:anywhere; word-break:break-word; }
+th { color:var(--muted); font-weight:600; background:#f6f8fc; }
+tbody tr:nth-child(even) { background:#fafbfd; }
+.prov th, .fidelity th, .detail-grid th { width:32%; }
+.cred .cstat { width:90px; font-weight:600; }
+.cred .cstat.ok { color:#225ccd; background:#edf3ff; }
+.cred .cstat.warn { color:#8a620c; background:#fff7df; }
+.cred .cstat.absent { color:var(--muted); background:#f3f5f8; }
+.fill-scroll, .table-wrap, .diagnostic-scroll { width:100%; max-width:100%; max-height:420px; overflow:auto; border:1px solid var(--line); border-radius:7px; margin-top:12px; overscroll-behavior:contain; }
+.fill-scroll table, .table-wrap table, .diagnostic-scroll table { table-layout:auto; min-width:760px; }
+#fill-table { min-width:1800px; }
+#event-table { min-width:1100px; }
+.fill-scroll thead th, .table-wrap thead th { position:sticky; top:0; z-index:1; white-space:nowrap; }
+.fill-scroll td, .table-wrap td { min-width:90px; max-width:360px; }
+input[type=search] { width:min(100%,360px); padding:8px 10px; margin:8px; border:1px solid #b8c7db; border-radius:6px; font:inherit; }
+input:focus, button:focus, a:focus { outline:2px solid #86aaf3; outline-offset:2px; }
+button { padding:8px 12px; border:1px solid #b8c7db; border-radius:6px; background:#edf3ff; color:#194ba8; cursor:pointer; }
+summary { cursor:pointer; font-weight:600; padding:6px 0; overflow-wrap:anywhere; }
+details[open] > summary { margin-bottom:12px; }
+.diagnostic-status { display:flex; flex-wrap:wrap; gap:8px 20px; }
+.chart-controls { display:flex; flex-wrap:wrap; align-items:center; gap:10px 20px; margin:12px 0; }
+.chart-controls label { display:flex; align-items:center; gap:6px; }
+.research-chart-wrap { height:340px; width:100%; min-width:0; position:relative; }
+#research-chart { display:block; width:100%; height:340px; touch-action:pan-y; }
+#research-chart-tip { position:absolute; z-index:3; max-width:min(250px,100%); padding:10px; border-radius:7px; background:#17243a; color:white; white-space:pre-line; overflow-wrap:anywhere; font:12px/1.6 ui-monospace,Consolas,monospace; pointer-events:none; box-shadow:0 8px 20px #17243a33; }
+.charts { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin:18px 0; }
+.charts figure:first-child { grid-column:1/-1; }
+figure { margin:0; padding:16px; background:white; border:1px solid var(--line); border-radius:10px; }
+figure svg { width:100%; height:auto; display:block; }
+footer { margin-top:24px; font-size:12px; color:var(--muted); overflow-wrap:anywhere; }
+@media(max-width:760px) {
+  main { padding:14px 12px 32px; } header { padding:18px; } h1 { font-size:22px; }
+  .cards { grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+  .card { padding:12px; } .card .v { font-size:18px; }
+  .fidelity-grid, .detail-grid, .charts { grid-template-columns:minmax(0,1fr); }
+  .cred, .prov, .fills, .event-trace, .interactive-research, .strategy-diagnostics, .report-detail { padding:14px; }
+  th, td { padding:7px; } .cred .cstat { width:64px; }
+}
+@media print {
+  @page { size:A4 landscape; margin:12mm; }
+  body { background:white; } main { max-width:none; padding:0; }
+  .report-nav, button, input, .chart-controls { display:none !important; }
+  .fill-scroll, .table-wrap, .diagnostic-scroll, pre { max-height:none; overflow:visible; }
+  .fill-scroll table, .table-wrap table, #fill-table, #event-table { min-width:0; table-layout:fixed; font-size:8px; }
+  .fill-scroll td, .table-wrap td { min-width:0; max-width:none; }
+  .fill-scroll thead th, .table-wrap thead th { position:static; white-space:normal; }
+  .card, figure { break-inside:avoid; } tr { break-inside:avoid; }
+}

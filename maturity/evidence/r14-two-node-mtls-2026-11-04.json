@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "kind": "qianxing_strategy_deployment_nodes_mtls_acceptance",
+  "run_id": "8f52f417729842ed823ae8c4783028c6",
+  "environment": "windows_local_loopback_mtls",
+  "registered_nodes": [
+    "node-east",
+    "node-west"
+  ],
+  "registered_operators": {
+    "node-east": "node-east-publisher",
+    "node-west": "node-west-publisher"
+  },
+  "effects": {
+    "external_network_access": false,
+    "venue_worker_started": false,
+    "orders_sent": false
+  },
+  "checks": {
+    "mTLS_publish_receive_identity": "passed",
+    "same_worker_id_remains_node_scoped": true,
+    "body_identity_claim_http_status": 400,
+    "future_snapshot_http_status": 400,
+    "replay_snapshot_http_status": 409,
+    "unregistered_identity_http_status": 403,
+    "fresh_to_stale_node_west": "stale",
+    "node_east_remained_fresh": true,
+    "restart_publisher_restored_freshness": true,
+    "aggregator_restart_preserved_nodes_and_deployments": true
+  },
+  "outcome": "passed",
+  "process_exit_codes": {
+    "west": 1,
+    "east": 1,
+    "aggregator": 1
+  },
+  "log_sha256": {
+    "aggregator-961051.log": "12925be2b0a86eeba347cbebe57cfdc01018bc5b924ba4dba73dab1de0da3b0b",
+    "aggregator-bb583f.log": "12925be2b0a86eeba347cbebe57cfdc01018bc5b924ba4dba73dab1de0da3b0b",
+    "east-247847.log": "65491c554e908ae73955f1d0bcb6106704d618b20e7b4180d49348b4392c168c",
+    "east-41d626.log": "670d5f518f9dfd902b13b11d139b0193147bbc0696b0d5ea99dffa9d8e57566a",
+    "west-0c8809.log": "678d62fe4b1e7ef16bfdb2a7ed2d608b5cd6794840d037153e7d4e1370046045",
+    "west-cce1da.log": "0520706c16ca6752e91494eeb1c03eda0fc28931725c0ac9f41f62b24e2b269c",
+    "west-e20270.log": "678d62fe4b1e7ef16bfdb2a7ed2d608b5cd6794840d037153e7d4e1370046045"
+  }
+}

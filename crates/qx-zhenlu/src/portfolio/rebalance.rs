@@ -46,7 +46,7 @@ pub fn rebalance(
 
     let mut targets = BTreeMap::new();
     for item in target {
-        if item.instrument.symbol.trim().is_empty()
+        if item.instrument.symbol().trim().is_empty()
             || item.instrument.venue.as_str().trim().is_empty()
         {
             return Err("empty target instrument id".into());

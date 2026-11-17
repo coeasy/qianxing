@@ -320,7 +320,7 @@ fn tick_parameter_experiment_is_shared_by_cli_http_python_and_run_lifecycle() {
             "schema_version": 1,
             "experiment_id": experiment_id,
             "base": base,
-            "parameter_space": [{"name": "quantity_raw", "values": [0, 1_000_000_000]}],
+            "parameter_space": [{"name": "fast_window", "values": [2, 4]}],
         })
         .to_string()
     };
@@ -409,7 +409,7 @@ fn tick_parameter_experiment_is_shared_by_cli_http_python_and_run_lifecycle() {
             std::time::Instant::now() < deadline,
             "depth experiment lifecycle stalled"
         );
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }
 

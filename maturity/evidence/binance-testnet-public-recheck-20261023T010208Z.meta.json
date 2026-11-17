@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "kind": "binance-spot-testnet-public-readonly-recheck",
+  "captured_at_utc": "2026-10-23T01:02:08Z",
+  "exchange": "binance",
+  "market_type": "spot",
+  "network": "official_spot_testnet",
+  "access": {
+    "credentials_present": false,
+    "private_account_calls": false,
+    "orders_sent": false,
+    "market_data_calls": "anonymous public OHLCV only"
+  },
+  "command": {
+    "cli": "ccxt-fetch-ohlcv",
+    "config": "deploy/qianxing.ccxt.binance.public.example.json",
+    "instrument": "BTC/USDT.BINANCE",
+    "timeframe": "1m",
+    "request_window": "latest 1 hour"
+  },
+  "build": {
+    "version": "qianxing 0.2.1 (build 9b6fb9f-dirty, target x86_64-pc-windows-msvc, profile release)",
+    "binary": "target/release/qx-cli.exe",
+    "binary_sha256": "46405955f680169d465a94034e98b12895ffc974f5b3333891ea2e9e9e7a74c4"
+  },
+  "data": {
+    "path": "maturity/evidence/binance-testnet-public-recheck-20261023T010208Z.json",
+    "sha256": "ec3d18adf08635e8c42198ad64530b8d30367ff09ecbb909f63c431b24f96b8d",
+    "bytes": 7047,
+    "source": "ccxt:binance:BTC/USDT:1m",
+    "instrument": "BTC/USDT.BINANCE",
+    "bars": 60,
+    "first_bar_utc": "2026-10-23T00:03:00Z",
+    "last_bar_utc": "2026-10-23T01:02:00Z"
+  },
+  "limitations": [
+    "Anonymous public Testnet market-data read only; no account, order, recovery, or reconciliation path was exercised.",
+    "This snapshot contains current Bar values only; it is not a provider revision-history or trusted publication-time ledger.",
+    "Does not qualify to flip sandbox_tested."
+  ]
+}

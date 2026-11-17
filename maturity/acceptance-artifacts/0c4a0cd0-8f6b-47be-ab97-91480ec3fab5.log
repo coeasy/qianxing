@@ -1,0 +1,7 @@
+mutant_sha=0c38730fe87a3c0d original_sha=5ff9c858e44fa414 restored_sha=5ff9c858e44fa414
+restored_ok=True
+rc=1 ran=37 secs=82.37 verdict=Ran 37 tests in 81.940s
+   test_receipt_write_retries_a_windows_sharing_violation                         RED
+   test_receipt_write_gives_up_after_the_retry_budget_without_losing_the_receipt  RED
+   test_posix_never_retries_a_replace_permission_error                            green
+red_rows=test_receipt_write_gives_up_after_the_retry_budget_without_losing_the_receipt,test_receipt_write_retries_a_windows_sharing_violation

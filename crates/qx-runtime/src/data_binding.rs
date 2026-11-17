@@ -311,6 +311,8 @@ mod tests {
             input_event_hash: "input-1".into(),
             output_event_hash: "output-1".into(),
             runtime_version: "runtime-v1".into(),
+            canonical_run_spec_json: None,
+            canonical_run_spec_fingerprint: None,
         };
         (binding, context, run)
     }

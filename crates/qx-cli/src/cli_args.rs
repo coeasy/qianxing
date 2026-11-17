@@ -1,11 +1,11 @@
 //! clap 参数框架（V10 P2b）：命令表由本文件 `Command` 枚举派生，`cli.rs` 只保留对 `Command` 的一次显式 `match`；生成清单与显式派发逐项对账，帮助用例逐项运行真实子进程。`help`/`--help`/`-h` 进 clap 前同一条预检分支（按规范名 `help` 计一条）；`<worker>` 等必填位置参数前必须显式给 runtime 路径（带 `default_value` 的会被 Clap 判为可选）。
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 use super::cli_value_parsers::{parse_bps, parse_quantity, parse_relay_limit};
 use super::console_args::ConsoleArgs;
-use super::data_validate_args::DepthDatasetValidateArgs;
+use super::data_validate_args::{DatasetSnapshotArgs, DepthDatasetValidateArgs};
 use super::evidence_signature_args::EvidenceArgs;
 use super::report_args::ReportArgs;
 use super::storage_adopt_args::PostgresSchemaAdoptArgs;
@@ -13,6 +13,23 @@ use super::{
     app_args::AppArgs, data_validate_args::DatasetValidateArgs, parse_deploy_path,
     plan_args::PlanArgs,
 };
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum QuickstartProfile {
+    Builtin,
+    Ashare,
+    Ccxt,
+}
+
+impl QuickstartProfile {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Builtin => "builtin",
+            Self::Ashare => "ashare",
+            Self::Ccxt => "ccxt",
+        }
+    }
+}
 
 /// 使用者要敲的程序名：`#[command(name = …)]` 与所有引导文案共用这一份。不在别处再抄：`init` 的「下一步」曾印成 `qianxing …`，而装好的机器上没有那个名字，首跑第二句就是 command not found（V13 R2 #260）。
 pub(crate) const PROGRAM_NAME: &str = "qx-cli";
@@ -40,16 +57,65 @@ pub(crate) enum Command {
     #[command(name = "quickstart")]
     Quickstart {
         project: Option<PathBuf>,
+        /// 首跑场景；ashare 使用本地 A 股样例，ccxt 使用真实公开行情只读回测。
+        #[arg(long, value_enum, default_value_t = QuickstartProfile::Builtin)]
+        profile: QuickstartProfile,
+        /// 额外生成自包含 HTML 报告与三张 SVG 图表。
+        #[arg(long)]
+        html: bool,
         #[arg(long)]
         force: bool,
+        /// 选择一个内置单标的策略（如 sma_cross、macd、rsi、bollinger）。
+        #[arg(long)]
+        strategy: Option<String>,
+        /// CCXT 公共行情窗口天数（1 到 365）。
+        #[arg(long)]
+        days: Option<u32>,
+        /// CCXT 行情周期，如 1h 或 15m。
+        #[arg(long)]
+        timeframe: Option<String>,
+        /// 复现窗口的 UTC Unix 毫秒时间上限；同一值可让多所 quickstart 对齐结束 K 线。
+        #[arg(long)]
+        as_of_ms: Option<u64>,
+        /// CCXT 永续合约标的（必须含结算币和交易所后缀），默认 BTC/USDT:USDT.OKX。
+        #[arg(long)]
+        instrument: Option<String>,
+        /// 公共行情交易所：okx、binance 或 bitget。
+        #[arg(long)]
+        exchange: Option<String>,
     },
     #[command(name = "guide")]
     Guide(super::guide_args::GuideArgs),
     #[command(name = "doctor")]
     Doctor {
+        #[arg(conflicts_with = "capabilities")]
         path: Option<PathBuf>,
         #[arg(long)]
         json: bool,
+        /// Print the offline product capability catalog instead of checking a runtime configuration.
+        #[arg(long)]
+        capabilities: bool,
+        /// Show full support limits and linked maturity evidence for one stable capability ID.
+        #[arg(long, requires = "capabilities")]
+        capability_id: Option<String>,
+        /// Filter declared execution scopes by venue (for example BINANCE, OKX, BITGET).
+        #[arg(long, requires = "capabilities")]
+        venue: Option<String>,
+        /// Filter declared execution scopes by product (for example spot or perpetual).
+        #[arg(long, requires = "capabilities")]
+        product: Option<String>,
+        /// Filter by normalized account mode: cash, one_way, or hedge.
+        #[arg(long, requires = "capabilities")]
+        account_mode: Option<String>,
+        /// Filter by venue account model (for example classic, unified, or uta).
+        #[arg(long, requires = "capabilities")]
+        account_model: Option<String>,
+        /// Filter by margin mode (cash, cross, or isolated).
+        #[arg(long, requires = "capabilities")]
+        margin_mode: Option<String>,
+        /// Filter private account-read scopes (for example balance.read or account_settings.read).
+        #[arg(long, requires = "capabilities")]
+        operation: Option<String>,
     },
     #[command(name = "config")]
     Config {
@@ -112,17 +178,25 @@ pub(crate) enum Command {
         dataset_id: String,
         version: String,
         data_dir: PathBuf,
+        #[arg(long, requires = "timezone")]
+        snapshot_context: Option<PathBuf>,
+        #[arg(long, requires = "snapshot_context")]
+        timezone: Option<String>,
     },
     #[command(name = "dataset-bundle")]
     DatasetBundle {
         bundle: PathBuf,
         data_dir: PathBuf,
         bars: Option<PathBuf>,
+        #[arg(long, requires = "bars")]
+        snapshot: Option<PathBuf>,
     },
     #[command(name = "data-validate")]
     DataValidate(DatasetValidateArgs),
     #[command(name = "data-validate-depth")]
     DataValidateDepth(DepthDatasetValidateArgs),
+    #[command(name = "data-snapshot")]
+    DataSnapshot(DatasetSnapshotArgs),
     #[command(name = "plan")]
     Plan(PlanArgs),
     #[command(name = "ccxt-market-spec")]
@@ -190,6 +264,9 @@ pub(crate) enum Command {
         output: PathBuf,
         #[arg(default_value = "1m")]
         timeframe: String,
+        /// Optional DatasetManifestV2 destination (defaults beside the BarFrame).
+        #[arg(long)]
+        manifest: Option<PathBuf>,
     },
     #[command(name = "outbox-relay")]
     OutboxRelay {
@@ -266,6 +343,12 @@ pub(crate) enum Command {
     PaperE2e {
         #[arg(default_value = "deploy/qianxing.runtime.paper-strategy.example.json", value_parser = parse_deploy_path)]
         path: PathBuf,
+        /// Override the synthetic Paper E2E quote with a raw fixed-point price.
+        #[arg(long)]
+        quote_price_raw: Option<i128>,
+        /// Synthetic bid/ask quantity in raw fixed-point units (defaults to 1000 units).
+        #[arg(long)]
+        quote_qty_raw: Option<i128>,
     },
     #[command(name = "paper-check")]
     PaperCheck {
@@ -323,6 +406,40 @@ impl Command {
             }
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod plan_args_tests {
+    use super::{Cli, Command};
+    use clap::Parser;
+
+    #[test]
+    fn plan_template_flag_parses_and_cannot_be_combined_with_json() {
+        let parsed = Cli::try_parse_from([
+            "qx-cli",
+            "plan",
+            "capability",
+            "capability.json",
+            "--template",
+        ])
+        .expect("plan --template 必须可解析");
+        assert!(matches!(
+            parsed.command,
+            Some(Command::Plan(args)) if args.template && !args.json
+        ));
+        assert!(
+            Cli::try_parse_from([
+                "qx-cli",
+                "plan",
+                "capability",
+                "capability.json",
+                "--template",
+                "--json"
+            ])
+            .is_err(),
+            "模板写入和 JSON 读出不可同时请求"
+        );
     }
 }
 #[derive(Subcommand)]
@@ -428,6 +545,50 @@ pub(crate) enum StrategyCommand {
         #[arg(long = "dataset-manifest", value_name = "DATASET_MANIFEST_V2")]
         dataset_manifest: Option<PathBuf>,
     },
+    /// 从已复核的多市场深度运行产物生成内置策略预热诊断。
+    #[command(name = "diagnose-depth")]
+    DiagnoseDepth {
+        artifact: PathBuf,
+        #[arg(short = 'o', long = "output", value_name = "JSON")]
+        output: PathBuf,
+        /// 诊断 JSON 写出后立即生成对应的交互式 HTML 研究报告。
+        #[arg(long)]
+        html: bool,
+    },
+    /// 从已复核的多市场 Bar 运行产物生成所有 Rust 内置策略偏差诊断。
+    #[command(name = "diagnose-multi-bar")]
+    DiagnoseMultiBar {
+        artifact: PathBuf,
+        #[arg(short = 'o', long = "output", value_name = "JSON")]
+        output: PathBuf,
+        /// 诊断 JSON 写出后立即生成对应的交互式 HTML 研究报告。
+        #[arg(long)]
+        html: bool,
+    },
+    /// 从独立账户 Bar 批次生成逐账户 Rust 内置策略偏差诊断。
+    #[command(name = "diagnose-multi-account")]
+    DiagnoseMultiAccount {
+        artifact: PathBuf,
+        #[arg(long, value_name = "MULTI_ACCOUNT_SPEC_JSON")]
+        spec: PathBuf,
+        #[arg(short = 'o', long = "output", value_name = "JSON")]
+        output: PathBuf,
+        /// 诊断 JSON 写出后立即生成对应的交互式 HTML 研究报告。
+        #[arg(long)]
+        html: bool,
+    },
+    /// 从已验证的单标的 Bar 回测摘要和原始规格重建 Rust 内置策略偏差诊断。
+    #[command(name = "diagnose-bar")]
+    DiagnoseBar {
+        summary: PathBuf,
+        #[arg(long, value_name = "BACKTEST_SPEC_JSON")]
+        spec: PathBuf,
+        #[arg(short = 'o', long = "output", value_name = "JSON")]
+        output: PathBuf,
+        /// 诊断 JSON 写出后立即生成对应的交互式 HTML 研究报告。
+        #[arg(long)]
+        html: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -480,6 +641,9 @@ pub(crate) enum BacktestCommand {
         quantity: Option<i64>,
         #[arg(long)]
         config: Option<PathBuf>,
+        /// Use the public CCXT market metadata maker/taker defaults as the frozen backtest cost.
+        #[arg(long)]
+        use_public_default_fees: bool,
     },
     #[command(name = "book")]
     Book {

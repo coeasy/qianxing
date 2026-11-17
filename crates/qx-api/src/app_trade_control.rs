@@ -9,7 +9,7 @@ impl ApiService {
         authenticated_operator: Option<&str>,
         workflow: TradeWorkflow,
     ) -> ApiResponse {
-        let spec = match TradeControlSpec::from_json(body) {
+        let mut spec = match TradeControlSpec::from_json(body) {
             Ok(spec) => spec,
             Err(error) => return app::respond(Err(error)),
         };
@@ -20,6 +20,11 @@ impl ApiService {
             )));
         }
         let authenticated = authenticated_operator.filter(|id| !id.trim().is_empty());
+        let local_paper =
+            self.local_paper_control && authenticated.is_none() && workflow == TradeWorkflow::Paper;
+        if local_paper {
+            spec.command.operator_id = "local-paper".into();
+        }
         let granted = match (&self.policy, authenticated) {
             (Some(policy), Some(operator_id)) => match policy.permission(operator_id) {
                 Some(permission) => permission,
@@ -42,6 +47,7 @@ impl ApiService {
                     "Live 控制命令要求配置 Operator 权限策略和客户端认证",
                 )));
             }
+            (None, _) if local_paper => qx_control::Permission::Trading,
             (None, _) => spec.command.permission,
         };
         let capability = match workflow {
@@ -62,7 +68,11 @@ impl ApiService {
                 )));
             }
         };
-        self.submit_command(&command_json, ts, authenticated)
+        if local_paper {
+            self.persist_submitted_command(command, granted, ts)
+        } else {
+            self.submit_command(&command_json, ts, authenticated)
+        }
     }
 
     pub(super) fn persist_submitted_command(

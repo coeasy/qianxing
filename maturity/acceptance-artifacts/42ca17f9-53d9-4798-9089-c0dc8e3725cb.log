@@ -1,0 +1,60 @@
+{
+  "rows": {
+    "profile_builtin": {
+      "init_rc": 0,
+      "strategy_id": "strategy-builtin",
+      "dataset_bundle_path": "qianxing.dataset-bundle.bar-frame.example.json",
+      "bars_snapshot_path": "qianxing.bar-frame.example.json",
+      "backtest_rc": 0,
+      "data_fingerprint": "dataset-bundle:4ba99b02bd8a0454",
+      "fail_line": ""
+    },
+    "strategy_macd": {
+      "init_rc": 0,
+      "strategy_id": "strategy-macd",
+      "dataset_bundle_path": null,
+      "bars_snapshot_path": "qianxing.bar-frame.example.json",
+      "backtest_rc": 0,
+      "data_fingerprint": "barframe:613fdc1dc0b779e7",
+      "fail_line": ""
+    },
+    "both": {
+      "init_rc": 0,
+      "strategy_id": "strategy-macd",
+      "dataset_bundle_path": null,
+      "bars_snapshot_path": "qianxing.bar-frame.example.json",
+      "backtest_rc": 0,
+      "data_fingerprint": "barframe:613fdc1dc0b779e7",
+      "fail_line": ""
+    }
+  },
+  "faces": [
+    [
+      "strategy_id",
+      "moved",
+      {
+        "profile_builtin": "strategy-builtin",
+        "strategy_macd": "strategy-macd",
+        "both": "strategy-macd"
+      }
+    ],
+    [
+      "dataset_bundle_path",
+      "moved",
+      {
+        "profile_builtin": "qianxing.dataset-bundle.bar-frame.example.json",
+        "strategy_macd": null,
+        "both": null
+      }
+    ],
+    [
+      "bars_snapshot_path",
+      "same",
+      {
+        "profile_builtin": "qianxing.bar-frame.example.json",
+        "strategy_macd": "qianxing.bar-frame.example.json",
+        "both": "qianxing.bar-frame.example.json"
+      }
+    ]
+  ]
+}

@@ -6,6 +6,7 @@ import json
 import os
 import platform
 import subprocess
+from pathlib import Path
 
 
 def _windows_hardware_details() -> tuple[int | None, int | None, str | None, str | None]:
@@ -49,14 +50,51 @@ def _total_ram_bytes() -> int | None:
     return None
 
 
+def _linux_hardware_details(cpuinfo_text: str) -> tuple[int | None, str | None]:
+    records: list[dict[str, str]] = []
+    for block in cpuinfo_text.split("\n\n"):
+        record = {}
+        for line in block.splitlines():
+            key, separator, value = line.partition(":")
+            if separator:
+                record[key.strip()] = value.strip()
+        if record:
+            records.append(record)
+
+    processor_name = next(
+        (
+            record[key]
+            for record in records
+            for key in ("model name", "Hardware", "Processor")
+            if record.get(key)
+        ),
+        None,
+    )
+    core_keys = [(record.get("physical id"), record.get("core id")) for record in records]
+    physical_cores = None
+    if core_keys and all(socket is not None and core is not None for socket, core in core_keys):
+        physical_cores = len(set(core_keys))
+    return physical_cores, processor_name
+
+
 def hardware_fingerprint() -> dict:
     physical_cores, ram_bytes, model, processor_name = _windows_hardware_details()
+    if platform.system() == "Linux":
+        try:
+            linux_cores, linux_processor_name = _linux_hardware_details(
+                Path("/proc/cpuinfo").read_text(encoding="utf-8")
+            )
+            physical_cores = physical_cores or linux_cores
+            processor_name = processor_name or linux_processor_name
+        except OSError:
+            pass
     if ram_bytes is None:
         ram_bytes = _total_ram_bytes()
+    processor = platform.processor() or processor_name or ""
     result = {
         "os": platform.system(),
         "arch": platform.machine(),
-        "processor": platform.processor(),
+        "processor": processor,
         "logical_cpu_count": os.cpu_count(),
         "physical_core_count": physical_cores,
         "total_ram_bytes": ram_bytes,

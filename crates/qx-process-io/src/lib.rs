@@ -72,7 +72,7 @@ pub fn write_all_within_cancellable<W: Write + Send + 'static>(
 
 #[cfg(test)]
 mod tests {
-    use super::{write_all_within_cancellable, CancellableWrite};
+    use super::{write_all_within, write_all_within_cancellable, CancellableWrite};
     use std::io::{self, Write};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -113,5 +113,38 @@ mod tests {
         .expect("cancel is not a pipe error");
         assert!(matches!(outcome, CancellableWrite::Cancelled));
         assert!(released.load(Ordering::SeqCst));
+    }
+
+    #[derive(Debug)]
+    struct PanickingWriter;
+
+    impl Write for PanickingWriter {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            panic!("simulated writer thread failure");
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn writer_thread_exit_is_reported_separately_from_a_write_timeout() {
+        let error = write_all_within(
+            PanickingWriter,
+            b"payload".to_vec(),
+            Duration::from_secs(1),
+            || {},
+        )
+        .expect_err("a panicked writer must be reported as a disconnected writer thread");
+
+        assert!(
+            error.contains("写入线程退出且没有返回结果"),
+            "writer thread exit was misclassified: {error}"
+        );
+        assert!(
+            !error.contains("预算内写完"),
+            "writer thread exit must not be reported as a live, blocked writer: {error}"
+        );
     }
 }

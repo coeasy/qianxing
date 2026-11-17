@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "kind": "supplier-public-readonly-probe",
+  "observed_at_utc": "2026-10-22T07:33:34Z",
+  "venue": "binance",
+  "network": "testnet",
+  "instrument": "BTCUSDT.BINANCE",
+  "command": "cargo run -p qx-cli --quiet -- binance-public-probe testnet BTCUSDT.BINANCE",
+  "process_exit_code": 0,
+  "binary_sha256": "4167483de2215a1ab0a5ddc4db19c74884aef7a7fd8a48dbb2e19322f9188237",
+  "response": {
+    "bid_raw": 82287000000000,
+    "ask_raw": 82287010000000,
+    "bid_qty_raw": 18988060000,
+    "ask_qty_raw": 1280180000,
+    "supplier_timestamp_ms": 1792654414659
+  },
+  "credentials_present": false,
+  "orders_sent": false,
+  "sandbox_tested_flip_allowed": false,
+  "scope": "Public market-data reachability only; private account, order, recovery and reconciliation stages were not run."
+}

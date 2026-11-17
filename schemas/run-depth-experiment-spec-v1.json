@@ -155,6 +155,13 @@
             "null"
           ],
           "minimum": 0
+        },
+        "min_notional_raw": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "exact_rules": {
+          "$ref": "#/$defs/ExactTradingRules"
         }
       }
     },
@@ -598,12 +605,25 @@
         },
         "reserved_capital_raw": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 0
+        },
+        "reserved_capital_exact": {
+          "$ref": "#/$defs/ExactDecimal"
         },
         "strategy": {
           "$ref": "#/$defs/BuiltinStrategySpec"
         }
       },
+      "allOf": [
+        {
+          "if": { "required": ["reserved_capital_exact"] },
+          "then": { "properties": { "reserved_capital_raw": { "minimum": 0 } } }
+        },
+        {
+          "if": { "not": { "required": ["reserved_capital_exact"] } },
+          "then": { "properties": { "reserved_capital_raw": { "minimum": 1 } } }
+        }
+      ],
       "additionalProperties": false
     },
     "PortfolioBacktestConfig": {
@@ -619,7 +639,10 @@
         },
         "primary_reserved_capital_raw": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 0
+        },
+        "primary_reserved_capital_exact": {
+          "$ref": "#/$defs/ExactDecimal"
         },
         "additional_strategies": {
           "type": "array",
@@ -629,6 +652,16 @@
           }
         }
       },
+      "allOf": [
+        {
+          "if": { "required": ["primary_reserved_capital_exact"] },
+          "then": { "properties": { "primary_reserved_capital_raw": { "minimum": 0 } } }
+        },
+        {
+          "if": { "not": { "required": ["primary_reserved_capital_exact"] } },
+          "then": { "properties": { "primary_reserved_capital_raw": { "minimum": 1 } } }
+        }
+      ],
       "additionalProperties": false
     },
     "ProtectiveExitSpec": {
@@ -1304,7 +1337,15 @@
             "period",
             "threshold_bps",
             "quantity_raw",
-            "target_kelly_fraction_bps"
+            "target_notional_raw",
+            "target_available_margin_bps",
+            "target_volatility_bps",
+            "target_kelly_fraction_bps",
+            "market_making_spread_bps",
+            "market_making_quote_qty_raw",
+            "market_making_max_inventory_raw",
+            "market_making_tick_size_raw",
+            "market_making_inventory_skew_bps"
           ]
         },
         "values": {
@@ -1317,6 +1358,53 @@
             "minimum": -170141183460469231731687303715884105728,
             "maximum": 170141183460469231731687303715884105727
           }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExactDecimal": {
+      "type": "object",
+      "required": [
+        "coefficient",
+        "scale"
+      ],
+      "properties": {
+        "coefficient": {
+          "type": "string",
+          "pattern": "^-?(0|[1-9][0-9]*)$"
+        },
+        "scale": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExactTradingRules": {
+      "type": "object",
+      "required": [
+        "contract_size",
+        "price_tick",
+        "quantity_step",
+        "minimum_quantity",
+        "minimum_notional"
+      ],
+      "properties": {
+        "contract_size": {
+          "$ref": "#/$defs/ExactDecimal"
+        },
+        "price_tick": {
+          "$ref": "#/$defs/ExactDecimal"
+        },
+        "quantity_step": {
+          "$ref": "#/$defs/ExactDecimal"
+        },
+        "minimum_quantity": {
+          "$ref": "#/$defs/ExactDecimal"
+        },
+        "minimum_notional": {
+          "$ref": "#/$defs/ExactDecimal"
         }
       },
       "additionalProperties": false

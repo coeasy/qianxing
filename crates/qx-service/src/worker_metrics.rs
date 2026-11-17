@@ -20,18 +20,8 @@ pub fn worker_metrics_path(config: &RuntimeConfig, worker_id: &str) -> PathBuf {
 }
 
 pub fn write_worker_metrics(path: &Path, body: &str) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("worker metrics 路径没有父目录: {}", path.display()))?;
-    std::fs::create_dir_all(parent)
-        .map_err(|error| format!("创建 worker metrics 目录失败: {error}"))?;
-    let temporary = path.with_extension(format!("prom.tmp.{}", std::process::id()));
-    std::fs::write(&temporary, body)
-        .map_err(|error| format!("写入 worker metrics 临时文件失败: {error}"))?;
-    std::fs::rename(&temporary, path).map_err(|error| {
-        let _ = std::fs::remove_file(&temporary);
-        format!("提交 worker metrics 文件失败: {error}")
-    })
+    qx_core::atomic_file::write_atomic_file(path, body.as_bytes())
+        .map_err(|error| format!("提交 worker metrics 文件失败 {}: {error}", path.display()))
 }
 
 pub fn read_worker_metrics(directory: &Path, now_ms: u64, stale_after_ms: u64) -> String {
@@ -118,10 +108,43 @@ pub fn worker_metrics_unhealthy(content: &str, now_ms: u64, stale_after_ms: u64)
 
 #[cfg(test)]
 mod label_tests {
-    use super::prometheus_label;
+    use super::{prometheus_label, write_worker_metrics};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn scratch_dir() -> std::path::PathBuf {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        std::env::temp_dir().join(format!(
+            "qx-worker-metrics-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
 
     #[test]
     fn prometheus_labels_escape_control_characters() {
         assert_eq!(prometheus_label("a\\b\"c\nd\re"), "a\\\\b\\\"c\\nd\\re");
+    }
+
+    #[test]
+    fn worker_metrics_updates_existing_file_atomically() {
+        let root = scratch_dir();
+        let path = root.join("worker.prom");
+        write_worker_metrics(&path, "qx_worker_up 0\n").unwrap();
+        write_worker_metrics(&path, "qx_worker_up 1\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "qx_worker_up 1\n");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn worker_metrics_failure_preserves_existing_destination() {
+        let root = scratch_dir();
+        let path = root.join("worker.prom");
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::write(path.join("sentinel"), b"keep").unwrap();
+
+        assert!(write_worker_metrics(&path, "qx_worker_up 1\n").is_err());
+        assert_eq!(std::fs::read(path.join("sentinel")).unwrap(), b"keep");
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

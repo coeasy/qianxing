@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-10",
+  "purpose": "Hosted CI acceptance for the 0.4.0 release candidate after account valuation and architecture-gate alignment",
+  "source": {
+    "commit": "47021fee02948a1c93021a1ccd072bba312d59cf",
+    "branch": "codex/release-windows-longpaths",
+    "pull_request": "https://github.com/coeasy/qianxing/pull/3",
+    "run_id": 42794725450,
+    "run_url": "https://github.com/coeasy/qianxing/actions/runs/42794725450",
+    "event": "pull_request"
+  },
+  "result": {
+    "workflow_conclusion": "success",
+    "jobs_total": 30,
+    "jobs_succeeded": 30,
+    "jobs_failed": 0,
+    "jobs_cancelled": 0
+  },
+  "acceptance": {
+    "rust_workspace": "success",
+    "feature_matrix": ["sqlite", "postgres", "nats", "sqlite+bench-prepared-evaluation"],
+    "architecture_shards": "4/4 success",
+    "cpp_sdk": ["ubuntu-latest", "macos-latest", "windows-latest"],
+    "python_wheels": {
+      "platforms": ["ubuntu-latest", "macos-latest", "windows-latest"],
+      "python_versions": ["3.10", "3.11", "3.12", "3.13"],
+      "jobs_succeeded": 12
+    },
+    "linux_postgres_storage_recovery": {
+      "conclusion": "success",
+      "artifact": {
+        "name": "strategy-storage-recovery-linux",
+        "id": 13754705278,
+        "digest": "sha256:0270d810be151925ecb6f4924256987c98aa255c6a195af542dd851db81df29f"
+      }
+    },
+    "backend_service_contracts": "success",
+    "clean_linux_install": {
+      "conclusion": "success",
+      "artifact": {
+        "name": "clean-install-acceptance-linux-py312",
+        "id": 13754360585,
+        "digest": "sha256:251ba67d00d48b4309a6b28d5011677a675def4c2bd0dc300bd9231fc1421e1f"
+      }
+    },
+    "linux_host_capabilities": {
+      "conclusion": "success",
+      "artifact": {
+        "name": "host-capability-acceptance-linux",
+        "id": 13754515330,
+        "digest": "sha256:b79425dfa2c429c9443bacb413171f28c90b553f1e7f438f6554cf5066bcb73e"
+      }
+    },
+    "macos_process_identity": {
+      "conclusion": "success",
+      "artifact": {
+        "name": "process-identity-acceptance-macos-py312",
+        "id": 13754572751,
+        "digest": "sha256:509f4bbdc9aea86323b9eb33992b071f0c3f3dfba545f4e716702cd5c523c4f4"
+      }
+    },
+    "performance_regression_gate": {
+      "conclusion": "success",
+      "artifact": {
+        "name": "performance-baseline",
+        "id": 13754738389,
+        "digest": "sha256:ae2a33b02378eae20617b216affdfe0517ab9fe5b17214fe639da6f5e2c6e380"
+      }
+    },
+    "venue_testnet": {
+      "offline_fail_closed_checks": "success",
+      "authenticated_testnet_roundtrip": "skipped",
+      "reason": "Testnet credentials were not available to the workflow."
+    }
+  },
+  "release_boundary": {
+    "tag_workflow_run": false,
+    "github_release_published": false,
+    "crates_io_published": false,
+    "pypi_release_published": false,
+    "production_approval": false,
+    "notes": "This pull-request CI run validates the source revision and hosted acceptance jobs. It does not establish authenticated testnet or production approval."
+  }
+}

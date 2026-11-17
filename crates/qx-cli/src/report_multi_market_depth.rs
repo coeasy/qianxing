@@ -1,11 +1,19 @@
 //! Quality and portfolio readout for persisted multi-market depth runs.
 
-use crate::report_multi_market_depth_render::{
-    render_comparison_html, render_html, strval, workbook_rows,
-};
-use crate::report_output_paths::same_output_target;
+pub(super) use crate::report_output_paths::same_output_target;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
+
+mod diagnostics;
+mod projection;
+mod publication;
+use diagnostics::{bind_depth_comparison_diagnostics, bind_market_depth_diagnostics};
+#[cfg(test)]
+use diagnostics::{bind_market_depth_diagnostics_value, parse_depth_comparison_diagnostics};
+pub(crate) use diagnostics::{
+    generate_builtin_depth_diagnostics, verify_strategy_diagnostics_for_evidence,
+};
+use projection::{build_report, market_instruments};
 
 fn read_artifact(path: &Path) -> Result<Option<Value>, String> {
     if !path.is_file() {
@@ -17,6 +25,7 @@ fn read_artifact(path: &Path) -> Result<Option<Value>, String> {
         return Ok(None);
     };
     if value.pointer("/outcome/shared_result_hash").is_some()
+        && value.pointer("/outcome/pending_orders").is_some()
         && value.get("market_data").and_then(Value::as_array).is_some()
         && value.pointer("/spec/markets").is_some()
     {
@@ -26,6 +35,8 @@ fn read_artifact(path: &Path) -> Result<Option<Value>, String> {
     }
 }
 
+// Keep CLI report options explicit; the caller owns their parsing and validation.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn maybe_run(
     path: &Path,
     as_json: bool,
@@ -33,13 +44,20 @@ pub(crate) fn maybe_run(
     evidence: bool,
     output: Option<&Path>,
     against: &[PathBuf],
+    benchmark_bars: Option<&Path>,
+    benchmark_calendar: Option<&Path>,
+    benchmark_csv: Option<&Path>,
     xlsx: Option<&Path>,
+    strategy_diagnostics: Option<&Path>,
 ) -> Result<bool, String> {
     let Some(artifact) = read_artifact(path)? else {
         return Ok(false);
     };
-    if evidence {
-        return Err("多市场深度运行请使用 `evidence pack-multi-market-run` 生成运行证据包".into());
+    if evidence && !against.is_empty() {
+        return Err("多市场深度 EvidenceBundle 只支持单次运行，不能与 --against 一起使用".into());
+    }
+    if strategy_diagnostics.is_some() && !html && !as_json && xlsx.is_none() {
+        return Err("--strategy-diagnostics 必须与 --html、--json 或 --xlsx 一起使用".into());
     }
     if output.is_some() && !html {
         return Err("--output 只能与 --html 一起使用".into());
@@ -49,7 +67,18 @@ pub(crate) fn maybe_run(
     }) {
         return Err("HTML 与 XLSX 报告必须使用不同输出路径".into());
     }
-    let mut reports = vec![build_report(path, &artifact)?];
+    if benchmark_csv.is_some_and(|csv| {
+        output.is_some_and(|html| same_output_target(csv, html))
+            || xlsx.is_some_and(|workbook| same_output_target(csv, workbook))
+    }) {
+        return Err("HTML、XLSX 和基准 CSV 必须使用不同输出路径".into());
+    }
+    let include_verified_benchmark_equity = benchmark_bars.is_some();
+    let mut reports = vec![build_report(
+        path,
+        &artifact,
+        include_verified_benchmark_equity,
+    )?];
     let mut seen = std::collections::BTreeSet::from([path
         .canonicalize()
         .unwrap_or_else(|_| path.to_path_buf())]);
@@ -69,12 +98,17 @@ pub(crate) fn maybe_run(
                 candidate.display()
             ));
         };
-        reports.push(build_report(candidate, &value)?);
+        reports.push(build_report(
+            candidate,
+            &value,
+            include_verified_benchmark_equity,
+        )?);
     }
-    let source_paths = reports
+    let mut source_paths = reports
         .iter()
         .filter_map(|report| report["summary_path"].as_str().map(PathBuf::from))
         .collect::<Vec<_>>();
+    source_paths.extend(strategy_diagnostics.map(Path::to_path_buf));
     let comparison = reports.len() > 1;
     if comparison {
         let fingerprint = reports[0]["data_fingerprint"].clone();
@@ -99,124 +133,74 @@ pub(crate) fn maybe_run(
                 .then_with(|| left["run_id"].as_str().cmp(&right["run_id"].as_str()))
         });
     }
-    let report = if comparison {
-        json!({"comparison_kind":"same_multi_market_depth_input","data_fingerprint":reports[0]["data_fingerprint"],"markets":market_instruments(&reports[0])?,"ranking":reports.iter().enumerate().map(|(index, report)|json!({"rank":index+1,"run_id":report["run_id"],"return_bps":report["return_bps"],"max_drawdown_bps":report["max_drawdown_bps"],"successful_fills":report["successful_fills"],"result_hash":report["result_hash"],"summary_path":report["summary_path"]})).collect::<Vec<_>>()})
+    if let Some(benchmark_path) = benchmark_bars {
+        for item in &mut reports {
+            let portfolio = crate::report_benchmark::portfolio_from_report_equity(
+                &item["verified_benchmark_equity"],
+            )?;
+            let window = (
+                portfolio.first().ok_or("多市场深度权益序列为空")?.0,
+                portfolio.last().ok_or("多市场深度权益序列为空")?.0,
+            );
+            let return_bps = item["return_bps"]
+                .as_i64()
+                .ok_or("多市场深度报告 return_bps 非法，不能计算基准超额收益")?;
+            item["benchmark_analysis"] = crate::report_benchmark::benchmark_analysis_for_portfolio(
+                &portfolio,
+                benchmark_path,
+                return_bps,
+                benchmark_calendar,
+                window,
+            )?;
+            item.as_object_mut()
+                .ok_or("多市场深度报告 projection 必须是对象")?
+                .remove("verified_benchmark_equity");
+        }
+    }
+    source_paths.extend(benchmark_bars.map(Path::to_path_buf));
+    source_paths.extend(benchmark_calendar.map(Path::to_path_buf));
+    if comparison {
+        if let Some(diagnostics_path) = strategy_diagnostics {
+            bind_depth_comparison_diagnostics(diagnostics_path, &mut reports)?;
+        }
+    }
+    let mut report = if comparison {
+        json!({"comparison_kind":"same_multi_market_depth_input","data_fingerprint":reports[0]["data_fingerprint"],"markets":market_instruments(&reports[0])?,"ranking":reports.iter().enumerate().map(|(index, report)|json!({"rank":index+1,"run_id":report["run_id"],"return_bps":report["return_bps"],"max_drawdown_bps":report["max_drawdown_bps"],"successful_fills":report["successful_fills"],"result_hash":report["result_hash"],"summary_path":report["summary_path"],"benchmark_analysis":report.get("benchmark_analysis").cloned().unwrap_or(Value::Null)})).collect::<Vec<_>>(),"runs":reports.iter().map(|report|json!({"run_id":report["run_id"],"benchmark_analysis":report.get("benchmark_analysis").cloned().unwrap_or(Value::Null),"market_strategy_diagnostics":report.get("market_strategy_diagnostics").cloned().unwrap_or(Value::Null)})).collect::<Vec<_>>()})
     } else {
         reports.remove(0)
     };
-    let html_path = if html {
-        let target = output.map(Path::to_path_buf).unwrap_or_else(|| {
-            let name = path
-                .file_name()
-                .and_then(|value| value.to_str())
-                .unwrap_or("multi-market-depth.json");
-            path.with_file_name(name.replace(
-                ".multi-market-depth.json",
-                if comparison {
-                    ".multi-market-depth.comparison.html"
-                } else {
-                    ".multi-market-depth.report.html"
-                },
-            ))
-        });
-        if !target
-            .extension()
-            .and_then(|value| value.to_str())
-            .is_some_and(|value| {
-                value.eq_ignore_ascii_case("html") || value.eq_ignore_ascii_case("htm")
-            })
-        {
-            return Err(format!(
-                "HTML 报告输出路径必须以 .html 或 .htm 结尾: {}",
-                target.display()
-            ));
-        }
-        if source_paths
-            .iter()
-            .any(|source| same_output_target(&target, source))
-        {
-            return Err("HTML 输出不能覆盖多市场深度输入产物".into());
-        }
-        let rendered = if comparison {
-            render_comparison_html(&report)
-        } else {
-            render_html(&report)
-        };
-        if let Some(parent) = target
-            .parent()
-            .filter(|value| !value.as_os_str().is_empty())
-        {
-            std::fs::create_dir_all(parent)
-                .map_err(|error| format!("创建报告目录失败: {error}"))?;
-        }
-        qx_app::artifact_store::sink::publish(
-            &target,
-            &rendered,
-            qx_app::artifact_store::sink::PublishMode::Overwrite,
-        )
-        .map_err(|error| format!("发布多市场深度 HTML 失败: {error}"))?;
-        Some(target)
-    } else {
-        None
-    };
-    let xlsx_path = if let Some(target) = xlsx {
-        if source_paths
-            .iter()
-            .any(|source| same_output_target(target, source))
-        {
-            return Err("XLSX 输出不能覆盖多市场深度输入产物".into());
-        }
-        if comparison {
-            let overview = vec![
-                vec!["Field".into(), "Value".into()],
-                vec![
-                    "Data fingerprint".into(),
-                    strval(&report["data_fingerprint"]),
-                ],
-                vec![
-                    "Comparison kind".into(),
-                    "same_multi_market_depth_input".into(),
-                ],
-            ];
-            let mut ranking = vec![vec![
-                "rank".into(),
-                "run_id".into(),
-                "return_bps".into(),
-                "max_drawdown_bps".into(),
-                "successful_fills".into(),
-                "result_hash".into(),
-                "summary_path".into(),
-            ]];
-            for row in report["ranking"].as_array().into_iter().flatten() {
-                ranking.push(
-                    [
-                        "rank",
-                        "run_id",
-                        "return_bps",
-                        "max_drawdown_bps",
-                        "successful_fills",
-                        "result_hash",
-                        "summary_path",
-                    ]
-                    .into_iter()
-                    .map(|key| strval(&row[key]))
+    let mut diagnostics_payload = None;
+    if !comparison {
+        if let Some(diagnostics_path) = strategy_diagnostics {
+            let bound = bind_market_depth_diagnostics(diagnostics_path, &artifact, &report)?;
+            diagnostics_payload = Some(Value::Array(
+                bound
+                    .as_array()
+                    .ok_or("多市场深度诊断结果必须是数组")?
+                    .iter()
+                    .map(|item| item["report"].clone())
                     .collect(),
-                );
-            }
-            Some(
-                crate::report_xlsx::write_multi_market_depth_comparison_xlsx(
-                    target, overview, ranking,
-                )?,
-            )
-        } else {
-            let (overview, quality) = workbook_rows(&report);
-            Some(crate::report_xlsx::write_multi_market_depth_xlsx(
-                target, overview, quality,
-            )?)
+            ));
+            report["market_strategy_diagnostics"] = bound;
         }
-    } else {
-        None
-    };
+    }
+    let published = publication::publish_report(
+        &report,
+        comparison,
+        path,
+        &source_paths,
+        html,
+        output,
+        xlsx,
+        benchmark_csv,
+        evidence,
+        strategy_diagnostics,
+        diagnostics_payload.as_ref(),
+    )?;
+    let html_path = published.html_path;
+    let xlsx_path = published.xlsx_path;
+    let benchmark_csv_path = published.benchmark_csv_path;
+    let evidence_path = published.evidence_path;
     if as_json {
         let mut value = json!({"schema_version":1,"report_kind":if comparison {"multi_market_depth_comparison"} else {"multi_market_depth"},"report":report});
         if let Some(path) = html_path {
@@ -224,6 +208,12 @@ pub(crate) fn maybe_run(
         }
         if let Some(path) = xlsx_path {
             value["generated_artifacts"]["xlsx"] = json!(path);
+        }
+        if let Some(path) = benchmark_csv_path {
+            value["generated_artifacts"]["benchmark_csv"] = json!(path);
+        }
+        if let Some(path) = evidence_path {
+            value["generated_artifacts"]["evidence"] = json!(path);
         }
         println!(
             "{}",
@@ -235,6 +225,12 @@ pub(crate) fn maybe_run(
         }
         if let Some(path) = xlsx_path {
             println!("[Report] xlsx={}", path.display());
+        }
+        if let Some(path) = evidence_path {
+            println!("[Report] evidence={}", path.display());
+        }
+        if let Some(path) = benchmark_csv_path {
+            println!("[Report] benchmark_csv={}", path.display());
         }
         if comparison {
             println!(
@@ -255,194 +251,177 @@ pub(crate) fn maybe_run(
     Ok(true)
 }
 
-fn market_instruments(report: &Value) -> Result<Vec<Value>, String> {
-    report
-        .get("markets")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "多市场深度报告缺少 markets 列表".to_string())?
-        .iter()
-        .map(|market| {
-            market
-                .get("instrument")
-                .cloned()
-                .ok_or_else(|| "多市场深度报告的市场条目缺少 instrument".to_string())
-        })
-        .collect()
-}
-
-fn build_report(path: &Path, artifact: &Value) -> Result<Value, String> {
-    let outcome = artifact
-        .get("outcome")
-        .ok_or("多市场深度产物缺少 outcome")?;
-    let markets = artifact
-        .get("market_data")
-        .and_then(Value::as_array)
-        .ok_or("多市场深度产物缺少 market_data")?;
-    let mut rows = Vec::with_capacity(markets.len());
-    let mut data_hasher = qx_core::Fnv1a::new();
-    let mut input_components = std::collections::BTreeMap::new();
-    for market in markets {
-        let instrument = market
-            .get("instrument")
-            .and_then(Value::as_str)
-            .ok_or("market_data 缺少 instrument")?;
-        let depth_path = market
-            .get("path")
-            .and_then(Value::as_str)
-            .ok_or("market_data 缺少 depth path")?;
-        let frame = crate::read_depth_frame_for_backtest(Path::new(depth_path))?;
-        if frame.instrument.to_string() != instrument
-            || market.get("content_hash").and_then(Value::as_str)
-                != Some(format!("{:016x}", frame.input_hash()).as_str())
-            || market.get("source").and_then(Value::as_str) != Some(frame.source.as_str())
-            || market.get("snapshot_count").and_then(Value::as_u64)
-                != Some(frame.snapshots.len() as u64)
-        {
-            return Err(format!("{instrument} 深度输入身份与运行产物不一致"));
-        }
-        let tier = market
-            .get("data_tier")
-            .and_then(Value::as_str)
-            .ok_or("market_data 缺少 data_tier")?;
-        if !matches!(tier, "l1" | "l2") {
-            return Err(format!("{instrument} 深度档位非法"));
-        }
-        data_hasher.write_text(instrument);
-        data_hasher.write_text(tier);
-        data_hasher.write_text(&frame.source);
-        data_hasher.write_u64(frame.input_hash());
-        input_components.insert(
-            format!("depthframe:{instrument}"),
-            format!("depth:{tier}:{}:{:016x}", frame.source, frame.input_hash()),
-        );
-        let quality = match market
-            .get("dataset_quality")
-            .filter(|value| !value.is_null())
-        {
-            Some(quality) => Some(verify_quality(
-                instrument, depth_path, tier, &frame, quality,
-            )?),
-            None => None,
-        };
-        if let Some(quality) = &quality {
-            let fingerprint = quality["manifest_fingerprint"]
-                .as_str()
-                .ok_or("质量清单缺少 fingerprint")?;
-            data_hasher.write_text(fingerprint);
-            input_components.insert(
-                format!("dataset-quality:{instrument}"),
-                fingerprint.to_string(),
-            );
-        }
-        rows.push(json!({
-            "instrument": instrument,
-            "data_tier": tier,
-            "source": frame.source,
-            "content_hash": market["content_hash"],
-            "snapshot_count": frame.snapshots.len(),
-            "fills": artifact.pointer(&format!("/per_market_fills/{instrument}")).cloned().unwrap_or(json!(0)),
-            "dataset_quality": quality,
-        }));
-    }
-    let composed = format!("{:016x}", data_hasher.finish());
-    let run_manifest_path = artifact["run_manifest_path"]
-        .as_str()
-        .ok_or("多市场深度产物缺少 RunManifest 路径")?;
-    let manifest = qx_core::RunManifest::from_json(
-        &std::fs::read_to_string(run_manifest_path)
-            .map_err(|error| format!("读取 RunManifest 失败: {error}"))?,
-    )?;
-    if composed != outcome["data_fingerprint"].as_str().unwrap_or_default()
-        || manifest.data_fingerprint != composed
-        || manifest.input_components != input_components
-        || manifest.result_hash != outcome["shared_result_hash"].as_str().unwrap_or_default()
-    {
-        return Err("多市场深度报告输入与 RunManifest 身份不一致".into());
-    }
-    Ok(json!({
-        "run_id": outcome["run_id"], "account_id": outcome["account_id"],
-        "result_hash": outcome["shared_result_hash"], "data_fingerprint": outcome["data_fingerprint"],
-        "markets_total": outcome["markets_total"], "successful_fills": outcome["successful_fills"],
-        "pending_orders": outcome["pending_orders"], "equity_points": outcome["equity_points"],
-        "final_equity_raw": outcome["final_equity_raw"], "return_bps": outcome["return_bps"],
-        "max_drawdown_bps": outcome["max_drawdown_bps"], "summary_path": path, "markets": rows
-    }))
-}
-
-fn verify_quality(
-    instrument: &str,
-    frame_path: &str,
-    tier: &str,
-    frame: &qx_xingban::DepthFrame,
-    quality: &Value,
-) -> Result<Value, String> {
-    let manifest_path = quality
-        .get("manifest_path")
-        .and_then(Value::as_str)
-        .ok_or("质量摘要缺少 manifest_path")?;
-    let bytes = std::fs::read(manifest_path)
-        .map_err(|error| format!("读取 {instrument} 质量清单失败: {error}"))?;
-    let sha = qx_data::sha256_hex_bytes(&bytes);
-    if quality.get("manifest_sha256").and_then(Value::as_str) != Some(sha.as_str()) {
-        return Err(format!("{instrument} 清单 SHA-256 不匹配"));
-    }
-    let manifest = qx_data::DatasetManifestV2::from_json(
-        std::str::from_utf8(&bytes).map_err(|error| error.to_string())?,
-    )?;
-    let expected_tier = if tier == "l1" {
-        qx_data::DatasetTier::L1
-    } else {
-        qx_data::DatasetTier::L2
+#[cfg(test)]
+mod diagnostics_tests {
+    use super::{
+        bind_depth_comparison_diagnostics, bind_market_depth_diagnostics_value,
+        parse_depth_comparison_diagnostics,
     };
-    let input_hash = qx_strategy::file_digest::sha256_file_hex(Path::new(frame_path))?;
-    let count = u64::try_from(frame.snapshots.len()).map_err(|_| "DepthFrame 快照数溢出")?;
-    let interval = manifest
-        .quality_report
-        .interval_ms
-        .filter(|value| *value > 0)
-        .ok_or("质量清单缺少正 interval_ms")?;
-    let (duplicates, out_of_order, missing) = frame
-        .snapshots
-        .windows(2)
-        .try_fold((0_u64, 0_u64, 0_u64), |(d, o, m), pair| {
-            if pair[1].ts < pair[0].ts {
-                Some((d, o.checked_add(1)?, m))
-            } else if pair[1].ts == pair[0].ts {
-                Some((d.checked_add(1)?, o, m))
-            } else {
-                Some((
-                    d,
-                    o,
-                    m.checked_add((pair[1].ts - pair[0].ts).div_ceil(interval) - 1)?,
-                ))
-            }
-        })
-        .ok_or("深度质量统计溢出")?;
-    if manifest.instrument != instrument
-        || manifest.tier != expected_tier
-        || manifest.provider_version != qx_data::DEPTHFRAME_DATASET_VERSION
-        || manifest.content_hash != input_hash
-        || manifest.dataset.fingerprint != format!("{:016x}", frame.input_hash())
-        || manifest.dataset.source != frame.source
-        || manifest.dataset.schema_version != frame.schema_version
-        || manifest.dataset.start_timestamp != frame.snapshots.first().ok_or("DepthFrame 为空")?.ts
-        || manifest.dataset.end_timestamp != frame.snapshots.last().ok_or("DepthFrame 为空")?.ts
-        || manifest.quality_report.row_count != count
-        || manifest.quality_report.usable_tiers != [tier]
-        || manifest.quality_report.duplicate_rows != duplicates
-        || manifest.quality_report.out_of_order_rows != out_of_order
-        || manifest.quality_report.missing_intervals != missing
-        || quality.get("manifest_fingerprint").and_then(Value::as_str)
-            != Some(manifest.fingerprint()?.as_str())
-        || quality.get("quality_report")
-            != Some(
-                &serde_json::to_value(&manifest.quality_report)
-                    .map_err(|error| error.to_string())?,
-            )
-    {
-        return Err(format!("{instrument} 质量清单与 DepthFrame 不一致"));
+    use serde_json::{json, Value};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn inputs() -> (Value, Value, Value) {
+        let artifact = json!({
+            "spec": {"markets": [{
+                "instrument": "BTCUSDT.BINANCE",
+                "data_tier": "l2",
+                "strategy": {"strategy_id": "sma-btc"}
+            }]},
+            "strategy_identities": []
+        });
+        let report = json!({
+            "markets": [{
+                "instrument": "BTCUSDT.BINANCE",
+                "data_fingerprint": "depth:l2:binance:abcd",
+                "snapshot_count": 3,
+                "source_end_ts": 300
+            }]
+        });
+        let diagnostics = json!([{
+            "schema_version": 1,
+            "kind": "qianxing-strategy-bias-diagnostics",
+            "strategy_id": "sma-btc",
+            "instrument": "BTCUSDT.BINANCE",
+            "data_fingerprint": "depth:l2:binance:abcd",
+            "input_kind": "depth_midpoint_bar",
+            "input_events": 3,
+            "as_of": 300,
+            "lookahead": {"status": "no_change_detected"},
+            "startup": {"status": "stable_across_requested_windows"}
+        }]);
+        (artifact, report, diagnostics)
     }
-    Ok(
-        json!({"manifest_fingerprint": manifest.fingerprint()?, "manifest_sha256": sha, "quality_report": manifest.quality_report, "status": if missing + duplicates + out_of_order == 0 {"clean"} else {"issues"}}),
-    )
+
+    #[test]
+    fn depth_diagnostic_attachment_binds_market_strategy_and_event_coverage() {
+        let (artifact, report, diagnostics) = inputs();
+        let bound = bind_market_depth_diagnostics_value(&diagnostics, &artifact, &report)
+            .expect("matching diagnostic attachment");
+        assert_eq!(bound[0]["identity_bound"], true);
+        assert_eq!(bound[0]["report"]["input_events"], 3);
+
+        let mut rendered_report = report;
+        rendered_report["run_id"] = json!("run-1");
+        rendered_report["result_hash"] = json!("result-1");
+        rendered_report["markets_total"] = json!(1);
+        rendered_report["successful_fills"] = json!(0);
+        rendered_report["pending_orders"] = json!(0);
+        rendered_report["equity_points"] = json!(1);
+        rendered_report["final_equity_raw"] = json!(100);
+        rendered_report["return_bps"] = json!(0);
+        rendered_report["max_drawdown_bps"] = json!(0);
+        rendered_report["market_strategy_diagnostics"] = bound;
+        let html = crate::report_multi_market_depth_render::render_html(&rendered_report);
+        assert!(html.contains("diagnostic-filter"));
+        assert!(html.contains("BTCUSDT.BINANCE"));
+        assert!(html.contains("stable_across_requested_windows"));
+    }
+
+    #[test]
+    fn depth_diagnostic_attachment_rejects_wrong_coverage_or_strategy_slot() {
+        let (artifact, report, mut diagnostics) = inputs();
+        diagnostics[0]["input_events"] = json!(2);
+        assert!(
+            bind_market_depth_diagnostics_value(&diagnostics, &artifact, &report)
+                .unwrap_err()
+                .contains("事件数")
+        );
+
+        let (_, report, mut diagnostics) = inputs();
+        diagnostics[0]["strategy_id"] = json!("other-strategy");
+        assert!(
+            bind_market_depth_diagnostics_value(&diagnostics, &artifact, &report)
+                .unwrap_err()
+                .contains("策略槽")
+        );
+
+        let (_, report, mut diagnostics) = inputs();
+        diagnostics[0]["input_kind"] = json!("order_book");
+        assert!(
+            bind_market_depth_diagnostics_value(&diagnostics, &artifact, &report)
+                .unwrap_err()
+                .contains("输入形态")
+        );
+    }
+
+    #[test]
+    fn depth_comparison_diagnostics_are_bound_by_exact_run_identity() {
+        let (mut artifact, mut report, diagnostics) = inputs();
+        artifact["spec"]["run_id"] = json!("run-alpha");
+        artifact["outcome"] = json!({"shared_result_hash":"hash-alpha","pending_orders":[]});
+        artifact["market_data"] = json!([]);
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after unix epoch")
+            .as_nanos();
+        let summary_path = std::env::temp_dir().join(format!(
+            "qx-depth-comparison-{nonce}.multi-market-depth.json"
+        ));
+        std::fs::write(
+            &summary_path,
+            serde_json::to_vec(&artifact).expect("serialize summary fixture"),
+        )
+        .expect("write summary fixture");
+        report["run_id"] = json!("run-alpha");
+        report["summary_path"] = json!(summary_path.to_string_lossy());
+        let mut reports = vec![report];
+        let payload = json!({
+            "schema_version": 1,
+            "kind": "qianxing-multi-market-depth-diagnostic-comparison",
+            "runs": [{"run_id":"run-alpha","diagnostics":diagnostics}]
+        });
+        let parsed = parse_depth_comparison_diagnostics(&payload).expect("parse comparison input");
+        assert_eq!(parsed.len(), 1);
+        let diagnostics_path = summary_path.with_extension("diagnostics.json");
+        std::fs::write(
+            &diagnostics_path,
+            serde_json::to_vec(&payload).expect("serialize comparison diagnostics"),
+        )
+        .expect("write comparison diagnostics");
+        bind_depth_comparison_diagnostics(&diagnostics_path, &mut reports)
+            .expect("bind per-run diagnostic to reopened summary");
+        assert_eq!(
+            reports[0]["market_strategy_diagnostics"][0]["identity_bound"],
+            true
+        );
+        assert_eq!(
+            reports[0]["market_strategy_diagnostics"][0]["report"]["input_events"],
+            3
+        );
+
+        let html = crate::report_multi_market_depth_render::render_comparison_html(&json!({
+            "data_fingerprint":"same-input",
+            "ranking":[{"rank":1,"run_id":"run-alpha","return_bps":25,"max_drawdown_bps":4,"successful_fills":2,"result_hash":"hash-alpha"}],
+            "runs":[{"run_id":"run-alpha","market_strategy_diagnostics":reports[0]["market_strategy_diagnostics"]}]
+        }));
+        assert!(html.contains("comparison-diagnostic-filter"));
+        assert!(html.contains("run-alpha"));
+        assert!(html.contains("stable_across_requested_windows"));
+        let _ = std::fs::remove_file(summary_path);
+        let _ = std::fs::remove_file(diagnostics_path);
+    }
+
+    #[test]
+    fn depth_comparison_diagnostics_reject_duplicate_or_missing_run_ids() {
+        let mut duplicate = json!({
+            "schema_version":1,
+            "kind":"qianxing-multi-market-depth-diagnostic-comparison",
+            "runs":[
+                {"run_id":"run-alpha","diagnostics":[]},
+                {"run_id":"run-alpha","diagnostics":[]}
+            ]
+        });
+        assert!(parse_depth_comparison_diagnostics(&duplicate)
+            .unwrap_err()
+            .contains("重复 run_id"));
+        duplicate["runs"] = json!([{"run_id":"run-alpha","diagnostics":[]}]);
+        assert_eq!(
+            parse_depth_comparison_diagnostics(&duplicate)
+                .unwrap()
+                .len(),
+            1
+        );
+        duplicate["kind"] = json!("unknown");
+        assert!(parse_depth_comparison_diagnostics(&duplicate).is_err());
+    }
 }

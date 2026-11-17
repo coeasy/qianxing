@@ -55,7 +55,11 @@ pub(crate) fn recompute_multi_barframe_identity(
     for component in &dataset.components {
         let path = resolve_reference(root, &component.path)?;
         let frame = read_bar_frame_for_backtest(&path)?;
-        let (_, identity) = barframe_dataset_identity(&path, &frame)?;
+        let (_, identity) = if component.version == qx_data::BARFRAME_DATASET_VERSION {
+            qx_app::backtest_input_identity::legacy_barframe_dataset_identity(&path, &frame)?
+        } else {
+            barframe_dataset_identity(&path, &frame)?
+        };
         for (field, declared, actual) in [
             (
                 "dataset_id",
@@ -258,6 +262,7 @@ pub(crate) fn rerun_depth_backtest(
     input_path: &Path,
     runtime_config_path: Option<&Path>,
     market_spec_path: Option<&Path>,
+    quality_manifest_path: Option<&Path>,
     expected_manifest: &qx_core::RunManifest,
 ) -> Result<(), String> {
     if !expected_manifest
@@ -284,6 +289,10 @@ pub(crate) fn rerun_depth_backtest(
         .map(Path::canonicalize)
         .transpose()
         .map_err(|error| format!("解析证据包 market spec 路径失败: {error}"))?;
+    let quality_manifest_path = quality_manifest_path
+        .map(Path::canonicalize)
+        .transpose()
+        .map_err(|error| format!("解析证据包深度质量清单路径失败: {error}"))?;
     let summary_payload = std::fs::read_to_string(&summary_path)
         .map_err(|error| format!("读取深度回测摘要失败 {}: {error}", summary_path.display()))?;
     let summary: serde_json::Value = serde_json::from_str(&summary_payload)
@@ -389,6 +398,9 @@ pub(crate) fn rerun_depth_backtest(
             return Err(
                 "深度回测使用了非默认 quantity，但离线包未附带 market_spec 位置参数".into(),
             );
+        }
+        if let Some(quality_manifest) = quality_manifest_path {
+            command.arg("--dataset-manifest").arg(quality_manifest);
         }
         if explicit_fee {
             command.args(["--fee-bps", &fee_bps.to_string()]);

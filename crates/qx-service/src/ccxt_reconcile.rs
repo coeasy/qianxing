@@ -89,3 +89,28 @@ fn ccxt_reconcile_event_tag(kind: &str) -> &'static str {
         _ => "reconcile",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unresolved_pending_amendment_degrades_health_and_requires_reconciliation() {
+        let issue = serde_json::json!({
+            "kind": "pending_amendment_unresolved",
+            "client_order_id": 7,
+            "reason": "remote terms do not match the durable request",
+        });
+
+        let round = ccxt_reconcile_round(&[], &[issue]);
+
+        assert_eq!(round.order_issues.len(), 1);
+        assert_eq!(round.require_reconcile.len(), 1);
+        assert_eq!(round.require_reconcile[0].client_order_id, 7);
+        assert_eq!(round.require_reconcile[0].event_tag, "reconcile");
+        assert_eq!(
+            ccxt_reconcile_service_status(&round, &[]),
+            qx_runtime::ServiceStatus::Degraded
+        );
+    }
+}

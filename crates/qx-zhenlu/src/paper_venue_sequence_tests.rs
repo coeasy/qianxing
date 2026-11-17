@@ -12,6 +12,8 @@ fn order(qty: i64, side: Side) -> Order {
         account_id: "main".into(),
         trace: None,
         policy: None,
+
+        exact_amounts: None,
     }
 }
 #[test]

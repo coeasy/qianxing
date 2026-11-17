@@ -1,0 +1,136 @@
+$ cargo test -p qx-cli --offline --test app_three_entrypoints -- --test-threads=1
+exit_code=101
+
+[stdout]
+
+running 33 tests
+test algo_execution_entrypoints::twap_plan_is_identical_across_cli_http_and_python_native ... ok
+test classic_strategy_entrypoints::ten_classic_strategies_backtest_identically_across_entrypoints ... FAILED
+test compare_runs_agrees_across_cli_http_and_python_with_stable_ranking ... ok
+test legacy_builtin_parity::configured_builtin_matches_the_qx_app_spec_after_signal_and_fill_binding ... ok
+test legacy_builtin_parity::legacy_builtin_strategies_match_qx_app_default_engine_results ... ok
+test market_spec_entrypoints::ashare_rule_snapshot_runs_identically_across_cli_http_and_python ... FAILED
+test market_spec_entrypoints::backtest_refuses_simulated_fills_outside_the_frozen_market_tick ... ok
+test market_spec_entrypoints::frozen_market_spec_is_used_by_cli_http_and_python_bar_runs ... FAILED
+test multi_account_entrypoints::all_failed_multi_account_package_relocates_and_verifies_without_claiming_recompute ... ok
+test multi_account_entrypoints::isolated_multi_account_backtest_is_shared_by_cli_http_and_python ... FAILED
+test multi_account_entrypoints::joint_exchange_backtest_command_runs_okx_and_bitget_accounts ... ok
+test multi_account_entrypoints::partial_multi_account_package_recomputes_after_source_removal ... ok
+test multi_builtin_parity::multi_builtin_cli_preserves_stdout_and_artifacts_with_fractional_price_sizing ... ok
+test multi_leg_experiment_entrypoints::multi_leg_experiment_run_handle_delivers_the_terminal_report_over_http ... ok
+test multi_leg_experiment_entrypoints::multi_leg_parameter_experiment_is_shared_by_cli_http_and_python ... FAILED
+test multi_leg_experiment_entrypoints::multi_leg_strategy_selection_is_shared_by_cli_http_and_python ... FAILED
+test multi_leg_experiment_entrypoints::the_same_multi_leg_spec_runs_through_cli_http_and_python_shared_rust_use_cases ... FAILED
+test multi_leg_report_entrypoints::cli_and_python_read_the_same_complete_bounded_multi_leg_report ... ok
+test multi_leg_report_entrypoints::cli_and_python_read_the_same_replay_verified_multi_leg_event_page ... ok
+test multi_leg_report_entrypoints::cli_and_python_read_the_same_replay_verified_multi_leg_facts ... ok
+test multi_market_experiment_entrypoints::multi_market_experiment_async_route_delivers_terminal_report ... ok
+test multi_market_experiment_entrypoints::multi_market_parameter_experiment_is_shared_by_cli_http_and_python ... FAILED
+test multi_market_report_entrypoints::cli_and_python_read_the_same_replay_verified_multi_market_depth_event_page ... ok
+test multi_market_report_entrypoints::cli_and_python_read_the_same_replay_verified_multi_market_event_page ... ok
+test parameter_experiment_uses_the_same_rust_use_case_from_cli_http_and_python ... FAILED
+test portfolio_entrypoints::same_account_strategy_basket_is_shared_by_cli_http_and_python ... FAILED
+test protective_exit_entrypoints::protective_exit_backtest_is_identical_across_cli_http_and_python_native ... FAILED
+test provider_report_entrypoints::provider_bar_and_depth_report_commands_return_verified_shared_reports ... ok
+test risk_parity_entrypoints::risk_parity_plan_is_identical_across_cli_http_and_python_native ... ok
+test sizing_entrypoints::fractional_kelly_sizing_is_shared_by_cli_http_and_python ... FAILED
+test the_same_backtest_spec_gives_the_same_result_hash_from_cli_http_and_python ... FAILED
+test the_same_failure_gives_the_same_error_document_from_cli_http_and_python ... ok
+test the_verify_use_case_also_agrees_across_entrypoints ... ok
+
+failures:
+
+---- classic_strategy_entrypoints::ten_classic_strategies_backtest_identically_across_entrypoints stdout ----
+
+thread 'classic_strategy_entrypoints::ten_classic_strategies_backtest_identically_across_entrypoints' (40084) panicked at crates\qx-cli\tests\app_three_entrypoints\classic_strategies.rs:66:35:
+Python sma_cross backtest failed: {"action":"RESOLVE_CONFLICT","category":"CONFLICT","correlation_id":"g1-classic-sma_cross","message":"run_id g1-classic-sma_cross 已存在且身份不同（config_hash 199596f676a651cc -> 199596f676a651cc、data_fingerprint barframe:613fdc1dc0b779e7 -> barframe:613fdc1dc0b779e7、canonical_spec d9abcef22b18b08b -> ff8106e610d8a94b）；换 run_id 或换产物目录——覆盖会让两次不同的运行共用一个身份，而引用它的报告、对比与台账说的可能是前一次","reason_code":null,"retry":"AFTER_RECONCILE","safe_to_retry":false,"source_code":null}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- market_spec_entrypoints::ashare_rule_snapshot_runs_identically_across_cli_http_and_python stdout ----
+
+thread 'market_spec_entrypoints::ashare_rule_snapshot_runs_identically_across_cli_http_and_python' (39796) panicked at crates\qx-cli\tests\app_three_entrypoints\market_spec.rs:102:31:
+Python A-share backtest failed: {"action":"RESOLVE_CONFLICT","category":"CONFLICT","correlation_id":"g1-ashare-rules","message":"run_id g1-ashare-rules 已存在且身份不同（config_hash f8dffcb5569d210b -> f8dffcb5569d210b、data_fingerprint barframe:5e59cfcf3adca434 -> barframe:5e59cfcf3adca434、canonical_spec c26b9bb85333ed86 -> da4bc9fe016d24c6）；换 run_id 或换产物目录——覆盖会让两次不同的运行共用一个身份，而引用它的报告、对比与台账说的可能是前一次","reason_code":null,"retry":"AFTER_RECONCILE","safe_to_retry":false,"source_code":null}
+
+---- market_spec_entrypoints::frozen_market_spec_is_used_by_cli_http_and_python_bar_runs stdout ----
+
+thread 'market_spec_entrypoints::frozen_market_spec_is_used_by_cli_http_and_python_bar_runs' (39344) panicked at crates\qx-cli\tests\app_three_entrypoints\market_spec.rs:59:31:
+Python market-aware Bar run failed: {"action":"RESOLVE_CONFLICT","category":"CONFLICT","correlation_id":"g1-market-spec","message":"run_id g1-market-spec 已存在且身份不同（config_hash 796ff09e083b2272 -> 796ff09e083b2272、data_fingerprint barframe:613fdc1dc0b779e7 -> barframe:613fdc1dc0b779e7、canonical_spec b44cb7d9d5114dd2 -> 426d6db765b80312）；换 run_id 或换产物目录——覆盖会让两次不同的运行共用一个身份，而引用它的报告、对比与台账说的可能是前一次","reason_code":null,"retry":"AFTER_RECONCILE","safe_to_retry":false,"source_code":null}
+
+---- multi_account_entrypoints::isolated_multi_account_backtest_is_shared_by_cli_http_and_python stdout ----
+
+thread 'multi_account_entrypoints::isolated_multi_account_backtest_is_shared_by_cli_http_and_python' (38660) panicked at crates\qx-cli\tests\app_three_entrypoints\multi_account.rs:729:13:
+assertion `left == right` failed
+  left: Null
+ right: String("c6bcfa91818c0eb3")
+
+---- multi_leg_experiment_entrypoints::multi_leg_parameter_experiment_is_shared_by_cli_http_and_python stdout ----
+
+thread 'multi_leg_experiment_entrypoints::multi_leg_parameter_experiment_is_shared_by_cli_http_and_python' (40936) panicked at crates\qx-cli\tests\app_three_entrypoints\multi_leg_experiment.rs:101:31:
+Python multi-leg experiment failed: {"action":"RESOLVE_CONFLICT","category":"CONFLICT","correlation_id":"g1-multi-leg-grid","message":"experiment_id g1-multi-leg-grid 已绑定不同数据或 CanonicalRunSpec","reason_code":null,"retry":"AFTER_RECONCILE","safe_to_retry":false,"source_code":null}
+
+---- multi_leg_experiment_entrypoints::multi_leg_strategy_selection_is_shared_by_cli_http_and_python stdout ----
+
+thread 'multi_leg_experiment_entrypoints::multi_leg_strategy_selection_is_shared_by_cli_http_and_python' (21532) panicked at crates\qx-cli\tests\app_three_entrypoints\multi_leg_experiment.rs:167:31:
+Python multi-leg strategy selection failed: {"action":"RESOLVE_CONFLICT","category":"CONFLICT","correlation_id":"g1-multi-leg-strategy-selection","message":"experiment_id g1-multi-leg-strategy-selection 已绑定不同数据或 CanonicalRunSpec","reason_code":null,"retry":"AFTER_RECONCILE","safe_to_retry":false,"source_code":null}
+
+---- multi_leg_experiment_entrypoints::the_same_multi_leg_spec_runs_through_cli_http_and_python_shared_rust_use_cases stdout ----
+
+thread 'multi_leg_experiment_entrypoints::the_same_multi_leg_spec_runs_through_cli_http_and_python_shared_rust_use_cases' (21744) panicked at crates\qx-cli\tests\app_three_entrypoints\multi_leg_experiment.rs:272:31:
+Python multi-leg use case failed: {"action":"RESOLVE_CONFLICT","category":"CONFLICT","correlation_id":"g1-multi-leg","message":"相同 run_id 的多腿 RunManifest 已存在且内容不同: \\\\?\\D:\\aex_work\\qianxing\\target\\qx-app-g1\\multi-leg-40052-1794233844432983100-16\\out\\g1-multi-leg.multi-leg.run.json","reason_code":null,"retry":"AFTER_RECONCILE","safe_to_retry":false,"source_code":null}
+
+---- multi_market_experiment_entrypoints::multi_market_parameter_experiment_is_shared_by_cli_http_and_python stdout ----
+
+thread 'multi_market_experiment_entrypoints::multi_market_parameter_experiment_is_shared_by_cli_http_and_python' (38280) panicked at crates\qx-cli\tests\app_three_entrypoints\multi_market_experiment.rs:140:31:
+Python multi-market experiment failed: {"action":"RESOLVE_CONFLICT","category":"CONFLICT","correlation_id":"g1-multi-market-grid","message":"多市场实验规格 sidecar 与当前规格不一致: D:\\aex_work\\qianxing\\target\\qx-app-g1/multi-market-experiment-40052-1794233853662666500-21\\output\\g1-multi-market-grid\\g1-multi-market-grid.multi-market-experiment.spec.json","reason_code":null,"retry":"AFTER_RECONCILE","safe_to_retry":false,"source_code":null}
+
+---- parameter_experiment_uses_the_same_rust_use_case_from_cli_http_and_python stdout ----
+
+thread 'parameter_experiment_uses_the_same_rust_use_case_from_cli_http_and_python' (37252) panicked at crates\qx-cli\tests\app_three_entrypoints.rs:648:31:
+Python experiment 本该成功：{"action":"RESOLVE_CONFLICT","category":"CONFLICT","correlation_id":"g1-parameter-grid","message":"experiment_id g1-parameter-grid 已绑定不同实验规格","reason_code":null,"retry":"AFTER_RECONCILE","safe_to_retry":false,"source_code":null}
+
+---- portfolio_entrypoints::same_account_strategy_basket_is_shared_by_cli_http_and_python stdout ----
+
+thread 'portfolio_entrypoints::same_account_strategy_basket_is_shared_by_cli_http_and_python' (36772) panicked at crates\qx-cli\tests\app_three_entrypoints\portfolio.rs:48:31:
+Python portfolio backtest failed: {"action":"RESOLVE_CONFLICT","category":"CONFLICT","correlation_id":"g1-portfolio-run","message":"run_id g1-portfolio-run 已存在且身份不同（config_hash 27e41faebb543021 -> 27e41faebb543021、data_fingerprint barframe:613fdc1dc0b779e7 -> barframe:613fdc1dc0b779e7、canonical_spec b59f1ee6042c5659 -> 8a9718d6a3cdb519）；换 run_id 或换产物目录——覆盖会让两次不同的运行共用一个身份，而引用它的报告、对比与台账说的可能是前一次","reason_code":null,"retry":"AFTER_RECONCILE","safe_to_retry":false,"source_code":null}
+
+---- protective_exit_entrypoints::protective_exit_backtest_is_identical_across_cli_http_and_python_native stdout ----
+
+thread 'protective_exit_entrypoints::protective_exit_backtest_is_identical_across_cli_http_and_python_native' (7196) panicked at crates\qx-cli\tests\app_three_entrypoints\protective_exit.rs:72:31:
+Python protective-exit backtest failed: {"action":"RESOLVE_CONFLICT","category":"CONFLICT","correlation_id":"g1-protective-exit","message":"run_id g1-protective-exit 已存在且身份不同（config_hash ce7d397c6f507bc3 -> ce7d397c6f507bc3、data_fingerprint barframe:69d0bbefda4c255f -> barframe:69d0bbefda4c255f、canonical_spec 843f01919d5ca013 -> 4408fc79bed02353）；换 run_id 或换产物目录——覆盖会让两次不同的运行共用一个身份，而引用它的报告、对比与台账说的可能是前一次","reason_code":null,"retry":"AFTER_RECONCILE","safe_to_retry":false,"source_code":null}
+
+---- sizing_entrypoints::fractional_kelly_sizing_is_shared_by_cli_http_and_python stdout ----
+
+thread 'sizing_entrypoints::fractional_kelly_sizing_is_shared_by_cli_http_and_python' (40488) panicked at crates\qx-cli\tests\app_three_entrypoints\sizing.rs:60:31:
+Python Kelly entrypoint failed: {"action":"RESOLVE_CONFLICT","category":"CONFLICT","correlation_id":"g1-kelly-sizing","message":"run_id g1-kelly-sizing 已存在且身份不同（config_hash 6811aa236c4c75b3 -> 6811aa236c4c75b3、data_fingerprint barframe:0d5c1c355147d934 -> barframe:0d5c1c355147d934、canonical_spec bace410665ba5ffb -> 615e72bc05236d3b）；换 run_id 或换产物目录——覆盖会让两次不同的运行共用一个身份，而引用它的报告、对比与台账说的可能是前一次","reason_code":null,"retry":"AFTER_RECONCILE","safe_to_retry":false,"source_code":null}
+
+---- the_same_backtest_spec_gives_the_same_result_hash_from_cli_http_and_python stdout ----
+
+thread 'the_same_backtest_spec_gives_the_same_result_hash_from_cli_http_and_python' (8064) panicked at crates\qx-cli\tests\app_three_entrypoints.rs:315:31:
+Python 腿本该成功，却报了错：{"action":"RESOLVE_CONFLICT","category":"CONFLICT","correlation_id":"g1-run","message":"run_id g1-run 已存在且身份不同（config_hash bd864d5e1814e5f0 -> bd864d5e1814e5f0、data_fingerprint barframe:613fdc1dc0b779e7 -> barframe:613fdc1dc0b779e7、canonical_spec 1a2b8d6b07f3720e -> 2bc6f8e322594f4e）；换 run_id 或换产物目录——覆盖会让两次不同的运行共用一个身份，而引用它的报告、对比与台账说的可能是前一次","reason_code":null,"retry":"AFTER_RECONCILE","safe_to_retry":false,"source_code":null}
+
+
+failures:
+    classic_strategy_entrypoints::ten_classic_strategies_backtest_identically_across_entrypoints
+    market_spec_entrypoints::ashare_rule_snapshot_runs_identically_across_cli_http_and_python
+    market_spec_entrypoints::frozen_market_spec_is_used_by_cli_http_and_python_bar_runs
+    multi_account_entrypoints::isolated_multi_account_backtest_is_shared_by_cli_http_and_python
+    multi_leg_experiment_entrypoints::multi_leg_parameter_experiment_is_shared_by_cli_http_and_python
+    multi_leg_experiment_entrypoints::multi_leg_strategy_selection_is_shared_by_cli_http_and_python
+    multi_leg_experiment_entrypoints::the_same_multi_leg_spec_runs_through_cli_http_and_python_shared_rust_use_cases
+    multi_market_experiment_entrypoints::multi_market_parameter_experiment_is_shared_by_cli_http_and_python
+    parameter_experiment_uses_the_same_rust_use_case_from_cli_http_and_python
+    portfolio_entrypoints::same_account_strategy_basket_is_shared_by_cli_http_and_python
+    protective_exit_entrypoints::protective_exit_backtest_is_identical_across_cli_http_and_python_native
+    sizing_entrypoints::fractional_kelly_sizing_is_shared_by_cli_http_and_python
+    the_same_backtest_spec_gives_the_same_result_hash_from_cli_http_and_python
+
+test result: FAILED. 20 passed; 13 failed; 0 ignored; 0 measured; 0 filtered out; finished in 98.27s
+
+
+[stderr]
+   Compiling qx-api v0.4.0 (D:\aex_work\qianxing\crates\qx-api)
+   Compiling qx-service v0.4.0 (D:\aex_work\qianxing\crates\qx-service)
+   Compiling qx-cli v0.4.0 (D:\aex_work\qianxing\crates\qx-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.61s
+     Running tests\app_three_entrypoints.rs (target\debug\deps\app_three_entrypoints-a5967fbf03bb6cb8.exe)
+error: test failed, to rerun pass `-p qx-cli --test app_three_entrypoints`

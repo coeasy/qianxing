@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://qianxing.local/schemas/strategy-worker-observation-v2.json",
+  "title": "Strategy worker observation v2",
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "worker_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "config_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "process_id": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295
+    },
+    "owner_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "observed_at_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "phase": {
+      "enum": [
+        "initializing",
+        "running",
+        "paused",
+        "stopped",
+        "failed"
+      ]
+    },
+    "host_capabilities": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "strategy-host-capabilities-v1.json"
+        }
+      ]
+    },
+    "checkpoint_roundtrip_observed": {
+      "type": "boolean"
+    },
+    "host_lifecycle": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "strategy-worker-lifecycle-v1.json"
+        }
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "worker_id",
+    "config_sha256",
+    "process_id",
+    "owner_id",
+    "observed_at_ms",
+    "phase",
+    "host_capabilities",
+    "checkpoint_roundtrip_observed"
+  ]
+}

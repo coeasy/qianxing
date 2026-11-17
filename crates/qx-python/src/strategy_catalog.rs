@@ -3,7 +3,7 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
-use qx_app::builtin_strategy_catalog;
+use qx_app::{builtin_strategy_catalog, builtin_strategy_recipe_catalog};
 
 #[pyfunction]
 fn app_list_builtin_strategies() -> PyResult<String> {
@@ -12,7 +12,15 @@ fn app_list_builtin_strategies() -> PyResult<String> {
     })
 }
 
+#[pyfunction]
+fn app_list_builtin_strategy_recipes() -> PyResult<String> {
+    serde_json::to_string(&builtin_strategy_recipe_catalog()).map_err(|error| {
+        PyValueError::new_err(format!("Strategy recipe serialization failed: {error}"))
+    })
+}
+
 pub(super) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(app_list_builtin_strategies, module)?)?;
+    module.add_function(wrap_pyfunction!(app_list_builtin_strategy_recipes, module)?)?;
     Ok(())
 }

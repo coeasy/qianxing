@@ -59,6 +59,23 @@ fn missing_command(root: &Path) -> PathBuf {
     root.join("command.never-written.json")
 }
 
+fn configure_testnet_mtls(config: &mut RuntimeConfig) {
+    config.environment = "testnet".into();
+    config.api.transport = ApiTransport::Mtls;
+    config.api.tls = Some(TlsPaths {
+        certificate_chain: "server.pem".into(),
+        private_key: "server.key".into(),
+        client_ca: "clients.pem".into(),
+    });
+    config.api.operators.insert(
+        "ops".into(),
+        OperatorConfig {
+            permission: Permission::Trading,
+            certificate: "ops.pem".into(),
+        },
+    );
+}
+
 #[test]
 fn paper_submit_entry_refuses_the_ashare_section_before_touching_anything() {
     let (root, path) = paper_runtime("q65-paper-submit", true);
@@ -128,6 +145,7 @@ fn binance_submit_entry_refuses_the_ashare_section_before_reading_the_command() 
     });
     let mut config = read_runtime_config(&path).unwrap();
     config.workers.push(worker);
+    configure_testnet_mtls(&mut config);
     std::fs::write(&path, config.to_json().unwrap()).unwrap();
     let error = run_binance_submit_order(&path, "binance-exec", &missing_command(&root))
         .expect_err("实盘提交入口同样不能收下 A 股段再当没事发生");
@@ -145,16 +163,14 @@ fn binance_submit_entry_refuses_the_ashare_section_before_reading_the_command() 
 #[test]
 fn ccxt_worker_entry_refuses_the_ashare_section_before_touching_the_ccxt_config() {
     let (root, path) = paper_runtime("q65-ccxt-worker", true);
-    let spec = deploy("qianxing.binance.spot.spec.json")
+    let spec = deploy("qianxing.ccxt.okx.perpetual.spec.json")
         .to_string_lossy()
         .into_owned();
     let mut config = read_runtime_config(&path).unwrap();
-    config.workers.push(mk_worker(
-        "ccxt-exec",
-        WorkerRole::Execution,
-        "okx",
-        Some(&spec),
-    ));
+    let mut ccxt_execution = mk_worker("ccxt-exec", WorkerRole::Execution, "okx", Some(&spec));
+    ccxt_execution.symbols = vec!["BTC/USDT:USDT.OKX".into()];
+    config.workers.push(ccxt_execution);
+    configure_testnet_mtls(&mut config);
     std::fs::write(&path, config.to_json().unwrap()).unwrap();
     let error = run_ccxt_worker(
         &path,

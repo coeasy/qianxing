@@ -14,6 +14,8 @@ __pycache__/
 *.pyc
 python/build/
 python/qianxing_bridge/_qianxing_native*
+# wheel 构建期把宿主平台 qx-cli 暂存进包里（方案 D3 选项 A）；与上面的原生扩展同口径，是构建副产物
+python/qianxing/_bin/
 python/**/*.egg-info/
 # maturin develop 的本地临时目录与 uv 缓存：构建副产物，不是仓库资产
 python/.tmp/
@@ -23,6 +25,7 @@ python/.uv-cache/
 # deploy runtime store 的新生成回测与行情快照；已有跟踪的基线工件不受影响
 /deploy/data/*/runs/
 /deploy/data/*/runtime-snapshots/
+!/deploy/data/qianxing-product-shaped-backtest/runs/
 # CLI 默认 runtime store 中新生成的回测结果与 Paper 队列；既有跟踪的基线工件继续保留
 /crates/qx-cli/data/*/runs/
 /crates/qx-cli/data/qianxing-paper/job-queue/
@@ -30,6 +33,16 @@ python/.uv-cache/
 # 本机测试期副产物：某依赖把 Windows Shell 缓存目录按未展开的 %SystemDrive% 当作相对路径创建
 '%SystemDrive%/'
 **/%SystemDrive%/
+
+# Codex/测试期临时缓存与本地运行产物：不属于源码树或发布验收证据输入
+**/.codex-tmp-build/
+**/.task-tmp/
+/.tmp-release-prep/
+/runs/
+/python/runs/
+/python/python/.tmp/
+/runtime.sqlite3
+/qx-audit-debug-*/
 
 # 每轮门禁/构建的原始日志：数字按轮抄进 docs 与 CHANGELOG，日志本身不是仓库资产
 /logs/

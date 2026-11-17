@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://qianxing.local/schemas/backtest-outcome-v1.json",
   "title": "Qianxing BacktestOutcome v1",
-  "description": "Stable Bar backtest result identity and the four persisted artifact paths. account_id is omitted for legacy and non-account-aware runs.",
+  "description": "Stable backtest result identity and the four core artifact paths, with an optional replay-validated JSONL event-trace sidecar. account_id is omitted for legacy and non-account-aware runs.",
   "type": "object",
   "required": ["run_id", "instrument", "result_hash", "data_fingerprint", "fills", "equity_points", "return_bps", "max_drawdown_bps", "artifacts"],
   "properties": {
@@ -26,7 +26,8 @@
         "run_manifest": {"type": "string", "minLength": 1},
         "summary": {"type": "string", "minLength": 1},
         "equity": {"type": "string", "minLength": 1},
-        "fills": {"type": "string", "minLength": 1}
+        "fills": {"type": "string", "minLength": 1},
+        "event_trace": {"type": "string", "minLength": 1}
       },
       "additionalProperties": false
     }

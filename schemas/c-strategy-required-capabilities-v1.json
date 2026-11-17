@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/c-strategy-required-capabilities-v1.json",
+  "title": "C ABI Strategy Required Capabilities v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "required_capabilities"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "required_capabilities": {
+      "$ref": "strategy-host-capabilities-v1.json#/$defs/capability-list"
+    }
+  }
+}

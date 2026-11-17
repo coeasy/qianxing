@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "kind": "cargo_spdx_sbom_validation",
+  "generated_at_utc": "2026-11-13T17:21:48Z",
+  "source_commit": "50e40f331f0a5728e149905df0271caade340bc9",
+  "generation": {
+    "metadata_command": "cargo metadata --format-version 1 --locked --all-features",
+    "generator": "tools/generate_cargo_sbom.py",
+    "created_timestamp_source": "source commit timestamp",
+    "packages": 316,
+    "relationships": 1138,
+    "deterministic_for_same_commit": true
+  },
+  "schema_validation": {
+    "format": "SPDX-2.3 JSON",
+    "schema_url": "https://raw.githubusercontent.com/spdx/spdx-spec/develop/schemas/spdx-schema-2-3.json",
+    "schema_sha256": "ca7fd7cc2c8107c3b6b5976058bb72363e8c072f0e446609d4fe7234860c2894",
+    "validator": "jsonschema 4.26.0",
+    "result": "passed"
+  },
+  "tests": {
+    "command": "python -m unittest tools.test_generate_cargo_sbom -v",
+    "passed": 3,
+    "failed": 0
+  },
+  "scope_limitations": [
+    "This is a source dependency graph generated from locked Cargo metadata with all workspace features; it is not a per-platform binary inventory.",
+    "Local generation and schema validation do not prove that a published GitHub Release contains this SBOM or that every artifact has a verified attestation."
+  ]
+}

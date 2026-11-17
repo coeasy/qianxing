@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.dev/schemas/dataset-instrument-role-catalog-v1.json",
+  "title": "Qianxing supplier-signed dataset instrument-role catalog v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "catalog_id", "supplier_id", "source_version", "issued_at_ms", "valid_from_ms", "valid_until_ms", "roles", "key_id", "signature_hex"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "catalog_id": {"type": "string", "minLength": 1},
+    "supplier_id": {"type": "string", "minLength": 1},
+    "source_version": {"type": "string", "minLength": 1},
+    "issued_at_ms": {"type": "integer", "minimum": 1},
+    "valid_from_ms": {"type": "integer", "minimum": 1},
+    "valid_until_ms": {"type": "integer", "minimum": 1},
+    "roles": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"pattern": "^[^\\s]+\\.[A-Z0-9_-]+$"},
+      "additionalProperties": {"enum": ["index", "equity", "etf", "future", "crypto_spot", "fx", "other_tradable"]}
+    },
+    "key_id": {"type": "string", "pattern": "^[A-Fa-f0-9]{64}$"},
+    "signature_hex": {"type": "string", "pattern": "^[A-Fa-f0-9]{128}$"}
+  }
+}

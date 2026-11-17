@@ -2,13 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://qianxing.local/schemas/provider-backtest-result-v1.json",
   "title": "Qianxing ProviderBacktestOutcome v1",
-  "description": "Immutable Provider Bar dataset manifest, dataset usability verdict, shared Bar outcome and persisted manifest path.",
+  "description": "Immutable Provider Bar dataset manifest and DatasetSnapshotV1, dataset usability verdict, shared Bar outcome, and persisted sidecar paths.",
   "type": "object",
   "required": [
     "outcome",
     "dataset_verdict",
     "manifest",
-    "manifest_path"
+    "manifest_path",
+    "dataset_snapshot",
+    "snapshot_path"
   ],
   "properties": {
     "outcome": {
@@ -21,6 +23,13 @@
       "$ref": "#/$defs/DatasetManifestV2"
     },
     "manifest_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "dataset_snapshot": {
+      "$ref": "#/$defs/DatasetSnapshotV1"
+    },
+    "snapshot_path": {
       "type": "string",
       "minLength": 1
     }
@@ -286,6 +295,14 @@
               "type": "integer",
               "minimum": 1
             },
+            "acquisition_cutoff_ms": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "excluded_unclosed_rows": {
+              "type": "integer",
+              "minimum": 0
+            },
             "timezone": {
               "type": "string",
               "minLength": 1
@@ -331,6 +348,45 @@
       },
       "additionalProperties": false
     },
+    "DatasetSnapshotV1": {
+      "type": "object",
+      "required": [
+        "schema_version", "manifest", "instrument_role", "captured_at_ms",
+        "frequency_ms", "timestamp_semantics", "price_precision", "quantity_precision",
+        "price_unit", "quantity_unit", "coverage_start_ts_ms", "coverage_end_ts_ms",
+        "calendar_id", "calendar_version", "gaps", "corporate_action_policy"
+      ],
+      "properties": {
+        "schema_version": {"const": 1},
+        "manifest": {"$ref": "#/$defs/DatasetManifestV2"},
+        "instrument_role": {"enum": ["index", "equity", "etf", "future", "crypto_spot", "fx", "other_tradable", "unknown"]},
+        "captured_at_ms": {"type": "integer", "minimum": 1},
+        "frequency_ms": {"type": "integer", "minimum": 1},
+        "timestamp_semantics": {"enum": ["bar_open", "bar_close", "event_time"]},
+        "price_precision": {"type": "integer", "minimum": 0, "maximum": 18},
+        "quantity_precision": {"type": "integer", "minimum": 0, "maximum": 18},
+        "price_unit": {"type": "string", "minLength": 1},
+        "quantity_unit": {"type": "string", "minLength": 1},
+        "coverage_start_ts_ms": {"type": "integer", "minimum": 0},
+        "coverage_end_ts_ms": {"type": "integer", "minimum": 0},
+        "calendar_id": {"type": "string", "minLength": 1},
+        "calendar_version": {"type": "string", "minLength": 1},
+        "gaps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["start_ts_ms", "end_ts_ms"],
+            "properties": {
+              "start_ts_ms": {"type": "integer", "minimum": 0},
+              "end_ts_ms": {"type": "integer", "minimum": 0}
+            },
+            "additionalProperties": false
+          }
+        },
+        "corporate_action_policy": {"enum": ["adjusted", "unadjusted", "not_applicable", "unknown"]}
+      },
+      "additionalProperties": false
+    },
     "BacktestArtifacts": {
       "type": "object",
       "required": [
@@ -353,6 +409,10 @@
           "minLength": 1
         },
         "fills": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event_trace": {
           "type": "string",
           "minLength": 1
         }

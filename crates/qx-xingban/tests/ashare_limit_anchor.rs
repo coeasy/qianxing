@@ -92,6 +92,7 @@ impl BarStrategy for BuyOnSealedBar {
             account_id: "main".into(),
             trace: None,
             policy: None,
+            exact_amounts: None,
         })
     }
 }

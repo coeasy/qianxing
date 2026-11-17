@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "binance_oco_cancel_race_linux_podman_local_validation",
+  "generated_at_utc": "2026-11-12T03:17:13Z",
+  "source": {
+    "git_head": "396da64a",
+    "worktree_dirty": true,
+    "dirty_paths_related_to_this_evidence": [
+      "crates/qx-adapter/src/binance.rs",
+      "crates/qx-core/src/order_group.rs",
+      "crates/qx-execution/src/application.rs",
+      "crates/qx-execution/src/lib.rs",
+      "crates/qx-service/src/binance_execution_host.rs",
+      "crates/qx-service/src/binance_reconcile_host.rs",
+      "crates/qx-service/src/gateway_execution_probe.rs",
+      "docs/牵星全量优化方案与竞品超越路线图-2026-11-11.md"
+    ]
+  },
+  "environment": {
+    "os": "Linux",
+    "container_image": "mirror.gcr.io/library/rust:1.98.1-bookworm",
+    "container_runtime": "Podman",
+    "rustc": "1.98.1",
+    "dependency_resolution": "offline, locked"
+  },
+  "commands": [
+    {
+      "argv": [
+        "cargo",
+        "check",
+        "--offline",
+        "--locked",
+        "-j",
+        "2",
+        "-p",
+        "qx-adapter",
+        "-p",
+        "qx-execution",
+        "-p",
+        "qx-service",
+        "-p",
+        "qx-cli"
+      ],
+      "exit_code": 0,
+      "result": "passed"
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-j",
+        "2",
+        "-p",
+        "qx-execution",
+        "execution_contract_accepts_immediate_fill_and_valid_cancel"
+      ],
+      "exit_code": 0,
+      "selected_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "relevant_test": "application::tests::execution_contract_accepts_immediate_fill_and_valid_cancel"
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-j",
+        "2",
+        "-p",
+        "qx-core",
+        "oco_peer_expiry_resolves_partial_execution_and_empty_expiry"
+      ],
+      "exit_code": 0,
+      "selected_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "relevant_test": "order_group::tests::oco_peer_expiry_resolves_partial_execution_and_empty_expiry"
+    }
+  ],
+  "scope_limitations": [
+    "Validation covers Rust compilation, event contract ordering, and local OCO state reduction.",
+    "No Binance request was made. The official REST contract states that canceling an individual OCO leg cancels the entire list, but account permissions, response contents, cancel-time myTrades recovery, and post-cancel reconciliation remain unverified on Binance Testnet.",
+    "This is not exchange sandbox or production acceptance evidence."
+  ]
+}

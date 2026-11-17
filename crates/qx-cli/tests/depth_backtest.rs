@@ -71,8 +71,8 @@ fn artifacts(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
         .to_string();
     (
         manifest,
-        runs.join(format!("{stem}.v7.summary.json")),
-        runs.join(format!("{stem}.v7.equity.csv")),
+        runs.join(format!("{stem}.v8.summary.json")),
+        runs.join(format!("{stem}.v8.equity.csv")),
     )
 }
 
@@ -94,20 +94,18 @@ fn depth_backtest_writes_unified_artifacts_and_stays_deterministic() {
     ]);
     assert_eq!(code, 0, "L2 深度回测失败: {stderr}");
     assert!(stdout.contains("snapshots=80"), "输出缺少快照数: {stdout}");
-    assert!(stdout.contains("fills=1"), "输出缺少成交笔数: {stdout}");
-    // 深度示例的 SMA 下穿会发卖空意图，保守风控把它挡下：这正是"零成交"之外
-    // 必须能看见的事实，否则产物里只剩一个看不出原因的 fills=0。
+    assert!(
+        stdout.contains("fills=2"),
+        "输出缺少进场与离场成交: {stdout}"
+    );
+    // 现货 SMA 下穿会将多头目标仓位降到零；策略应平仓，而不是发出卖空单。
     let integrity = stdout
         .lines()
         .find(|line| line.starts_with("[Depth · Integrity]"))
         .unwrap_or_else(|| panic!("深度链没有打印成交诚实性行: {stdout}"));
     assert!(
-        integrity.contains("rejected_orders=1"),
-        "被风控挡下的卖空没有记进诚实性行: {integrity}"
-    );
-    assert!(
-        integrity.contains("1x现货卖出数量超过扣除待成交卖单后的可用持仓"),
-        "诚实性行缺少现货可用持仓拒单原因: {integrity}"
+        integrity.contains("rejected_orders=0 rejection_reasons=none"),
+        "多头平仓不应被错误记录成卖空拒单: {integrity}"
     );
     let first_hash = result_hash(&stdout);
 
@@ -137,23 +135,18 @@ fn depth_backtest_writes_unified_artifacts_and_stays_deterministic() {
         serde_json::from_str(&std::fs::read_to_string(&summary).expect("读取摘要失败")).unwrap();
     assert_eq!(summary_payload["sample_unit"], "depth_snapshot");
     assert_eq!(summary_payload["bars"], 80);
-    assert_eq!(summary_payload["fills"], 1);
-    assert_eq!(summary_payload["rejected_orders"], 1);
+    assert_eq!(summary_payload["fills"], 2);
+    assert_eq!(summary_payload["rejected_orders"], 0);
     let rejections = summary_payload["rejection_reasons"]
         .as_array()
         .expect("rejection_reasons 必须是数组");
-    assert_eq!(
-        rejections
-            .iter()
-            .filter(|entry| entry["reason"].as_str().unwrap_or_default()
-                == "现货卖出数量超过扣除待成交卖单后的可用持仓")
-            .count(),
-        1,
-        "摘要里的拒单原因与诚实性行不一致: {rejections:?}"
+    assert!(
+        rejections.is_empty(),
+        "成功平仓不应产生拒单: {rejections:?}"
     );
     assert_eq!(
         summary_payload["metrics"]["final_equity_raw"],
-        100_265_589_000_000_i64
+        100_505_892_500_000_i64
     );
     assert_eq!(
         summary_payload["risk_rules"]["rule_set_version"],
@@ -268,9 +261,8 @@ fn depth_execution_model_flags_change_results_and_are_recorded() {
     );
     assert_ne!(impact_hash, baseline_hash, "冲击参数没有改变结果指纹");
     assert!(
-        impact["metrics"]["fees_raw"].as_i64().unwrap() > baseline_fees,
-        "买入被推高后手续费没有变化: {:?} vs {baseline_fees}",
-        impact["metrics"]["fees_raw"]
+        impact["metrics"]["fees_raw"].as_i64().unwrap() < baseline_fees,
+        "现金受限的买单在正向冲击后买入数量更少，往返成交名义额与手续费应下降"
     );
     assert!(
         impact["metrics"]["final_equity_raw"].as_i64().unwrap() < baseline_equity,

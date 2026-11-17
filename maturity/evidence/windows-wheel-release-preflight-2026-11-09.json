@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "kind": "windows_wheel_release_preflight",
+  "candidate_version": "0.4.0",
+  "generated_at_utc": "2026-11-09T11:18:38Z",
+  "source": {
+    "commit": "3e5aaf1a0345c3b5658994bc9e0e6308de8e7320",
+    "worktree": "clean detached worktree",
+    "tagged": false,
+    "published": false
+  },
+  "environment": {
+    "platform": "windows-x86_64",
+    "rust": "1.98.1 (48a229cea 2026-09-01)",
+    "python": "3.13.13",
+    "wheel_tag": "cp310-abi3-win_amd64"
+  },
+  "artifact": {
+    "path": "target/release-worktree-3e5a/target/release-prep-windows-3e5a/qianxing-0.4.0-cp310-abi3-win_amd64.whl",
+    "size_bytes": 22825768,
+    "sha256": "3a0ee62f2aa011e6918eaa5f671d1659b18c6f84dd2cf14c051ce57062212250",
+    "embedded_cli_size_bytes": 43961856,
+    "embedded_cli_sha256": "8c5802f7b4a224fb32c7051cb209814cca9c87e6b69db1ed9851a038b4a27a11"
+  },
+  "checks": {
+    "release_cli_build": {
+      "command": "cargo build --release --locked -p qx-cli",
+      "result": "passed",
+      "runtime_identity": "qianxing 0.4.0 (build 3e5aaf1, target x86_64-pc-windows-msvc, profile release, schemas 9e1b1153f5086e9ec7162064a6d0249d476e9c954e258d5eff722d75165ad05e)"
+    },
+    "wheel_structure": {
+      "command": "python tools/check_python_wheel.py target/release-prep-windows-3e5a",
+      "result": "passed",
+      "native_extension": "qianxing_bridge/_qianxing_native.pyd",
+      "renderer": "qianxing/_bin/qx-cli.exe"
+    },
+    "clean_install_and_smoke": {
+      "install": "python -m pip install --no-index --no-deps --target <empty-directory> <wheel>",
+      "import_outside_source_tree": "passed",
+      "smoke": "passed",
+      "summary": "strategies=17 rows=70 fills=1 ashare_fills=1 classic_selection=13/13 parameter_grid=4/4 accounts=2 account_overflow_preflight=true depth_account_overflow_preflight=true multileg=1/2 depth_fills=1 custom_fills=1 run_handle=succeeded verified=true"
+    },
+    "reproducible_wheel": {
+      "second_build": "passed",
+      "first_sha256": "3a0ee62f2aa011e6918eaa5f671d1659b18c6f84dd2cf14c051ce57062212250",
+      "second_sha256": "3a0ee62f2aa011e6918eaa5f671d1659b18c6f84dd2cf14c051ce57062212250",
+      "identical": true
+    }
+  },
+  "limitations": [
+    "This is an unpublished candidate; no GitHub Release or PyPI upload was performed.",
+    "macOS release artifacts and hosted GitHub Actions for the candidate commit remain unverified."
+  ]
+}
+

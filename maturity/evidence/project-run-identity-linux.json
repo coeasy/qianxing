@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "linux_project_run_process_identity",
+  "recorded_at_utc": "2026-11-09T11:26:38.885982Z",
+  "platform": "Linux-6.18.40.1-microsoft-standard-WSL2-x86_64-with-glibc2.36",
+  "self_pid": 73058,
+  "self_identity": {
+    "host": "918810e3dd72",
+    "platform": "Linux",
+    "process_start": "2700645",
+    "boot_id": "87e0d347-0276-4414-94e7-9b1e72aeb912"
+  },
+  "fallback_identity": null,
+  "self_identity_stable": true,
+  "child_pid": 73059,
+  "child_identity": {
+    "host": "918810e3dd72",
+    "platform": "Linux",
+    "process_start": "2700656",
+    "boot_id": "87e0d347-0276-4414-94e7-9b1e72aeb912"
+  },
+  "matching_identity_alive": true,
+  "stale_start_identity_rejected": true,
+  "reaped_child_reported_dead": true
+}

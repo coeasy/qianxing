@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/strategy-host-capabilities-v1.json",
+  "title": "Strategy Host Capabilities v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "host_id",
+    "profile",
+    "supported"
+  ],
+  "$defs": {
+    "capability-list": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "bar",
+          "tick",
+          "orderbook",
+          "bar_history",
+          "multi_instrument",
+          "fill_updates",
+          "order_status_updates",
+          "account_updates",
+          "position_updates",
+          "timer",
+          "durable_checkpoint"
+        ]
+      }
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "host_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "profile": {
+      "type": "string",
+      "minLength": 1
+    },
+    "supported": {
+      "$ref": "#/$defs/capability-list"
+    }
+  }
+}

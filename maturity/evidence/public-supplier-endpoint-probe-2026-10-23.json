@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "supplier_public_readonly_connectivity_probe",
+  "observed_at_utc": "2026-10-22T19:52:44Z",
+  "generated_at_utc": "2026-10-22T19:56:58Z",
+  "endpoint_mode": "anonymous_public_mainnet_read_only",
+  "requests": [
+    {
+      "venue": "okx",
+      "method": "GET",
+      "endpoint": "https://www.okx.com/api/v5/market/candles?instId=BTC-USDT&bar=1m&limit=2",
+      "timeout_seconds": 25,
+      "outcome": "connection_timeout",
+      "detail": "HTTPS connection did not become available before timeout"
+    },
+    {
+      "venue": "binance",
+      "method": "GET",
+      "endpoint": "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=2",
+      "timeout_seconds": 25,
+      "outcome": "connection_timeout",
+      "detail": "HTTPS connection did not become available before timeout"
+    }
+  ],
+  "ccxt_installed_in_qx_python": false,
+  "qx_cli_worker_probe": {
+    "command": "ccxt-fetch-ohlcv",
+    "exit_code": 2,
+    "outcome": "blocked_missing_optional_dependency",
+    "diagnostic": "CCXT Worker [unsupported] 未安装公共 ccxt；请安装 qianxing[ccxt] 或 ccxt 包",
+    "output_file_written": false
+  },
+  "credentials_present": false,
+  "orders_sent": false,
+  "market_data_saved": false,
+  "release_cli_sha256": "c6d128ce3f7ad3bc0e26a69fd38ddf41a890405df847282c082f89b5a43dd823",
+  "worker_startup_error_contract": "structured_jsonl_unsupported_missing_ccxt",
+  "evidence_scope": "This records local dependency and network reachability only. It does not establish supplier unavailability, data acceptance, sandbox trading, authenticated account access, order roundtrip, recovery, or reconciliation."
+}

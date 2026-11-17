@@ -1,0 +1,72 @@
+$ python3 tools/accept_backtest_metrics_contract.py
+exit_code=101
+
+[stdout]
+[1/6] cargo test -p qx-core --lib period_returns_preserve_sub_float_ulp_changes_in_large_raw_equity --offline
+[1m[33mwarning[0m[1m: unused workspace dependency `qx-data`[0m
+  [1m[94m--> [0mCargo.toml:54:1
+   [1m[94m|[0m
+[1m[94m54[0m [1m[94m|[0m qx-data = { version = "0.4.0", path = "crates/qx-data" }
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `cargo::unused_workspace_dependencies` is set to `warn` by default
+[1m[96mhelp[0m: consider removing the workspace dependency `qx-data`
+[1m[33mwarning[0m[1m: unused workspace dependency `qx-risk`[0m
+  [1m[94m--> [0mCargo.toml:55:1
+   [1m[94m|[0m
+[1m[94m55[0m [1m[94m|[0m qx-risk = { version = "0.4.0", path = "crates/qx-risk" }
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+[1m[96mhelp[0m: consider removing the workspace dependency `qx-risk`
+[1m[33mwarning[0m[1m: unused field `authors` in `workspace.package`[0m
+  [1m[94m--> [0mCargo.toml:47:1
+   [1m[94m|[0m
+[1m[94m47[0m [1m[94m|[0m authors = ["Qianxing Quant"]
+   [1m[94m|[0m [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `cargo::unused_workspace_package_fields` is set to `warn` by default
+[1m[96mhelp[0m: consider removing the field `workspace.package.authors`
+[1m[33mwarning[0m: workspace (manifest) generated 3 warnings
+[1m[33mwarning[0m[1m: `package.homepage` is redundant with `package.repository`[0m
+ [1m[94m--> [0mcrates/qx-cli/Cargo.toml:8:12
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m repository.workspace = true
+  [1m[94m|[0m [1m[94m----------[0m
+[1m[94m8[0m [1m[94m|[0m homepage = "https://github.com/coeasy/qianxing"
+  [1m[94m|[0m            [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `cargo::redundant_homepage` is set to `warn` by default
+[1m[96mhelp[0m: consider removing `package.homepage`
+[1m[33mwarning[0m: `qx-cli` (manifest) generated 1 warning
+[1m[33mwarning[0m[1m: `package.homepage` is redundant with `package.repository`[0m
+ [1m[94m--> [0mcrates/qx-sdk/Cargo.toml:9:12
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m repository.workspace = true
+  [1m[94m|[0m [1m[94m----------[0m
+[1m[94m8[0m [1m[94m|[0m documentation = "https://docs.rs/qx-sdk"
+[1m[94m9[0m [1m[94m|[0m homepage = "https://github.com/coeasy/qianxing"
+  [1m[94m|[0m            [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `cargo::redundant_homepage` is set to `warn` by default
+[1m[96mhelp[0m: consider removing `package.homepage`
+[1m[33mwarning[0m: `qx-sdk` (manifest) generated 1 warning
+[1m[33mwarning[0m[1m: `package.homepage` is redundant with `package.repository`[0m
+ [1m[94m--> [0mcrates/qx-app/Cargo.toml:9:12
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m repository.workspace = true
+  [1m[94m|[0m [1m[94m----------[0m
+[1m[94m8[0m [1m[94m|[0m documentation = "https://docs.rs/qx-app"
+[1m[94m9[0m [1m[94m|[0m homepage = "https://github.com/coeasy/qianxing"
+  [1m[94m|[0m            [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `cargo::redundant_homepage` is set to `warn` by default
+[1m[96mhelp[0m: consider removing `package.homepage`
+[1m[33mwarning[0m: `qx-app` (manifest) generated 1 warning
+[1m[91merror[0m: no matching package named `serde` found
+location searched: crates.io index
+required by package `qx-core v0.4.0 (/Users/runner/work/qianxing/qianxing/crates/qx-core)`
+note: offline mode (via `--offline`) can sometimes cause surprising resolution failures
+help: if this error is too confusing you may wish to retry without `--offline`
+
+[stderr]
+failed with exit 101

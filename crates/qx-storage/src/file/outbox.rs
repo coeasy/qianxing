@@ -26,6 +26,12 @@ impl FileOutboxStore {
     }
 
     pub fn append(&self, event: OutboxEvent) -> Result<(), StorageError> {
+        let _transaction_lock = acquire_file_event_outbox_lock(&self.root)?;
+        recover_file_event_outbox_journal(&self.root)?;
+        self.append_unlocked(event)
+    }
+
+    pub(crate) fn append_unlocked(&self, event: OutboxEvent) -> Result<(), StorageError> {
         self.validate_append_request(&event)?;
         self.ensure_dirs()?;
         let path = self.event_path(&event.event_id)?;
@@ -39,6 +45,8 @@ impl FileOutboxStore {
     }
 
     pub fn available(&self, now: u64, limit: usize) -> Result<Vec<OutboxEvent>, StorageError> {
+        let _transaction_lock = acquire_file_event_outbox_lock(&self.root)?;
+        recover_file_event_outbox_journal(&self.root)?;
         self.ensure_dirs()?;
         // 共用排序先把可投递事件排前，再将停摆事件留在页尾供人工 claim/ack（V11 R7-d）。
         let mut candidates = Vec::new();
@@ -60,6 +68,8 @@ impl FileOutboxStore {
     /// 文件后端没有索引，这一问与 `available` 一样要枚举每条记录——受限的是返回集不是磁盘
     /// 遍历，见 V11 R7-d 的遗留限制。
     pub fn count_parked(&self) -> Result<u64, StorageError> {
+        let _transaction_lock = acquire_file_event_outbox_lock(&self.root)?;
+        recover_file_event_outbox_journal(&self.root)?;
         self.ensure_dirs()?;
         let mut count = 0_u64;
         for path in self.list_records()? {
@@ -78,6 +88,8 @@ impl FileOutboxStore {
         now: u64,
         lease_seconds: u64,
     ) -> Result<OutboxLease, StorageError> {
+        let _transaction_lock = acquire_file_event_outbox_lock(&self.root)?;
+        recover_file_event_outbox_journal(&self.root)?;
         self.validate_claim_request(event_id, owner, lease_seconds)?;
         self.ensure_dirs()?;
         let _lock = acquire_storage_lock(self.lock_path(event_id)?)?;
@@ -119,6 +131,8 @@ impl FileOutboxStore {
         fencing_token: u64,
         now: u64,
     ) -> Result<(), StorageError> {
+        let _transaction_lock = acquire_file_event_outbox_lock(&self.root)?;
+        recover_file_event_outbox_journal(&self.root)?;
         self.validate_finish_request(event_id)?;
         let _lock = acquire_storage_lock(self.lock_path(event_id)?)?;
         let lease = read_state_json::<OutboxLease>(&self.lease_path(event_id)?)?;
@@ -135,6 +149,8 @@ impl FileOutboxStore {
         fencing_token: u64,
         now: u64,
     ) -> Result<(), StorageError> {
+        let _transaction_lock = acquire_file_event_outbox_lock(&self.root)?;
+        recover_file_event_outbox_journal(&self.root)?;
         self.validate_finish_request(event_id)?;
         let _lock = acquire_storage_lock(self.lock_path(event_id)?)?;
         let lease = read_state_json::<OutboxLease>(&self.lease_path(event_id)?)?;

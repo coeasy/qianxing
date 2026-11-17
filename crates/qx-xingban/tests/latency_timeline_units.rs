@@ -19,6 +19,7 @@ fn buy(client_id: u64) -> Order {
         account_id: "a".into(),
         trace: None,
         policy: None,
+        exact_amounts: None,
     }
 }
 

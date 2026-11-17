@@ -64,6 +64,7 @@ mod test_cases {
                 account_id: "main".into(),
                 trace: None,
                 policy: None,
+                exact_amounts: None,
             })
         }
     }
@@ -102,6 +103,7 @@ mod test_cases {
                     leverage: 5,
                     post_only: false,
                 }),
+                exact_amounts: None,
             })
         }
     }
@@ -145,6 +147,7 @@ mod test_cases {
                     leverage: 5,
                     post_only: false,
                 }),
+                exact_amounts: None,
             })
         }
     }
@@ -179,6 +182,7 @@ mod test_cases {
                     leverage: self.leverage,
                     post_only: false,
                 }),
+                exact_amounts: None,
             })
         }
     }
@@ -217,11 +221,115 @@ mod test_cases {
                         policy: None,
                         reduce_only: false,
                         post_only: false,
+
+                        qty_exact: None,
+                        limit_price_exact: None,
+                        quote_budget: None,
                     }]
                 } else {
                     Vec::new()
                 },
             })
+        }
+    }
+
+    struct NativeSubNanoBuyOnce {
+        submitted: bool,
+        quantity_exact: qx_core::ExactDecimal,
+    }
+
+    impl qx_strategy::Strategy for NativeSubNanoBuyOnce {
+        fn on_event(
+            &mut self,
+            context: &qx_strategy::StrategyContext,
+            event: &qx_strategy::MarketEvent,
+        ) -> Result<qx_strategy::StrategyDecision, String> {
+            let qx_strategy::MarketEvent::Bar { instrument, ts, .. } = event else {
+                return Err("测试策略只接受 Bar".into());
+            };
+            let intents = if self.submitted {
+                Vec::new()
+            } else {
+                self.submitted = true;
+                vec![qx_strategy::StrategyOrderIntent {
+                    intent_id: *ts,
+                    instrument: instrument.clone(),
+                    side: Side::Buy,
+                    qty: Quantity::ZERO,
+                    limit: None,
+                    policy: None,
+                    reduce_only: false,
+                    post_only: false,
+                    qty_exact: Some(self.quantity_exact),
+                    limit_price_exact: None,
+                    quote_budget: None,
+                }]
+            };
+            Ok(qx_strategy::StrategyDecision {
+                schema_version: qx_strategy::STRATEGY_API_VERSION,
+                request_id: format!("subnano-{ts}"),
+                strategy_id: context.strategy_id.clone(),
+                signal_id: *ts,
+                confidence: 1,
+                priority: 0,
+                expires_at: *ts,
+                intents,
+            })
+        }
+    }
+
+    struct NativeQuoteBudgetBuyOnce {
+        submitted: bool,
+        statuses: Vec<qx_strategy::StrategyOrderStatus>,
+    }
+
+    impl qx_strategy::Strategy for NativeQuoteBudgetBuyOnce {
+        fn on_event(
+            &mut self,
+            context: &qx_strategy::StrategyContext,
+            event: &qx_strategy::MarketEvent,
+        ) -> Result<qx_strategy::StrategyDecision, String> {
+            let qx_strategy::MarketEvent::Bar { instrument, ts, .. } = event else {
+                return Err("测试策略只接受 Bar".into());
+            };
+            let intents = if self.submitted {
+                Vec::new()
+            } else {
+                self.submitted = true;
+                vec![qx_strategy::StrategyOrderIntent {
+                    intent_id: *ts,
+                    instrument: instrument.clone(),
+                    side: Side::Buy,
+                    qty: Quantity::ZERO,
+                    limit: None,
+                    policy: None,
+                    reduce_only: false,
+                    post_only: false,
+                    qty_exact: None,
+                    limit_price_exact: None,
+                    quote_budget: Some(qx_core::ExactDecimal::parse("10").unwrap()),
+                }]
+            };
+            Ok(qx_strategy::StrategyDecision {
+                schema_version: qx_strategy::STRATEGY_API_VERSION,
+                request_id: format!("quote-budget-{ts}"),
+                strategy_id: context.strategy_id.clone(),
+                signal_id: *ts,
+                confidence: 1,
+                priority: 0,
+                expires_at: 0,
+                intents,
+            })
+        }
+
+        fn on_strategy_order_status(
+            &mut self,
+            context: &qx_strategy::StrategyContext,
+            update: &qx_strategy::StrategyOrderStatusUpdate,
+        ) -> Result<Option<qx_strategy::StrategyDecision>, String> {
+            update.validate_for(context)?;
+            self.statuses.push(update.status);
+            Ok(None)
         }
     }
 
@@ -234,6 +342,9 @@ mod test_cases {
             venue_id: "paper".into(),
             data_fingerprint: "bars-1".into(),
             as_of: 1,
+            positions_exact: std::collections::BTreeMap::new(),
+            cash_exact: std::collections::BTreeMap::new(),
+            available_margin_exact: None,
             positions: std::collections::BTreeMap::new(),
             cash: std::collections::BTreeMap::new(),
             available_margin_raw: Some(Money::from_i64(1000).raw()),
@@ -254,6 +365,403 @@ mod test_cases {
         assert_eq!(report.fills.len(), 1);
         assert_eq!(report.fills[0].ts, 2);
         assert_eq!(report.fills[0].price.raw(), 102);
+        let decisions = report
+            .event_log
+            .events()
+            .iter()
+            .filter_map(|event| match &event.kind {
+                EventKind::StrategyDecision { decision } => Some((event, decision)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(decisions.len(), 2, "each native callback is auditable");
+        assert_eq!(
+            decisions
+                .iter()
+                .map(|(event, _)| event.ts)
+                .collect::<Vec<_>>(),
+            [2, 3],
+            "strategy decisions are timestamped at their submission boundary"
+        );
+        assert_eq!(
+            decisions
+                .iter()
+                .map(|(_, fact)| fact.signal_id)
+                .collect::<Vec<_>>(),
+            [1, 2],
+            "each decision identifies only the last completed Bar it consumed"
+        );
+        assert!(
+            decisions[1].1.intents.is_empty(),
+            "empty decisions are auditable too"
+        );
+        let emitted = decisions[0].1;
+        assert_eq!(emitted.strategy_id, "native-bar");
+        // Bar(2) consumes the signal formed from visible Bar(1), never Bar(2)'s OHLC.
+        assert_eq!(emitted.signal_id, 1);
+        assert_eq!(emitted.intents.len(), 1);
+        assert_eq!(decisions[0].0.prio, qx_core::Priority::COMMAND);
+        assert_eq!(decisions[0].0.metadata.context.signal_id, "1");
+
+        let risk_event = report
+            .event_log
+            .events()
+            .iter()
+            .find_map(|event| match &event.kind {
+                EventKind::OrderRiskDecision { decision } => Some((event, decision)),
+                _ => None,
+            })
+            .expect("the admitted native order has a replayable risk decision");
+        assert!(risk_event.1.allowed);
+        assert_eq!(risk_event.1.strategy_id.as_deref(), Some("native-bar"));
+        assert_eq!(risk_event.1.signal_id, Some(emitted.signal_id));
+        assert_eq!(risk_event.1.intent_id, Some(emitted.intents[0].intent_id));
+        assert_eq!(risk_event.1.reference_price_raw, Some(100));
+        let submit_index = report
+            .event_log
+            .events()
+            .iter()
+            .position(|event| {
+                matches!(event.kind, EventKind::Submit { client_order_id } if client_order_id == risk_event.1.client_order_id)
+            })
+            .expect("risk decision links to submitted order");
+        let risk_index = report
+            .event_log
+            .events()
+            .iter()
+            .position(|event| event.seq == risk_event.0.seq)
+            .unwrap();
+        assert!(risk_index > 0 && risk_index < submit_index);
+        assert_replay_matches(&report);
+    }
+
+    #[test]
+    fn bar_backtest_admits_exact_market_orders_with_min_notional_using_visible_close() {
+        let instrument = InstrumentId::parse("T.SIM").unwrap();
+        let mut config = simple_config();
+        config.fee = Box::new(MakerTakerFeeModel {
+            maker_bp: 0,
+            taker_bp: 100,
+        });
+        config.instrument_spec = Some(TradingInstrumentSpec {
+            instrument: instrument.clone(),
+            product: qx_core::TradingProduct::Spot,
+            base_currency: "T".into(),
+            quote_currency: "USD".into(),
+            settlement_currency: "USD".into(),
+            contract_size: SCALE,
+            linear: true,
+            inverse: false,
+            price_tick: 1,
+            qty_step: 1,
+            min_qty: 1,
+            min_notional_raw: 0,
+            max_leverage: 1,
+            maintenance_margin_bps: 0,
+            valid_from: 1,
+            valid_to: None,
+            exact_rules: Some(qx_core::ExactTradingRules {
+                contract_size: qx_core::ExactDecimal::ONE,
+                price_tick: qx_core::ExactDecimal::parse("0.000000001").unwrap(),
+                quantity_step: qx_core::ExactDecimal::parse("0.000000000001").unwrap(),
+                minimum_quantity: qx_core::ExactDecimal::parse("0.000000000001").unwrap(),
+                minimum_notional: qx_core::ExactDecimal::parse("0.00000000005").unwrap(),
+            }),
+        });
+        let context = qx_strategy::StrategyContext {
+            strategy_id: "native-subnano".into(),
+            strategy_version: "v1".into(),
+            account_id: "main".into(),
+            venue_id: "SIM".into(),
+            data_fingerprint: "subnano-bars".into(),
+            as_of: 1,
+            positions: BTreeMap::new(),
+            cash: BTreeMap::new(),
+            available_margin_raw: None,
+            risk_state: "ready".into(),
+            positions_exact: BTreeMap::new(),
+            cash_exact: BTreeMap::new(),
+            available_margin_exact: None,
+        };
+        let mut strategy = NativeBarStrategy::new(
+            NativeSubNanoBuyOnce {
+                submitted: false,
+                quantity_exact: qx_core::ExactDecimal::parse("0.000000000001").unwrap(),
+            },
+            context,
+        );
+        let report = BacktestEngine::new(config)
+            .run(
+                &[
+                    Bar::new(1, 100 * SCALE, 100 * SCALE, 100 * SCALE, 100 * SCALE, SCALE),
+                    Bar::new(2, 101 * SCALE, 101 * SCALE, 101 * SCALE, 101 * SCALE, SCALE),
+                    Bar::new(3, 102 * SCALE, 102 * SCALE, 102 * SCALE, 102 * SCALE, SCALE),
+                ],
+                &mut strategy,
+            )
+            .unwrap();
+
+        let expected = qx_core::ExactDecimal::parse("0.000000000001").unwrap();
+        assert_replay_matches(&report);
+        assert!(!report
+            .event_log
+            .events()
+            .iter()
+            .any(|event| matches!(event.kind, EventKind::Rejected { .. })));
+        assert_eq!(report.fills.len(), 1);
+        assert_eq!(report.fills[0].quantity_decimal(), expected);
+        let risk_decision = report
+            .event_log
+            .events()
+            .iter()
+            .find_map(|event| match &event.kind {
+                EventKind::OrderRiskDecision { decision } => Some(decision),
+                _ => None,
+            })
+            .expect("exact market order records its risk reference price");
+        assert!(risk_decision.allowed);
+        assert_eq!(risk_decision.reference_price_raw, Some(100 * SCALE));
+        assert_eq!(
+            report.fills[0].exact_fees[0].currency.as_deref(),
+            Some("USD")
+        );
+        assert_eq!(
+            report.fees_raw, 0,
+            "legacy fee projection must preserve its zero raw value"
+        );
+        assert_eq!(
+            report.turnover_raw, 0,
+            "legacy turnover projection must preserve its zero raw value"
+        );
+        assert_eq!(
+            report.fees_exact_by_currency["USD"].to_string(),
+            "0.00000000000101"
+        );
+        assert_eq!(report.turnover_exact.to_string(), "0.000000000101");
+        assert_eq!(
+            report.exact_metrics_json()["fees_by_currency"]["USD"],
+            "0.00000000000101"
+        );
+        assert_eq!(
+            report.exact_metrics_json()["turnover"]["amount"],
+            "0.000000000101"
+        );
+        assert_eq!(
+            report
+                .ledger
+                .position_for_side_exact("main", &instrument, qx_core::PositionSide::Net)
+                .quantity,
+            expected
+        );
+        assert_eq!(
+            strategy
+                .context
+                .positions_exact
+                .get(&instrument.to_string()),
+            Some(&expected)
+        );
+        assert_eq!(
+            strategy.context.positions.get(&instrument.to_string()),
+            Some(&0),
+            "legacy projection remains zero without losing the exact sidecar"
+        );
+    }
+
+    #[test]
+    fn report_return_basis_points_use_exact_starting_capital_and_equity() {
+        let instrument = InstrumentId::parse("T.SIM").unwrap();
+        let mut config = simple_config();
+        config.initial_cash = Money::from_raw(1);
+        config.instrument_spec = Some(TradingInstrumentSpec {
+            instrument: instrument.clone(),
+            product: qx_core::TradingProduct::Spot,
+            base_currency: "T".into(),
+            quote_currency: "USD".into(),
+            settlement_currency: "USD".into(),
+            contract_size: SCALE,
+            linear: true,
+            inverse: false,
+            price_tick: 1,
+            qty_step: 1,
+            min_qty: 1,
+            min_notional_raw: 0,
+            max_leverage: 1,
+            maintenance_margin_bps: 0,
+            valid_from: 1,
+            valid_to: None,
+            exact_rules: Some(qx_core::ExactTradingRules {
+                contract_size: qx_core::ExactDecimal::ONE,
+                price_tick: qx_core::ExactDecimal::parse("0.000000001").unwrap(),
+                quantity_step: qx_core::ExactDecimal::parse("0.000000000001").unwrap(),
+                minimum_quantity: qx_core::ExactDecimal::parse("0.000000000001").unwrap(),
+                minimum_notional: qx_core::ExactDecimal::ZERO,
+            }),
+        });
+        let context = qx_strategy::StrategyContext {
+            strategy_id: "exact-return".into(),
+            strategy_version: "v1".into(),
+            account_id: "main".into(),
+            venue_id: "SIM".into(),
+            data_fingerprint: "exact-return-bars".into(),
+            as_of: 1,
+            positions: BTreeMap::new(),
+            cash: BTreeMap::new(),
+            available_margin_raw: None,
+            risk_state: "ready".into(),
+            positions_exact: BTreeMap::new(),
+            cash_exact: BTreeMap::new(),
+            available_margin_exact: None,
+        };
+        let mut strategy = NativeBarStrategy::new(
+            NativeSubNanoBuyOnce {
+                submitted: false,
+                quantity_exact: qx_core::ExactDecimal::parse("0.000000000001").unwrap(),
+            },
+            context,
+        );
+        let initial_cash_exact = qx_core::ExactDecimal::parse("0.0000000019").unwrap();
+        let report = BacktestEngine::new(config)
+            .with_initial_cash_exact(initial_cash_exact)
+            .unwrap()
+            .run(
+                &[
+                    Bar::new(1, 100 * SCALE, 100 * SCALE, 100 * SCALE, 100 * SCALE, SCALE),
+                    Bar::new(2, 101 * SCALE, 102 * SCALE, 101 * SCALE, 102 * SCALE, SCALE),
+                    Bar::new(3, 102 * SCALE, 102 * SCALE, 101 * SCALE, 101 * SCALE, SCALE),
+                    Bar::new(4, 101 * SCALE, 102 * SCALE, 101 * SCALE, 102 * SCALE, SCALE),
+                ],
+                &mut strategy,
+            )
+            .unwrap();
+
+        assert_replay_matches(&report);
+        assert_eq!(report.equity.last(), Some(&1));
+        assert_eq!(report.return_bps, 5);
+        assert_eq!(report.max_drawdown_raw, 0);
+        assert_eq!(report.max_drawdown_bps, 5);
+        assert_eq!(report.exact_metrics_json()["equity"]["return_bps"], "5");
+        assert_eq!(
+            report.exact_metrics_json()["equity"]["max_drawdown_bps"],
+            "5"
+        );
+    }
+
+    #[test]
+    fn bar_backtest_fills_quote_budget_by_exact_lot_steps_and_finishes_with_dust() {
+        let instrument = InstrumentId::parse("MEME/USDT.BINANCE").unwrap();
+        let mut config = simple_config();
+        config.instrument = instrument.clone();
+        config.currency = "USDT".into();
+        config.initial_cash = Money::from_i64(100);
+        config.fill = Box::new(
+            crate::fill::BarVolumeParticipationLimit::new(Box::new(NextBarOpenFillModel), 5_000)
+                .unwrap(),
+        );
+        config.instrument_spec = Some(TradingInstrumentSpec {
+            instrument: instrument.clone(),
+            product: qx_core::TradingProduct::Spot,
+            base_currency: "MEME".into(),
+            quote_currency: "USDT".into(),
+            settlement_currency: "USDT".into(),
+            contract_size: SCALE,
+            linear: true,
+            inverse: false,
+            price_tick: SCALE / 100,
+            qty_step: 3_000_000,
+            min_qty: 3_000_000,
+            min_notional_raw: 1,
+            max_leverage: 1,
+            maintenance_margin_bps: 0,
+            valid_from: 1,
+            valid_to: None,
+            exact_rules: Some(qx_core::ExactTradingRules {
+                contract_size: qx_core::ExactDecimal::ONE,
+                price_tick: qx_core::ExactDecimal::parse("0.01").unwrap(),
+                quantity_step: qx_core::ExactDecimal::parse("0.003").unwrap(),
+                minimum_quantity: qx_core::ExactDecimal::parse("0.003").unwrap(),
+                minimum_notional: qx_core::ExactDecimal::parse("0.000000001").unwrap(),
+            }),
+        });
+        let context = qx_strategy::StrategyContext {
+            strategy_id: "native-quote-budget".into(),
+            strategy_version: "v1".into(),
+            account_id: "main".into(),
+            venue_id: "BINANCE".into(),
+            data_fingerprint: "quote-budget-bars".into(),
+            as_of: 1,
+            positions: BTreeMap::new(),
+            cash: BTreeMap::new(),
+            available_margin_raw: None,
+            risk_state: "ready".into(),
+            positions_exact: BTreeMap::new(),
+            cash_exact: BTreeMap::new(),
+            available_margin_exact: None,
+        };
+        let mut strategy = NativeBarStrategy::new(
+            NativeQuoteBudgetBuyOnce {
+                submitted: false,
+                statuses: Vec::new(),
+            },
+            context,
+        );
+        let bars = (1..=9)
+            .map(|ts| Bar::new(ts, 3 * SCALE, 3 * SCALE, 3 * SCALE, 3 * SCALE, SCALE))
+            .collect::<Vec<_>>();
+
+        let report = BacktestEngine::new(config)
+            .run(&bars, &mut strategy)
+            .unwrap();
+
+        let spent = report
+            .fills
+            .iter()
+            .fold(qx_core::ExactDecimal::ZERO, |sum, fill| {
+                sum.checked_add(fill.exact_amounts.unwrap().quote_cost.unwrap())
+                    .unwrap()
+            });
+        let quantity = report
+            .fills
+            .iter()
+            .map(|fill| fill.quantity_decimal())
+            .try_fold(qx_core::ExactDecimal::ZERO, |sum, quantity| {
+                sum.checked_add(quantity)
+            });
+        assert_replay_matches(&report);
+        assert_eq!(report.fills.len(), 7);
+        assert!(report.fills.iter().all(|fill| {
+            fill.quantity_decimal()
+                .is_multiple_of(qx_core::ExactDecimal::parse("0.003").unwrap())
+                == Some(true)
+        }));
+        assert_eq!(
+            quantity,
+            Some(qx_core::ExactDecimal::parse("3.333").unwrap())
+        );
+        assert_eq!(spent, qx_core::ExactDecimal::parse("9.999").unwrap());
+        assert!(spent
+            .checked_cmp(qx_core::ExactDecimal::parse("10").unwrap())
+            .unwrap()
+            .is_le());
+        assert!(report.fills[..6]
+            .iter()
+            .all(|fill| !fill.exact_amounts.unwrap().quote_budget_complete));
+        assert!(report.fills[6].exact_amounts.unwrap().quote_budget_complete);
+        assert_eq!(
+            report
+                .ledger
+                .position_for_side_exact("main", &instrument, qx_core::PositionSide::Net)
+                .quantity,
+            qx_core::ExactDecimal::parse("3.333").unwrap()
+        );
+        assert_eq!(
+            report.ledger.cash_for_exact("main", "USDT"),
+            qx_core::ExactDecimal::parse("90.001").unwrap()
+        );
+        assert_eq!(
+            strategy.strategy.statuses.last(),
+            Some(&qx_strategy::StrategyOrderStatus::Filled),
+            "lot-step residual should be represented as a completed market buy"
+        );
     }
 
     #[test]
@@ -356,6 +864,47 @@ mod test_cases {
             .entries()
             .iter()
             .all(|entry| !matches!(entry.kind, qx_core::LedgerEntryKind::CorporateAction)));
+    }
+
+    #[test]
+    fn maximum_drawdown_uses_each_rolling_peak_before_later_equity_highs() {
+        let bars = vec![
+            Bar::new(1, 100 * SCALE, 101 * SCALE, 99 * SCALE, 100 * SCALE, 10),
+            Bar::new(2, 102 * SCALE, 103 * SCALE, 89 * SCALE, 90 * SCALE, 10),
+            Bar::new(3, 90 * SCALE, 201 * SCALE, 90 * SCALE, 200 * SCALE, 10),
+        ];
+        let report = BacktestEngine::new(simple_config())
+            .run(&bars, &mut BuyOnce { done: false })
+            .unwrap();
+
+        // Equity falls from 1000 to 988, then rallies to 1098. The 120 bps
+        // historical drawdown must not be diluted by the later 1098 equity peak.
+        assert_eq!(
+            report.equity,
+            [1_000, 988, 1_098].map(|value| value * SCALE)
+        );
+        assert_eq!(report.max_drawdown_bps, 120);
+    }
+
+    #[test]
+    fn drawdown_budget_prunes_at_the_first_training_bar_that_breaches_it() {
+        let bars = vec![
+            Bar::new(1, 100 * SCALE, 101 * SCALE, 99 * SCALE, 100 * SCALE, 10),
+            Bar::new(2, 102 * SCALE, 103 * SCALE, 89 * SCALE, 90 * SCALE, 10),
+            Bar::new(3, 90 * SCALE, 201 * SCALE, 90 * SCALE, 200 * SCALE, 10),
+        ];
+        let (status, report) = BacktestEngine::new(simple_config())
+            .run_with_drawdown_pruning(&bars, &mut BuyOnce { done: false }, 2, 3, 115, || false)
+            .unwrap();
+
+        assert_eq!(
+            status,
+            BacktestRunStatus::Pruned {
+                processed_bars: 2,
+                max_drawdown_bps: 120,
+            }
+        );
+        assert!(report.is_none(), "被剪枝的候选不得伪装成完整回测报告");
     }
 
     #[test]
@@ -512,10 +1061,12 @@ mod test_cases {
             price_tick: 1,
             qty_step: 1,
             min_qty: 1,
+            min_notional_raw: 0,
             max_leverage: 100,
             maintenance_margin_bps: 500,
             valid_from: 1,
             valid_to: None,
+            exact_rules: None,
         });
         let derivative_report = BacktestEngine::new(derivative)
             .run(&bars, &mut BuyOnce { done: false })
@@ -611,6 +1162,24 @@ mod test_cases {
         let report = BacktestEngine::new(config)
             .run(&bars, &mut BuyOnce { done: false })
             .unwrap();
+        let initial_deposit = report
+            .event_log
+            .events()
+            .first()
+            .expect("initial cash must be represented by a replayable ledger fact");
+        assert!(matches!(
+            initial_deposit.kind,
+            EventKind::LedgerApplied { .. }
+        ));
+        assert_eq!(initial_deposit.ts, bars[0].ts);
+        assert_eq!(
+            initial_deposit.prio,
+            qx_core::Priority::TIMER,
+            "same-timestamp interest requires initial cash to precede pre-decision account events"
+        );
+        let replay_facts =
+            ReplayVerifier::verify(report.event_log.events(), &report.ledger).unwrap();
+        assert_eq!(replay_facts.ledger_entries, report.ledger.entries().len());
         assert!(report
             .ledger
             .entries()
@@ -647,10 +1216,12 @@ mod test_cases {
             price_tick: 1,
             qty_step: 1,
             min_qty: 1,
+            min_notional_raw: 0,
             max_leverage: 100,
             maintenance_margin_bps: 500,
             valid_from: 1,
             valid_to: None,
+            exact_rules: None,
         });
         let bars = vec![
             Bar::new(
@@ -732,10 +1303,12 @@ mod test_cases {
             price_tick: 1,
             qty_step: 1,
             min_qty: 1,
+            min_notional_raw: 0,
             max_leverage: 10,
             maintenance_margin_bps: 500,
             valid_from: 1,
             valid_to: None,
+            exact_rules: None,
         };
         let bars = vec![
             Bar::new(
@@ -803,10 +1376,12 @@ mod test_cases {
             price_tick: 1,
             qty_step: 1,
             min_qty: 1,
+            min_notional_raw: 0,
             max_leverage: 100,
             maintenance_margin_bps: 100,
             valid_from: 1,
             valid_to: None,
+            exact_rules: None,
         };
         let bars = vec![
             Bar::new(
@@ -874,10 +1449,12 @@ mod test_cases {
             price_tick: 1,
             qty_step: 1,
             min_qty: 1,
+            min_notional_raw: 0,
             max_leverage: 100,
             maintenance_margin_bps: 100,
             valid_from: 1,
             valid_to: None,
+            exact_rules: None,
         });
         accepted.margin = Box::new(TieredMargin {
             tiers: vec![MarginTier {
@@ -918,10 +1495,12 @@ mod test_cases {
             price_tick: 1,
             qty_step: 1,
             min_qty: 1,
+            min_notional_raw: 0,
             max_leverage: 100,
             maintenance_margin_bps: 100,
             valid_from: 1,
             valid_to: None,
+            exact_rules: None,
         };
         let flat_bar = |ts: u64, price: i64| {
             let raw = i128::from(price) * qx_core::SCALE;
@@ -972,12 +1551,12 @@ mod test_cases {
         let forced = charged.fills[1].fee.raw();
         assert_eq!(
             entry,
-            qx_core::bp_amount(100 * qx_core::SCALE, 50),
+            qx_core::bp_amount(100 * qx_core::SCALE, 50).unwrap(),
             "开仓按 taker 计费"
         );
         assert_eq!(
             forced,
-            qx_core::bp_amount(10 * qx_core::SCALE, 50),
+            qx_core::bp_amount(10 * qx_core::SCALE, 50).unwrap(),
             "强平必须按同一 taker 费率收佣金"
         );
         assert_eq!(
@@ -1014,10 +1593,12 @@ mod test_cases {
             price_tick: 1,
             qty_step: 1,
             min_qty: 1,
+            min_notional_raw: 0,
             max_leverage: 10,
             maintenance_margin_bps: 500,
             valid_from: 1,
             valid_to: None,
+            exact_rules: None,
         });
         let report = BacktestEngine::new(config)
             .run(&bars, &mut ReduceOnlyBuyOnce { done: false })
@@ -1057,6 +1638,7 @@ mod test_cases {
                 account_id: "main".into(),
                 trace: None,
                 policy: None,
+                exact_amounts: None,
             })
         }
     }

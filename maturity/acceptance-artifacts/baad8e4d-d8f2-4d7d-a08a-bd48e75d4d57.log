@@ -1,0 +1,11 @@
+$ python3 -m unittest python.tests.test_worker_crash_recovery_psql_path
+exit_code=0
+
+[stdout]
+
+[stderr]
+...
+----------------------------------------------------------------------
+Ran 3 tests in 0.004s
+
+OK

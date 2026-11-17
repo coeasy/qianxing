@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "benchmark": "event_log_file_backend_append_comparison",
+  "generated_at_utc": "2026-11-07T05:51:02.001462+00:00",
+  "command": [
+    "cargo",
+    "run",
+    "-p",
+    "qx-storage",
+    "--example",
+    "segmented_event_log_append",
+    "--release",
+    "--offline",
+    "-j1"
+  ],
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "profile": "release",
+  "source_sha256": {
+    "benchmarks/run_segmented_event_log_bench.py": "5cb1cc4c16fec2b61a17cbe17226ad936e6c416dd5050c0f4838cf5769610c91",
+    "crates/qx-storage/examples/segmented_event_log_append.rs": "2d14bf3c3d8afc167c43ab8246702aa30576b5599e342bc51b233c4425f856f2",
+    "crates/qx-storage/src/lib.rs": "b5cdd5fb50d85fa24ecc8fdf4d535682593805bea0f95be35b7b233eb9576ee6",
+    "crates/qx-storage/src/segmented_event_log.rs": "83810393609c6eb60a3170651d0fb871e5c91505945d166a00c3a9e45b6b847b"
+  },
+  "storage": {
+    "events_per_segment": 1024,
+    "flat_file": "each timed append uses EventLogFileStore::write, including existing-log read, prefix validation, full JSON serialization, atomic replacement and sync",
+    "segmented_same_instance": "manifest has been validated and cached by the writing store; timed append writes only the active segment tail and manifest",
+    "segmented_reopened_store": "new store instance validates and loads the existing segmented log during timed append",
+    "os_file_cache_controlled": false
+  },
+  "results": [
+    {
+      "appended_events": 1,
+      "benchmark": "event_log_file_backend_append_comparison",
+      "events_per_segment": 1024,
+      "flat_file_median_ms": 5.857,
+      "history_events": 1000,
+      "manifest_bytes": 150,
+      "repeats": 7,
+      "segmented_reopened_store_median_ms": 5.373,
+      "segmented_same_instance_warm_median_ms": 3.5539
+    },
+    {
+      "appended_events": 1,
+      "benchmark": "event_log_file_backend_append_comparison",
+      "events_per_segment": 1024,
+      "flat_file_median_ms": 21.0213,
+      "history_events": 8000,
+      "manifest_bytes": 149,
+      "repeats": 7,
+      "segmented_reopened_store_median_ms": 14.9794,
+      "segmented_same_instance_warm_median_ms": 3.6942
+    },
+    {
+      "appended_events": 1,
+      "benchmark": "event_log_file_backend_append_comparison",
+      "events_per_segment": 1024,
+      "flat_file_median_ms": 155.47220000000002,
+      "history_events": 64000,
+      "manifest_bytes": 152,
+      "repeats": 7,
+      "segmented_reopened_store_median_ms": 91.8485,
+      "segmented_same_instance_warm_median_ms": 3.9265999999999996
+    }
+  ],
+  "limitations": [
+    "This microbenchmark measures one appended event after constructing the in-memory history; it does not measure full backtest throughput.",
+    "The flat-file path includes full existing-log decoding, prefix validation, serialization and atomic write; segmented reopened-store includes full history verification.",
+    "Operating-system file cache is uncontrolled, and results are host-specific rather than product capacity guarantees.",
+    "Synthetic EventKind::Settle histories do not represent production event mixes or the nine product profiles."
+  ]
+}

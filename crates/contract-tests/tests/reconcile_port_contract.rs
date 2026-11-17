@@ -5,12 +5,15 @@
 //! 一致的可观察结果：序号独占推进、correlation 口径、订单置为 Unknown、且绝不
 //! 触碰 Ledger。
 
+#[path = "common/temp_root.rs"]
+mod temp_root;
+use temp_root::test_temp_root;
+
 use qx_core::{InstrumentId, Order, OrderStatus, Price, Quantity, Side};
 use qx_execution::EventLogReconcilePort;
 use qx_execution::{EventAppender, ExecutionEvent, ExecutionEventEnvelope, OrderStore};
 use qx_runtime::LiveEventPipeline;
 use std::collections::{BTreeMap, BTreeSet};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// 一条待对账事实的可观察部分（订单号、业务时间、接收时间、来源序号、审计关联）。
 type ReconcileFact = (u64, u64, u64, u64, String);
@@ -35,6 +38,7 @@ impl ReconcileHarness for LiveEventPipeline {
             account_id: "main".into(),
             trace: None,
             policy: None,
+            exact_amounts: None,
         };
         // 走应用层端口注册，与 worker 生产路径一致（带 correlation 审计）。
         <Self as OrderStore>::register_order(self, order, 1, Some("contract-order".into()))
@@ -161,14 +165,7 @@ fn assert_reconcile_port_contract<H: ReconcileHarness>(harness: &mut H) {
 
 #[test]
 fn reconcile_port_contract_holds_on_paper_event_log() {
-    let root = std::env::temp_dir().join(format!(
-        "qianxing-reconcile-port-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = test_temp_root("reconcile-port");
     let mut pipeline = LiveEventPipeline::open(&root, "events", "USDT").unwrap();
     assert_reconcile_port_contract(&mut pipeline);
     let _ = std::fs::remove_dir_all(root);

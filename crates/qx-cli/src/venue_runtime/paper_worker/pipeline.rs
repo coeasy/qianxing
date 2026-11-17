@@ -14,9 +14,43 @@ pub(crate) struct PaperPipelineOutcome {
     pub(crate) new_ledger_entries: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PaperE2eQuoteOverride {
+    pub(crate) price_raw: i128,
+    pub(crate) quantity_raw: i128,
+}
+
+fn paper_e2e_quote(
+    quote_override: Option<PaperE2eQuoteOverride>,
+) -> Result<(Price, Quantity, Price, Quantity), String> {
+    if let Some(quote) = quote_override {
+        if quote.price_raw <= 0 || quote.quantity_raw <= 0 {
+            return Err("Paper E2E 合成报价 price_raw 和 quantity_raw 必须为正数".into());
+        }
+        let price = Price::from_raw(quote.price_raw);
+        let quantity = Quantity::from_raw(quote.quantity_raw);
+        Ok((price, quantity, price, quantity))
+    } else {
+        Ok((
+            Price::from_i64(99),
+            Quantity::from_i64(1_000),
+            Price::from_i64(100),
+            Quantity::from_i64(1_000),
+        ))
+    }
+}
+
 pub(crate) fn run_paper_pipeline_once_with_report(
     path: &Path,
     print_summary: bool,
+) -> Result<PaperPipelineOutcome, String> {
+    run_paper_pipeline_once_with_quote(path, print_summary, None)
+}
+
+pub(crate) fn run_paper_pipeline_once_with_quote(
+    path: &Path,
+    print_summary: bool,
+    quote_override: Option<PaperE2eQuoteOverride>,
 ) -> Result<PaperPipelineOutcome, String> {
     let config = read_runtime_config(path)?;
     let scheduler_id = config
@@ -79,18 +113,12 @@ pub(crate) fn run_paper_pipeline_once_with_report(
         .as_deref()
         .and_then(InstrumentId::parse)
         .ok_or_else(|| "Paper 验收策略缺少合法 instrument".to_string())?;
+    let (bid, bid_qty, ask, ask_qty) = paper_e2e_quote(quote_override)?;
     let market_ts = runtime_timestamp_ms();
     market_pipeline
         .ingest(RuntimeEventEnvelope::market_quote(
             instrument,
-            QuoteTick::new(
-                market_ts,
-                Price::from_i64(99),
-                Quantity::from_i64(1_000),
-                Price::from_i64(100),
-                Quantity::from_i64(1_000),
-                market_ts,
-            ),
+            QuoteTick::new(market_ts, bid, bid_qty, ask, ask_qty, market_ts),
             market_ts,
             market_ts,
             format!("{log_name}:paper-check-market:{market_ts}"),
@@ -188,4 +216,43 @@ pub(crate) fn run_paper_pipeline_once_with_report(
         ledger_entries_total: ledger_now,
         new_ledger_entries: new_ledger,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{paper_e2e_quote, PaperE2eQuoteOverride};
+    use crate::{Price, Quantity};
+
+    #[test]
+    fn paper_e2e_quote_keeps_default_and_supports_fixture_price_override() {
+        let (bid, bid_qty, ask, ask_qty) = paper_e2e_quote(None).unwrap();
+        assert_eq!(bid, Price::from_i64(99));
+        assert_eq!(ask, Price::from_i64(100));
+        assert_eq!(bid_qty, Quantity::from_i64(1_000));
+        assert_eq!(ask_qty, Quantity::from_i64(1_000));
+
+        let (bid, bid_qty, ask, ask_qty) = paper_e2e_quote(Some(PaperE2eQuoteOverride {
+            price_raw: 3_000_000_000,
+            quantity_raw: 225_000_000_000,
+        }))
+        .unwrap();
+        assert_eq!(bid, Price::from_raw(3_000_000_000));
+        assert_eq!(ask, bid);
+        assert_eq!(bid_qty, Quantity::from_raw(225_000_000_000));
+        assert_eq!(ask_qty, bid_qty);
+    }
+
+    #[test]
+    fn paper_e2e_quote_rejects_nonpositive_values() {
+        assert!(paper_e2e_quote(Some(PaperE2eQuoteOverride {
+            price_raw: 0,
+            quantity_raw: 1,
+        }))
+        .is_err());
+        assert!(paper_e2e_quote(Some(PaperE2eQuoteOverride {
+            price_raw: 1,
+            quantity_raw: 0,
+        }))
+        .is_err());
+    }
 }

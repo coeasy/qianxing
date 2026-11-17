@@ -1,0 +1,7 @@
+$ python3 benchmarks/run_prepared_evaluation_capacity.py --binary target/debug/qx-cli --control-queue-only --queue-backend file --queue-capacity 4096 --out maturity/evidence/control-command-queue-capacity-linux-file.json
+exit_code=0
+
+[stdout]
+{"crash_recovery_count": 0, "crash_recovery_samples": 0, "largest_journal_bytes": 0, "out": "maturity/evidence/control-command-queue-capacity-linux-file.json", "queue_backend": "file", "queue_kind": "control-command", "queue_overflow_rejected": true, "queue_pending": 4096, "result_sha256": "59b71a6f3f83160eda2936296f3a4ca7b11a53f670cde76e4f0fd71ed8670b9b", "workload_count": 0}
+
+[stderr]

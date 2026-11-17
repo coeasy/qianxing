@@ -1,0 +1,210 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://qianxing.local/schemas/strategy-deployment-status-v1.json",
+  "title": "Strategy deployment operational status v1",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "worker_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "strategy_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "strategy_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "account_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "venue_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "state": {
+      "enum": [
+        "unobserved",
+        "initializing",
+        "running",
+        "paused",
+        "stopped",
+        "failed",
+        "stale",
+        "configuration_changed",
+        "ownership_conflict",
+        "disabled"
+      ]
+    },
+    "observed_at_ms": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "observation": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "anyOf": [
+            {
+              "$ref": "strategy-worker-observation-v1.json"
+            },
+            {
+              "$ref": "strategy-worker-observation-v2.json"
+            },
+            {
+              "$ref": "strategy-worker-observation-v3.json"
+            }
+          ]
+        }
+      ]
+    },
+    "active_owner_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "trading_enabled": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "null means actual trading authorization is not evaluated"
+    },
+    "blocking_reasons": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "desired_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Target revision of the newest accepted or terminal deployment operation."
+    },
+    "desired_running": {
+      "type": "boolean",
+      "description": "Desired process state inferred from the newest deployment operation."
+    },
+    "latest_operation": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "strategy-deployment-operation-v1.json"
+        }
+      ]
+    },
+    "reconciliation": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "schema_version": {
+              "const": 1
+            },
+            "state": {
+              "enum": [
+                "not_configured",
+                "missing",
+                "invalid",
+                "future",
+                "stale",
+                "discrepant",
+                "clean"
+              ]
+            },
+            "matching_report_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "fresh_report_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "observed_at_ms": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "freshest_age_ms": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "blocking_reasons": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "schema_version",
+            "state",
+            "matching_report_count",
+            "fresh_report_count",
+            "observed_at_ms",
+            "freshest_age_ms",
+            "blocking_reasons"
+          ]
+        }
+      ]
+    },
+    "operation_history": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "$ref": "strategy-deployment-operation-v1.json"
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "worker_id",
+    "strategy_id",
+    "strategy_version",
+    "account_id",
+    "venue_id",
+    "enabled",
+    "state",
+    "observed_at_ms",
+    "observation",
+    "active_owner_ids",
+    "trading_enabled",
+    "blocking_reasons"
+  ]
+}

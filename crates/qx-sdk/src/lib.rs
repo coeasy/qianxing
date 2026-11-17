@@ -61,18 +61,27 @@ pub use qx_execution::{
     VenueMarketScope, VenueOrderType, VenuePort, VenueRouterPort, VwapVolumeBucket,
     MAX_ALGO_CHILDREN, PAPER_VENUE_CAPABILITIES,
 };
+pub use qx_strategy::diagnostics::{
+    diagnose_startup_trajectory, diagnose_startup_windows, StartupDiagnostics,
+    StartupTrajectoryDiagnostics, StartupTrajectoryDivergence, StartupWindowObservation,
+};
 pub use remote::{RemoteApiClient, RemoteApiError, RemoteResponse, RemoteTransport};
 
 // —— §6.1「统一错误」——
-pub use qx_app::{builtin_strategy_catalog, BuiltinStrategyInfo};
+pub use qx_app::{
+    builtin_strategy_catalog, builtin_strategy_recipe_catalog, BuiltinStrategyInfo,
+    BuiltinStrategyRecipe, BuiltinStrategyRecipeCatalog, StrategyRecipeParameter,
+};
 pub use qx_app::{AppAction, AppError, AppErrorCategory, AppRetry};
 
 // —— §6.1「capabilities」与多源数据 Provider 端口 ——
 // DataProvider 的公开签名直接使用 RawRecord，因此同时重导出来源身份和记录类型；
 // 独立消费者只依赖 qx-sdk 即可注册数据源、做确定性主备选择并保留血缘。
 pub use qx_app::{
-    ProviderBacktestOutcome, ProviderBacktestSpec, ProviderDepthBacktestOutcome,
-    ProviderDepthBacktestSpec, FUNDING_RATE_JSON_CONTENT_TYPE,
+    CorporateActionPolicy, DatasetCoverageGapV1, DatasetInstrumentRole, DatasetSnapshotContextV1,
+    DatasetSnapshotV1, DatasetTimestampSemantics, ProviderBacktestOutcome, ProviderBacktestSpec,
+    ProviderDepthBacktestOutcome, ProviderDepthBacktestSpec, FUNDING_RATE_JSON_CONTENT_TYPE,
+    FUNDING_RATE_JSON_CONTENT_TYPE_V2,
 };
 pub use qx_provider::{
     DataKind, DataProvider, DataQuery, DataRequest, DataRequirements, DataSourceId,
@@ -88,15 +97,17 @@ pub use qx_app::{
     screen_bar_frames, AlgoExecutionMethod, AlgoExecutionPlan, AlgoExecutionSpec,
     BacktestDatasetInput, BacktestSpec, BuiltinStrategySpec, CapitalAllocationAccount,
     CapitalAllocationRequest, CapitalAllocationResult, CapitalAllocationSpec, CompareRunsSpec,
-    DatasetSpec, DepthBacktestSpec, MakerTakerFeeSchedule, MultiAccountBacktestSpec,
-    MultiAccountDepthBacktestSpec, MultiLegBacktestSpec, MultiLegDatasetInput, MultiLegFillModel,
-    MultiMarketBacktestMarket, MultiMarketBacktestSpec, MultiMarketDepthBacktestMarket,
-    MultiMarketDepthBacktestOutcome, MultiMarketDepthBacktestSpec, PortfolioBacktestConfig,
-    PortfolioStrategySpec, RiskParityAssetSpec, RiskParityResult, RiskParitySpec,
-    RunDepthExperimentSpec, RunExperimentSpec, RunMultiLegExperimentSpec,
-    RunMultiMarketDepthExperimentSpec, RunMultiMarketExperimentSpec, StrategyArtifactIdentity,
-    TradeControlSpec, TradeWorkflow, ALGO_EXECUTION_SPEC_SCHEMA_VERSION,
-    RISK_PARITY_RESULT_SCHEMA_VERSION, RISK_PARITY_SPEC_SCHEMA_VERSION,
+    DatasetSpec, DepthBacktestSpec, ExperimentEarlyPruningPlan, ExperimentParameterRange,
+    ExperimentSearchAlgorithm, ExperimentSearchPlan, MakerTakerFeeSchedule,
+    MultiAccountBacktestSpec, MultiAccountDepthBacktestSpec, MultiAccountJointBacktestSpec,
+    MultiLegBacktestSpec, MultiLegDatasetInput, MultiLegFillModel, MultiMarketBacktestMarket,
+    MultiMarketBacktestSpec, MultiMarketDepthBacktestMarket, MultiMarketDepthBacktestOutcome,
+    MultiMarketDepthBacktestSpec, PortfolioBacktestConfig, PortfolioStrategySpec,
+    RiskParityAssetSpec, RiskParityResult, RiskParitySpec, RunDepthExperimentSpec,
+    RunExperimentSpec, RunMultiLegExperimentSpec, RunMultiMarketDepthExperimentSpec,
+    RunMultiMarketExperimentSpec, StrategyArtifactIdentity, TradeControlSpec, TradeWorkflow,
+    ALGO_EXECUTION_SPEC_SCHEMA_VERSION, RISK_PARITY_RESULT_SCHEMA_VERSION,
+    RISK_PARITY_SPEC_SCHEMA_VERSION,
 };
 pub use qx_strategy::{
     BuiltinStrategyKind, MarketEvent, Strategy, StrategyContext, StrategyDecision,
@@ -128,14 +139,20 @@ pub use qx_app::{CallerCapability, RunContext};
 pub use qx_app::{
     BacktestArtifacts, BacktestOutcome, CompareRunsResult, ComparedRun, ComparedRunResult,
     DatasetVerdict, DepthBacktestOutcome, DepthExperimentCandidate, DepthExperimentRankedCandidate,
-    ExperimentBaselineReport, ExperimentCandidateResult, ExperimentFoldReport,
-    ExperimentOutOfSampleReport, ExperimentParameterSpace, ExperimentSplitPlan,
-    MultiAccountBacktestResult, MultiAccountBacktestSummary, MultiAccountDepthBacktestResult,
-    MultiAccountDepthBacktestSummary, MultiAccountDepthRunResult, MultiAccountRunResult,
+    ExecutionCostSensitivityFoldDelta, ExecutionCostSensitivityNeighborResult,
+    ExecutionCostSensitivityNeighborhoodResult, ExecutionCostSensitivityResult,
+    ExecutionCostSensitivityScenario, ExperimentBaselineReport, ExperimentCandidatePruning,
+    ExperimentCandidateResult, ExperimentCrossFoldRobustness, ExperimentFoldReport,
+    ExperimentFoldSearchReport, ExperimentNeighborhoodAssessment, ExperimentNeighborhoodReport,
+    ExperimentOutOfSampleReport, ExperimentParameterSpace, ExperimentSearchObjective,
+    ExperimentSearchReport, ExperimentSearchTrial, ExperimentSplitPlan, MultiAccountBacktestResult,
+    MultiAccountBacktestSummary, MultiAccountDepthBacktestResult, MultiAccountDepthBacktestSummary,
+    MultiAccountDepthRunResult, MultiAccountJointBacktestOutcome, MultiAccountRunResult,
     MultiLegBacktestOutcome, MultiLegExperimentCandidate, MultiLegExperimentRankedCandidate,
     MultiMarketBacktestOutcome, MultiMarketDepthExperimentCandidate,
     MultiMarketDepthExperimentRankedCandidate, MultiMarketExperimentCandidate,
-    MultiMarketExperimentRankedCandidate, RunDepthExperimentResult, RunExperimentResult,
+    MultiMarketExperimentFoldSearchReport, MultiMarketExperimentRankedCandidate,
+    MultiMarketExperimentSearchReport, RunDepthExperimentResult, RunExperimentResult,
     RunMultiLegExperimentResult, RunMultiMarketDepthExperimentResult,
     RunMultiMarketExperimentResult, VerificationResult,
 };
@@ -154,13 +171,13 @@ pub use qx_app::{rejection_count, rejection_facts, rejection_facts_line, spread_
 
 // —— 契约版本与硬上限（调用方要按它们做兼容判断）——
 pub use qx_app::{
-    BACKTEST_SPEC_SCHEMA_VERSION, DATASET_SPEC_SCHEMA_VERSION, DEPTH_BACKTEST_SPEC_SCHEMA_VERSION,
-    MAX_EXPERIMENT_CANDIDATES, MAX_MULTI_ACCOUNT_RUNS, MAX_MULTI_MARKET_EXPERIMENT_CANDIDATES,
-    MIN_BACKTEST_BARS, MULTI_ACCOUNT_BACKTEST_SCHEMA_VERSION,
-    MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION, MULTI_LEG_FUNDING_INTERVAL_MS,
-    RUN_DEPTH_EXPERIMENT_SCHEMA_VERSION, RUN_EXPERIMENT_SCHEMA_VERSION,
-    RUN_MULTI_LEG_EXPERIMENT_SCHEMA_VERSION, RUN_MULTI_MARKET_EXPERIMENT_SCHEMA_VERSION,
-    TRADE_CONTROL_SCHEMA_VERSION,
+    BACKTEST_SPEC_EXACT_SCHEMA_VERSION, BACKTEST_SPEC_SCHEMA_VERSION, DATASET_SPEC_SCHEMA_VERSION,
+    DEPTH_BACKTEST_SPEC_SCHEMA_VERSION, MAX_EXPERIMENT_CANDIDATES, MAX_MULTI_ACCOUNT_RUNS,
+    MAX_MULTI_MARKET_EXPERIMENT_CANDIDATES, MIN_BACKTEST_BARS,
+    MULTI_ACCOUNT_BACKTEST_SCHEMA_VERSION, MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION,
+    MULTI_LEG_FUNDING_INTERVAL_MS, RUN_DEPTH_EXPERIMENT_SCHEMA_VERSION,
+    RUN_EXPERIMENT_SCHEMA_VERSION, RUN_MULTI_LEG_EXPERIMENT_SCHEMA_VERSION,
+    RUN_MULTI_MARKET_EXPERIMENT_SCHEMA_VERSION, TRADE_CONTROL_SCHEMA_VERSION,
 };
 
 // —— §6.1「Provider/Venue extension ports」——

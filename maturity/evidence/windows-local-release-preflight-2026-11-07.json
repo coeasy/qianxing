@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "kind": "windows_local_release_preflight",
+  "acceptance_id": "windows-local-release-preflight-current-worktree-2026-11-07",
+  "generated_at_utc": "2026-11-07T10:44:55.257331+00:00",
+  "source": {
+    "head_commit": "4a70e85093906d1fc114970ec6349121dbcaa9f6",
+    "working_tree_changes_included": true,
+    "dirty_path_count_at_clean_install": 689,
+    "measurement_source_fingerprint": "91282bb28e9b4e391ab896e52b40dd32d4c1e1e19992adb7f096afabee452336",
+    "release_artifact": false,
+    "dirty_path_count_at_preflight_record_update": 690
+  },
+  "environment": {
+    "platform": "Windows-11-10.0.22631-SP0",
+    "python": "3.13.13",
+    "rust_target": "x86_64-pc-windows-msvc",
+    "cpp_compiler": "MSVC 19.44.35227.0"
+  },
+  "checks": [
+    {
+      "command": "cargo test --workspace --all-features -j 1 --quiet",
+      "result": "passed",
+      "exit_code": 0
+    },
+    {
+      "command": "python -m pytest python/tests -q",
+      "result": "passed",
+      "passed": 687,
+      "skipped": 14,
+      "failed": 0
+    },
+    {
+      "command": "cargo clippy --workspace --all-targets -j 1 -- -D warnings",
+      "result": "passed",
+      "exit_code": 0
+    },
+    {
+      "command": "cargo clippy --workspace --lib --bins -j 1 -- -D clippy::unwrap_used -D clippy::expect_used",
+      "result": "passed",
+      "exit_code": 0
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "result": "passed",
+      "exit_code": 0
+    },
+    {
+      "command": "python tools/check_architecture.py --fast",
+      "result": "passed",
+      "shards": 4,
+      "named_checks": 372,
+      "duplicates": 0
+    },
+    {
+      "command": "python tools/generate_unverified.py --check && python tools/generate_capability_catalog.py --check",
+      "result": "passed"
+    },
+    {
+      "command": "python tools/check_markdown_links.py",
+      "result": "passed",
+      "tracked_files": 78,
+      "path_citations": 4167,
+      "case_mismatches": 0
+    },
+    {
+      "command": "python tools/check_strategy_refactor_ledger.py",
+      "result": "passed",
+      "scenarios": 23,
+      "artifact_bound_runs": 271
+    },
+    {
+      "command": "CMake Windows SDK build and CTest",
+      "result": "passed",
+      "tests_passed": 3,
+      "tests_failed": 0
+    },
+    {
+      "command": "Install exported CMake package and build/test consumer",
+      "result": "passed",
+      "tests_passed": 1,
+      "tests_failed": 0
+    },
+    {
+      "command": "Rust host loads compiled C++ C ABI plugin",
+      "result": "passed",
+      "tests_passed": 1
+    },
+    {
+      "command": "C++ JSONL and shared-memory worker contracts",
+      "result": "passed",
+      "protocols": [
+        "shared_memory_json",
+        "shared_memory_columnar"
+      ]
+    },
+    {
+      "command": "Current-source Windows clean wheel and separate CLI install",
+      "result": "passed",
+      "acceptance_evidence": "maturity/evidence/clean-install-current-worktree-2026-11-07.json",
+      "wheel_sha256": "9008ec8668c4e40eb008e27dcd0dc1faf91c25c6899e1f7f3f42c9ec75f1f588",
+      "cli_sha256": "cb8837b09e736d0c982417b82ffaf877fca7cf900814c60810c68ea1a30e08b3"
+    },
+    {
+      "scope": "feature-off",
+      "command": "cargo clippy -p qx-runtime -p qx-storage -p qx-api -p qx-service -p qx-cli -p qx-python --no-default-features --all-targets -- -D warnings",
+      "result": "passed",
+      "exit_code": 0
+    },
+    {
+      "scope": "feature-off",
+      "command": "cargo check -p qx-runtime -p qx-storage -p qx-api -p qx-service -p qx-cli -p qx-python --no-default-features --all-targets",
+      "result": "passed",
+      "exit_code": 0
+    },
+    {
+      "scope": "feature-matrix",
+      "command": "CI qx-cli feature matrix; each leg ran clippy --all-targets, check, and test with --no-default-features",
+      "result": "passed",
+      "legs": [
+        {
+          "features": "sqlite",
+          "clippy": "passed",
+          "check": "passed",
+          "test": "passed"
+        },
+        {
+          "features": "postgres",
+          "clippy": "passed",
+          "check": "passed",
+          "test": "passed"
+        },
+        {
+          "features": "nats",
+          "clippy": "passed",
+          "check": "passed",
+          "test": "passed"
+        },
+        {
+          "features": "postgres,nats",
+          "clippy": "passed",
+          "check": "passed",
+          "test": "passed"
+        },
+        {
+          "features": "sqlite,bench-prepared-evaluation",
+          "clippy": "passed",
+          "check": "passed",
+          "test": "passed"
+        }
+      ]
+    },
+    {
+      "command": "go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 <all .github/workflows/*.yml>",
+      "result": "passed",
+      "exit_code": 0
+    },
+    {
+      "command": "node --check web/console/app.js",
+      "result": "passed",
+      "exit_code": 0
+    },
+    {
+      "command": "python -m unittest tools.test_binance_testnet_acceptance",
+      "result": "passed",
+      "tests_passed": 6,
+      "tests_failed": 0
+    },
+    {
+      "command": "Cargo/Python/baseline/CMake version consistency against existing v0.3.0 tag",
+      "result": "passed",
+      "version": "0.3.0"
+    }
+  ],
+  "limitations": [
+    "Linux and macOS execution remain unverified on this worktree.",
+    "PostgreSQL live tests requiring QX_TEST_POSTGRES_DSN were skipped because no local PostgreSQL instance/DSN is configured.",
+    "The acceptance source tree is dirty and unpublished; generated wheel and CLI are not release artifacts."
+  ]
+}

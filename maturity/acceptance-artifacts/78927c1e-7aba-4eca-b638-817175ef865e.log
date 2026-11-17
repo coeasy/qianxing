@@ -1,0 +1,6 @@
+test_data_error_ladder_is_the_only_source_of_data_exit_codes (python.tests.test_ashare.DataCliTest.test_data_error_ladder_is_the_only_source_of_data_exit_codes) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.019s
+
+OK

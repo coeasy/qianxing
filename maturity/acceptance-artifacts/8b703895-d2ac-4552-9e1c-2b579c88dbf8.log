@@ -1,0 +1,3 @@
+LEG r17g3_mdlinks rc=0 seconds=0.83 bytes=51
+LEG r17g3_pointers rc=1 seconds=20.88 bytes=1939
+GATE_FAIL pointers scanned set 77 != mdlinks checked set 78 (scope mirror broken)

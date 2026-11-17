@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "evidence_id": "public-ccxt-shared-wheel-workflow-local-2026-11-13",
+  "recorded_at": "2026-11-13",
+  "scope": "Deduplicate Linux wheel and CLI builds across the three-venue public quickstart matrix",
+  "environment": {
+    "os": "Windows",
+    "workspace_commit_before_change": "5c59bc9530de5ff8557c39b3bbb32ab74365cfda"
+  },
+  "change": {
+    "before": "Each OKX, Binance, and Bitget matrix job built the same Linux release wheel and qx-cli binary.",
+    "after": "One build job uploads a tar archive; all three venue jobs download and reuse it, then independently install the wheel and execute public-data acceptance."
+  },
+  "verification": [
+    {
+      "command": "go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/public-ccxt-quickstart.yml",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "limitations": [
+    "The previous hosted run 43452540386 had all three venue jobs in the repeated release build step; workflow step status alone does not reveal whether each build was still compiling or resource-starved.",
+    "Artifact upload/download, executable mode restoration, wheel import, and public-data execution need a new hosted CI run.",
+    "This workflow optimization does not establish six-month data availability or connector maturity."
+  ]
+}

@@ -1,8 +1,8 @@
 //! Grafana 概览面板（易用性 P3 / 工业级 §17 可观测）只引用**真实存在**的 Prometheus 指标。
 //!
-//! `qx-api` 的 `/metrics` 与 `worker-metrics/*.prom` 实际暴露的指标名以 `qx_api_` /
-//! `qx_control_retired_` / `qx_worker_` / `qx_pipeline_` 四族前缀存在（见
-//! `crates/qx-api/tests/prometheus_exposition.rs` 与 `crates/qx-service/src/pipeline_metrics_report.rs`）。
+//! `qx-api` 的 `/metrics` 与 `worker-metrics/*.prom` 实际暴露 API、队列、订单组、网关、CCXT、
+//! Worker 与 Pipeline 等指标族（见 `crates/qx-api/tests/prometheus_exposition.rs`、
+//! `crates/qx-service/src/api_read_model.rs` 与 `crates/qx-service/src/pipeline_metrics_report.rs`）。
 //! 面板里一旦出现拼写错或引用尚未接线的指标，监控就会「看着在跑实际是瞎的」——这条用例把
 //! 所有 `expr` 抽出来，逐个要求指标名落在已知前缀内，避免 dashboard 与真实出口悄悄分叉。
 
@@ -11,9 +11,17 @@ use std::path::{Path, PathBuf};
 /// 仓库真实存在的指标前缀；与 Prometheus 出口源码保持一致。
 const KNOWN_PREFIXES: &[&str] = &[
     "qx_api_",
+    "qx_app_run_",
     "qx_control_retired_",
+    "qx_control_command_queue_",
+    "qx_ccxt_",
+    "qx_gateway_port_",
+    "qx_gateway_venue_",
+    "qx_job_queue_",
+    "qx_order_group_",
     "qx_worker_",
     "qx_pipeline_",
+    "qx_reconcile_",
 ];
 
 fn dashboard_path() -> PathBuf {
@@ -55,10 +63,47 @@ fn grafana_dashboard_is_valid_json_and_references_real_metrics_only() {
         Some("qianxing-overview"),
         "面板 uid 必须稳定，便于 Grafana 配置供应"
     );
+    assert!(
+        payload.contains("{{venue_id}} · {{worker}} · {{account}} · {{port}}"),
+        "网关业务状态图例应明确显示交易所身份"
+    );
+    for grouping in [
+        "sum by (le, venue_id, worker)",
+        "sum by (le, venue_id, worker, account, port)",
+        "sum by (venue_id, worker, account, port, class)",
+        "sum by (venue_id, worker)",
+    ] {
+        assert!(
+            payload.contains(grouping),
+            "多交易所监控查询必须按 venue_id 分组: {grouping}"
+        );
+    }
 
     let mut exprs = Vec::new();
     collect_exprs(&dashboard, &mut exprs);
     assert!(!exprs.is_empty(), "面板至少要有一个查询");
+
+    for required in [
+        "qx_ccxt_ohlcv_request_duration_seconds_bucket",
+        "qx_ccxt_ohlcv_rate_limit_retries_total",
+        "qx_gateway_port_operation_duration_seconds_bucket",
+        "qx_gateway_port_errors_total",
+        "qx_job_queue_metrics_available",
+        "qx_job_queue_oldest_age_seconds",
+        "qx_control_command_queue_metrics_available",
+        "qx_control_command_queue_oldest_age_seconds",
+        "qx_order_group_status",
+        "qx_reconcile_order_issues",
+        "qx_gateway_port_business_status",
+        "qx_gateway_port_business_timestamp_seconds",
+        "qx_gateway_venue_reconnects_total",
+        "qx_gateway_venue_last_event_timestamp_seconds",
+    ] {
+        assert!(
+            exprs.iter().any(|expr| expr.contains(required)),
+            "运行总览必须展示可观测指标 {required}"
+        );
+    }
 
     for expr in &exprs {
         // 抽 expr 里所有「像指标名」的 token（以 `qx_` 开头），逐个要求落在已知前缀内；

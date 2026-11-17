@@ -1,4 +1,725 @@
 use super::*;
+use qx_zhenlu::venue_capabilities::{VenueMarketScope, VenueOrderType};
+use qx_zhenlu::{FileOrderGroupStore, OrderGroupStore};
+
+const NATIVE_GROUP_TEST_CAPABILITIES: qx_zhenlu::venue_capabilities::VenueCapabilities =
+    qx_zhenlu::venue_capabilities::VenueCapabilities {
+        market_scope: VenueMarketScope::InstrumentVenue,
+        exact_orders: true,
+        order_types: &[
+            VenueOrderType::Market,
+            VenueOrderType::Limit,
+            VenueOrderType::StopLoss,
+            VenueOrderType::TakeProfit,
+        ],
+        ..qx_zhenlu::venue_capabilities::PAPER_VENUE_CAPABILITIES
+    };
+
+struct AllowRisk;
+
+impl RiskPort for AllowRisk {
+    fn evaluate_order(&self, _order: &Order) -> Result<RiskVerdict, String> {
+        Ok(RiskVerdict::Allow)
+    }
+}
+
+#[test]
+fn submit_response_facts_keep_the_callers_stable_correlation_namespace() {
+    let order = port_order(8_801);
+    let mut venue = PortVenue {
+        result: Ok(vec![
+            ExecutionEvent::Accepted {
+                client_order_id: order.client_id,
+                venue_order_id: "venue-8801".into(),
+            },
+            ExecutionEvent::Fill(Box::new(qx_core::Fill {
+                order_id: order.client_id,
+                qty: order.qty,
+                price: Price::from_i64(100),
+                ..qx_core::Fill::default()
+            })),
+        ]),
+    };
+    let mut pipeline = PortState::default();
+    let mut source_seq = 0;
+    let correlation_id = "algo:parent-42:child:3";
+    ExecutionGateway::new(&mut venue, &mut pipeline, "worker-1", 100, &mut source_seq)
+        .submit_with_risk_and_correlation(order, &AllowRisk, correlation_id)
+        .unwrap();
+
+    assert_eq!(pipeline.events.len(), 2);
+    assert!(pipeline.events.iter().all(|event| {
+        event
+            .correlation_id
+            .starts_with("algo:parent-42:child:3:venue:port-test:8801:")
+    }));
+    assert_ne!(
+        pipeline.events[0].correlation_id,
+        pipeline.events[1].correlation_id
+    );
+}
+
+struct NoNativeGroupVenue {
+    submit_calls: usize,
+}
+
+impl VenuePort for NoNativeGroupVenue {
+    fn venue_id(&self) -> &str {
+        "BINANCE"
+    }
+
+    fn capabilities(&self) -> qx_zhenlu::venue_capabilities::VenueCapabilities {
+        NATIVE_GROUP_TEST_CAPABILITIES
+    }
+
+    fn execution_readiness(&self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn submit_order(&mut self, _order: Order, _ts: u64) -> Result<Vec<ExecutionEvent>, String> {
+        self.submit_calls += 1;
+        Ok(Vec::new())
+    }
+
+    fn cancel_order(
+        &mut self,
+        _client_order_id: u64,
+        _ts: u64,
+    ) -> Result<Vec<ExecutionEvent>, String> {
+        unreachable!()
+    }
+}
+
+struct AllowGroupRisk;
+
+impl RiskPort for AllowGroupRisk {
+    fn evaluate_order(&self, _order: &Order) -> Result<RiskVerdict, String> {
+        Ok(RiskVerdict::Allow)
+    }
+}
+
+fn protective_leg(client_id: u64, kind: qx_core::ConditionalOrderKind, trigger: &str) -> Order {
+    Order {
+        client_id,
+        instrument: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+        side: Side::Sell,
+        qty: Quantity::ZERO,
+        limit: None,
+        status: OrderStatus::PendingSubmit,
+        filled: Quantity::ZERO,
+        account_id: "port-main".into(),
+        trace: None,
+        policy: None,
+        exact_amounts: Some(qx_core::ExactOrderAmounts {
+            quantity: qx_core::ExactDecimal::parse("0.01").unwrap(),
+            limit_price: None,
+            filled: qx_core::ExactDecimal::ZERO,
+            quote_budget: None,
+            quote_filled: qx_core::ExactDecimal::ZERO,
+            market_reference_price: None,
+            conditional: Some(qx_core::ConditionalOrderIntent {
+                kind,
+                trigger_price: Some(qx_core::ExactDecimal::parse(trigger).unwrap()),
+                trigger_price_type: Some(qx_core::TriggerPriceType::Mark),
+                trailing_percent: None,
+                trailing_amount: None,
+                trailing_trigger_price: None,
+            }),
+        }),
+    }
+}
+
+fn native_oco_intent() -> qx_core::OrderGroupIntent {
+    qx_core::OrderGroupIntent::new(
+        "no-native-group",
+        qx_core::OrderGroupKind::Oco,
+        qx_core::OrderGroupExecution::NativeRequired,
+        vec![
+            qx_core::OrderGroupLegIntent {
+                role: qx_core::OrderGroupLegRole::TakeProfit,
+                order: protective_leg(7001, qx_core::ConditionalOrderKind::TakeProfit, "70000"),
+            },
+            qx_core::OrderGroupLegIntent {
+                role: qx_core::OrderGroupLegRole::StopLoss,
+                order: protective_leg(7002, qx_core::ConditionalOrderKind::StopLoss, "60000"),
+            },
+        ],
+    )
+    .unwrap()
+}
+
+#[test]
+fn venue_without_native_group_support_fails_before_store_or_oms_side_effects() {
+    let test_root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join("test-temp");
+    std::fs::create_dir_all(&test_root).unwrap();
+    let root = test_root.join(format!(
+        "qx-execution-native-group-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut store = FileOrderGroupStore::new(&root).unwrap();
+    let mut venue = NoNativeGroupVenue { submit_calls: 0 };
+    let mut pipeline = PortState::default();
+    let mut source_seq = 0;
+    let error = PortExecutionService::new(
+        &mut venue,
+        &mut pipeline,
+        "group-worker",
+        100,
+        &mut source_seq,
+    )
+    .with_order_group_store(&mut store)
+    .submit_order_group(native_oco_intent(), &AllowGroupRisk)
+    .unwrap_err();
+
+    assert!(error.contains("未声明原生 OCO/Bracket"), "{error}");
+    assert_eq!(venue.submit_calls, 0);
+    assert!(pipeline.orders.is_empty());
+    assert!(pipeline.events.is_empty());
+    assert!(store.group_ids().unwrap().is_empty());
+    assert_eq!(source_seq, 0);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+struct NativeGroupPortVenue {
+    preflight_calls: usize,
+    group_submit_calls: usize,
+    group_status: Option<qx_core::OrderGroupStatus>,
+    group_facts: Option<Vec<ExecutionEvent>>,
+}
+
+impl VenuePort for NativeGroupPortVenue {
+    fn venue_id(&self) -> &str {
+        "BINANCE"
+    }
+
+    fn capabilities(&self) -> qx_zhenlu::venue_capabilities::VenueCapabilities {
+        NATIVE_GROUP_TEST_CAPABILITIES
+    }
+
+    fn execution_readiness(&self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn validate_submit_order_group(
+        &mut self,
+        _group: &qx_core::OrderGroupState,
+    ) -> Result<(), String> {
+        self.preflight_calls += 1;
+        Ok(())
+    }
+
+    fn submit_order_group(
+        &mut self,
+        group: &qx_core::OrderGroupState,
+        _ts: u64,
+    ) -> Result<OrderGroupSubmission, String> {
+        self.group_submit_calls += 1;
+        Ok(OrderGroupSubmission {
+            venue_group_id: Some("exchange-list-42".into()),
+            group_status: self.group_status,
+            events: if let Some(events) = &self.group_facts {
+                events.clone()
+            } else if self.group_status.is_some() {
+                Vec::new()
+            } else {
+                group
+                    .legs
+                    .iter()
+                    .map(|leg| ExecutionEvent::Accepted {
+                        client_order_id: leg.order.client_id,
+                        venue_order_id: format!("exchange-{}", leg.order.client_id),
+                    })
+                    .collect()
+            },
+        })
+    }
+
+    fn submit_order(&mut self, _order: Order, _ts: u64) -> Result<Vec<ExecutionEvent>, String> {
+        panic!("native OCO must use one group RPC, never individual child submits")
+    }
+
+    fn cancel_order(
+        &mut self,
+        _client_order_id: u64,
+        _ts: u64,
+    ) -> Result<Vec<ExecutionEvent>, String> {
+        unreachable!()
+    }
+}
+
+#[test]
+fn native_oco_registers_legs_persists_exchange_ids_and_never_replays_group_rpc() {
+    let test_root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join("test-temp");
+    std::fs::create_dir_all(&test_root).unwrap();
+    let root = test_root.join(format!(
+        "qx-execution-native-group-accepted-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut store = FileOrderGroupStore::new(&root).unwrap();
+    let mut venue = NativeGroupPortVenue {
+        preflight_calls: 0,
+        group_submit_calls: 0,
+        group_status: None,
+        group_facts: None,
+    };
+    let mut pipeline = PortState::default();
+    let mut source_seq = 0;
+    let intent = native_oco_intent();
+    let result = PortExecutionService::new(
+        &mut venue,
+        &mut pipeline,
+        "group-worker",
+        100,
+        &mut source_seq,
+    )
+    .with_order_group_store(&mut store)
+    .submit_order_group(intent.clone(), &AllowGroupRisk)
+    .unwrap();
+
+    assert_eq!(result.event_count, 2);
+    assert_eq!(venue.preflight_calls, 1);
+    assert_eq!(venue.group_submit_calls, 1);
+    assert_eq!(pipeline.orders.len(), 2);
+    assert!(pipeline
+        .orders
+        .iter()
+        .all(|order| order.status == OrderStatus::Accepted));
+    let restored = store.load("no-native-group").unwrap().unwrap();
+    assert_eq!(restored.status, qx_core::OrderGroupStatus::Active);
+    assert!(restored.legs.iter().all(|leg| leg.venue_order_id.as_deref()
+        == Some(format!("exchange-{}", leg.order.client_id).as_str())));
+    assert_eq!(restored.venue_group_id.as_deref(), Some("exchange-list-42"));
+
+    let error = PortExecutionService::new(
+        &mut venue,
+        &mut pipeline,
+        "group-worker-restarted",
+        101,
+        &mut source_seq,
+    )
+    .with_order_group_store(&mut store)
+    .submit_order_group(intent, &AllowGroupRisk)
+    .unwrap_err();
+    assert!(error.contains("已在 OMS 中"), "{error}");
+    assert_eq!(venue.group_submit_calls, 1);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn native_oco_rejection_fact_preserves_live_peer_and_requires_group_cancel() {
+    let test_root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join("test-temp");
+    std::fs::create_dir_all(&test_root).unwrap();
+    let root = test_root.join(format!(
+        "qx-execution-native-group-rejected-leg-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut store = FileOrderGroupStore::new(&root).unwrap();
+    let mut venue = NativeGroupPortVenue {
+        preflight_calls: 0,
+        group_submit_calls: 0,
+        group_status: None,
+        group_facts: Some(vec![
+            ExecutionEvent::Rejected {
+                client_order_id: 7001,
+                reason: "filter failure".into(),
+            },
+            ExecutionEvent::Accepted {
+                client_order_id: 7002,
+                venue_order_id: "exchange-7002".into(),
+            },
+        ]),
+    };
+    let mut pipeline = PortState::default();
+    let mut source_seq = 0;
+    let result = PortExecutionService::new(
+        &mut venue,
+        &mut pipeline,
+        "group-worker",
+        100,
+        &mut source_seq,
+    )
+    .with_order_group_store(&mut store)
+    .submit_order_group(native_oco_intent(), &AllowGroupRisk)
+    .unwrap();
+
+    assert_eq!(result.event_count, 2);
+    assert_eq!(venue.group_submit_calls, 1);
+    assert_eq!(pipeline.orders[0].status, OrderStatus::Rejected);
+    assert_eq!(pipeline.orders[1].status, OrderStatus::Accepted);
+    let restored = store.load("no-native-group").unwrap().unwrap();
+    assert_eq!(
+        restored.status,
+        qx_core::OrderGroupStatus::PeerCancelRequired
+    );
+    assert_eq!(restored.legs[0].order.status, OrderStatus::Rejected);
+    assert_eq!(restored.legs[1].order.status, OrderStatus::Accepted);
+    assert_eq!(
+        restored.legs[1].venue_order_id.as_deref(),
+        Some("exchange-7002")
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn native_group_resource_can_be_active_before_child_orders_exist() {
+    let test_root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join("test-temp");
+    std::fs::create_dir_all(&test_root).unwrap();
+    let root = test_root.join(format!(
+        "qx-execution-native-group-resource-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut store = FileOrderGroupStore::new(&root).unwrap();
+    let mut venue = NativeGroupPortVenue {
+        preflight_calls: 0,
+        group_submit_calls: 0,
+        group_status: Some(qx_core::OrderGroupStatus::Active),
+        group_facts: None,
+    };
+    let mut pipeline = PortState::default();
+    let mut source_seq = 0;
+    let result = PortExecutionService::new(
+        &mut venue,
+        &mut pipeline,
+        "group-resource-worker",
+        100,
+        &mut source_seq,
+    )
+    .with_order_group_store(&mut store)
+    .submit_order_group(native_oco_intent(), &AllowGroupRisk)
+    .unwrap();
+
+    assert_eq!(result.event_count, 0);
+    assert_eq!(venue.group_submit_calls, 1);
+    assert!(pipeline
+        .orders
+        .iter()
+        .all(|order| order.status == OrderStatus::Submitted));
+    let restored = store.load("no-native-group").unwrap().unwrap();
+    assert_eq!(restored.status, qx_core::OrderGroupStatus::Active);
+    assert_eq!(restored.venue_group_id.as_deref(), Some("exchange-list-42"));
+    assert!(restored.legs.iter().all(|leg| leg.venue_order_id.is_none()));
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+struct UnknownNativeGroupPortVenue {
+    group_submit_calls: usize,
+}
+
+impl VenuePort for UnknownNativeGroupPortVenue {
+    fn venue_id(&self) -> &str {
+        "BINANCE"
+    }
+
+    fn capabilities(&self) -> qx_zhenlu::venue_capabilities::VenueCapabilities {
+        NATIVE_GROUP_TEST_CAPABILITIES
+    }
+
+    fn execution_readiness(&self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn validate_submit_order_group(
+        &mut self,
+        _group: &qx_core::OrderGroupState,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn submit_order_group(
+        &mut self,
+        _group: &qx_core::OrderGroupState,
+        _ts: u64,
+    ) -> Result<OrderGroupSubmission, String> {
+        self.group_submit_calls += 1;
+        Err("timeout after exchange accepted request".into())
+    }
+
+    fn submit_order(&mut self, _order: Order, _ts: u64) -> Result<Vec<ExecutionEvent>, String> {
+        panic!("ambiguous native group must never fall back to separate child submits")
+    }
+
+    fn cancel_order(
+        &mut self,
+        _client_order_id: u64,
+        _ts: u64,
+    ) -> Result<Vec<ExecutionEvent>, String> {
+        unreachable!()
+    }
+}
+
+#[test]
+fn unknown_native_group_result_reconciles_every_leg_and_never_retries_rpc() {
+    let test_root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join("test-temp");
+    std::fs::create_dir_all(&test_root).unwrap();
+    let root = test_root.join(format!(
+        "qx-execution-native-group-unknown-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut store = FileOrderGroupStore::new(&root).unwrap();
+    let mut venue = UnknownNativeGroupPortVenue {
+        group_submit_calls: 0,
+    };
+    let mut pipeline = PortState::default();
+    let mut source_seq = 0;
+    let intent = native_oco_intent();
+    let error = PortExecutionService::new(
+        &mut venue,
+        &mut pipeline,
+        "group-worker",
+        100,
+        &mut source_seq,
+    )
+    .with_order_group_store(&mut store)
+    .submit_order_group(intent.clone(), &AllowGroupRisk)
+    .unwrap_err();
+
+    assert!(error.contains("结果未知"), "{error}");
+    assert_eq!(venue.group_submit_calls, 1);
+    assert!(pipeline
+        .orders
+        .iter()
+        .all(|order| order.status == OrderStatus::Unknown));
+    let reconciled = store.load("no-native-group").unwrap().unwrap();
+    assert_eq!(
+        reconciled.status,
+        qx_core::OrderGroupStatus::ReconcileRequired
+    );
+    assert!(reconciled
+        .legs
+        .iter()
+        .all(|leg| leg.order.status == OrderStatus::Unknown));
+
+    let retry_error = PortExecutionService::new(
+        &mut venue,
+        &mut pipeline,
+        "group-worker-restarted",
+        101,
+        &mut source_seq,
+    )
+    .with_order_group_store(&mut store)
+    .submit_order_group(intent, &AllowGroupRisk)
+    .unwrap_err();
+    assert!(retry_error.contains("已在 OMS 中"), "{retry_error}");
+    assert_eq!(venue.group_submit_calls, 1);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+fn amend_command(order: &Order, command_id: u64) -> ControlCommand {
+    ControlCommand {
+        command_id,
+        request_id: format!("amend-{command_id}"),
+        operator_id: "operator".into(),
+        reason: "update active order terms".into(),
+        kind: CommandKind::AmendOrder,
+        target: order.client_id.to_string(),
+        payload: BTreeMap::from([
+            ("account_id".into(), order.account_id.clone()),
+            (
+                "venue_id".into(),
+                order.instrument.venue.as_str().to_string(),
+            ),
+            ("order_json".into(), serde_json::to_string(order).unwrap()),
+        ]),
+        permission: Permission::Trading,
+        dry_run: false,
+    }
+}
+
+#[test]
+fn amend_command_persists_before_rpc_and_applies_amendment_before_racing_fills() {
+    let mut current = port_order(88);
+    current.status = OrderStatus::Accepted;
+    current.qty = Quantity::from_i64(2);
+    let mut amended = current.clone();
+    amended.qty = Quantity::from_i64(3);
+    amended.limit = Some(Price::from_i64(101));
+    let command = amend_command(&amended, 888);
+    let mut state = PortState::default();
+    state.orders.push(current);
+    let mut venue = AmendPortVenue {
+        preflight_calls: 0,
+        amend_calls: 0,
+        result: Ok(vec![ExecutionEvent::Fill(Box::new(qx_core::Fill {
+            order_id: 88,
+            qty: Quantity::from_i64(1),
+            price: Price::from_i64(101),
+            ts: 21,
+            ..qx_core::Fill::default()
+        }))]),
+    };
+    let mut source_seq = 0;
+    let result =
+        PortExecutionService::new(&mut venue, &mut state, "amend-worker", 20, &mut source_seq)
+            .amend_command(&command)
+            .expect("confirmed amendment should commit");
+
+    assert_eq!(result.message, "AMENDED venue_events=1");
+    assert_eq!(venue.preflight_calls, 1);
+    assert_eq!(venue.amend_calls, 1);
+    assert!(matches!(
+        state.events[0].event,
+        ExecutionEvent::OrderAmendmentPending { .. }
+    ));
+    assert!(matches!(
+        state.events[1].event,
+        ExecutionEvent::OrderAmended { .. }
+    ));
+    assert!(matches!(state.events[2].event, ExecutionEvent::Fill(_)));
+    assert_eq!(state.orders[0].qty, Quantity::from_i64(3));
+    assert_eq!(state.orders[0].filled, Quantity::from_i64(1));
+    assert_eq!(state.orders[0].status, OrderStatus::PartiallyFilled);
+    assert!(!state.has_pending_amendment(88));
+}
+
+#[test]
+fn unknown_amendment_result_is_persisted_and_never_retried_by_command_redelivery() {
+    let mut current = port_order(89);
+    current.status = OrderStatus::Accepted;
+    current.qty = Quantity::from_i64(2);
+    let mut amended = current.clone();
+    amended.qty = Quantity::from_i64(3);
+    amended.limit = Some(Price::from_i64(101));
+    let command = amend_command(&amended, 889);
+    let mut state = PortState::default();
+    state.orders.push(current);
+    let mut venue = AmendPortVenue {
+        preflight_calls: 0,
+        amend_calls: 0,
+        result: Err("transport timed out after write".into()),
+    };
+    let mut source_seq = 0;
+    let error =
+        PortExecutionService::new(&mut venue, &mut state, "amend-worker", 20, &mut source_seq)
+            .amend_command(&command)
+            .expect_err("unknown remote result must require reconciliation");
+    assert!(error.contains("结果未知"), "{error}");
+    assert!(state.has_pending_amendment(89));
+    assert!(matches!(
+        state.events[0].event,
+        ExecutionEvent::OrderAmendmentPending { .. }
+    ));
+    assert!(matches!(
+        state.events[1].event,
+        ExecutionEvent::ReconcileRequired {
+            client_order_id: 89
+        }
+    ));
+
+    let error = PortExecutionService::new(
+        &mut venue,
+        &mut state,
+        "amend-worker-restarted",
+        30,
+        &mut source_seq,
+    )
+    .amend_command(&command)
+    .expect_err("redelivery cannot repeat an ambiguous edit RPC");
+    assert!(error.contains("禁止重发"), "{error}");
+    assert_eq!(venue.preflight_calls, 1);
+    assert_eq!(venue.amend_calls, 1);
+    assert_eq!(state.events.len(), 2);
+}
+
+#[test]
+fn execution_gateway_rejects_disconnected_and_snapshotting_venues_before_side_effects() {
+    let mut state = PortState::default();
+    let mut source_seq = 0;
+    let mut paper = PaperVenue::new("paper", zero_fee());
+    paper.disconnect();
+    let mut paper = VenuePortAdapter::new_for_any_venue(paper);
+    let error = PortExecutionService::new(
+        &mut paper,
+        &mut state,
+        "readiness-worker",
+        10,
+        &mut source_seq,
+    )
+    .submit(port_order(80))
+    .unwrap_err();
+    assert!(error.contains("尚未就绪"), "{error}");
+    assert!(state.orders.is_empty() && state.events.is_empty());
+    assert_eq!(source_seq, 0);
+
+    // Cancel checks OMS state before Venue readiness. Use an order already accepted remotely
+    // so this assertion reaches the disconnected Venue readiness gate.
+    let mut accepted_order = port_order(81);
+    accepted_order.status = OrderStatus::Accepted;
+    state.orders.push(accepted_order);
+    let error = PortExecutionService::new(
+        &mut paper,
+        &mut state,
+        "readiness-worker",
+        10,
+        &mut source_seq,
+    )
+    .cancel(81)
+    .unwrap_err();
+    assert!(error.contains("尚未就绪"), "{error}");
+    assert_eq!(state.events.len(), 0);
+    assert_eq!(state.orders[0].status, OrderStatus::Accepted);
+    assert_eq!(source_seq, 0);
+
+    struct NoNetwork;
+    impl HttpTransport for NoNetwork {
+        fn send(&self, _request: HttpRequest) -> Result<HttpResponse, String> {
+            panic!("snapshotting venue must be rejected before network I/O")
+        }
+    }
+    let auth = BinanceSpotAuth::with_clock("key", b"secret", || 100).unwrap();
+    let mut binance = BinanceSpotVenue::testnet("binance", auth, Arc::new(NoNetwork));
+    binance.reconnect(); // Transport reconnect completes before the private snapshot/reconcile.
+    let mut binance = VenuePortAdapter::new(binance);
+    let error = PortExecutionService::new(
+        &mut binance,
+        &mut state,
+        "readiness-worker",
+        10,
+        &mut source_seq,
+    )
+    .submit(port_order(82))
+    .unwrap_err();
+    assert!(error.contains("尚未就绪"), "{error}");
+    assert_eq!(state.orders.len(), 1);
+    assert_eq!(state.events.len(), 0);
+    assert_eq!(source_seq, 0);
+    let router_error = VenueRouterPort::execution_readiness_for(&binance, "binance").unwrap_err();
+    assert!(router_error.contains("尚未就绪"), "{router_error}");
+    assert!(VenueRouterPort::execution_readiness_for(&binance, "okx").is_err());
+}
 
 #[test]
 fn port_execution_service_registers_and_appends_standard_facts() {
@@ -21,6 +742,120 @@ fn port_execution_service_registers_and_appends_standard_facts() {
     assert!(matches!(
         state.events[0].event,
         ExecutionEvent::Accepted { .. }
+    ));
+}
+
+#[test]
+fn cancel_intent_is_appended_before_venue_cancel_and_unknown_orders_require_reconcile() {
+    let mut state = PortState::default();
+    let mut accepted = port_order(7);
+    accepted.status = OrderStatus::Accepted;
+    state.orders.push(accepted);
+    let mut venue = PortVenue {
+        result: Ok(vec![ExecutionEvent::Cancelled { client_order_id: 7 }]),
+    };
+    let mut source_seq = 0;
+    let outcome =
+        PortExecutionService::new(&mut venue, &mut state, "cancel-worker", 20, &mut source_seq)
+            .cancel(7)
+            .expect("cancel should complete after its durable intent");
+    assert_eq!(outcome.event_count, 1, "count only venue response facts");
+    assert!(matches!(
+        state.events.first().map(|event| &event.event),
+        Some(ExecutionEvent::CancelPending { client_order_id: 7 })
+    ));
+    assert!(matches!(
+        state.events.last().map(|event| &event.event),
+        Some(ExecutionEvent::Cancelled { client_order_id: 7 })
+    ));
+    assert_eq!(state.orders[0].status, OrderStatus::Cancelled);
+
+    let mut unknown = port_order(84);
+    unknown.status = OrderStatus::Unknown;
+    state.orders.push(unknown);
+    let prior_events = state.events.len();
+    let mut never_called = NeverCalledVenue;
+    let error = PortExecutionService::new(
+        &mut never_called,
+        &mut state,
+        "cancel-worker",
+        21,
+        &mut source_seq,
+    )
+    .cancel(84)
+    .expect_err("unknown remote order must be reconciled before cancellation");
+    assert!(error.contains("必须先对账"), "{error}");
+    assert_eq!(state.events.len(), prior_events);
+    assert_eq!(state.orders[1].status, OrderStatus::Unknown);
+}
+
+#[test]
+fn duplicate_durable_cancel_intent_does_not_repeat_venue_side_effect() {
+    use qx_control::{CommandKind, ControlCommand, Permission};
+
+    let mut state = PortState::default();
+    let mut accepted = port_order(86);
+    accepted.status = OrderStatus::Accepted;
+    state.orders.push(accepted);
+    // Simulate a second worker with a stale Accepted snapshot. The shared EventLog
+    // already contains the stable intent for this command, so the append receipt
+    // must stop this worker before it can contact the Venue.
+    state.events.push(ExecutionEventEnvelope {
+        event: ExecutionEvent::CancelPending {
+            client_order_id: 86,
+        },
+        event_ts: 20,
+        receive_ts: 20,
+        source_seq: 1,
+        correlation_id: "control:cancel:770:86:pending:86".into(),
+    });
+    let command = ControlCommand {
+        command_id: 770,
+        request_id: "cancel-770".into(),
+        operator_id: "operator".into(),
+        reason: "cancel duplicate delivery".into(),
+        kind: CommandKind::CancelOrder,
+        target: "86".into(),
+        payload: BTreeMap::from([
+            ("account_id".into(), "port-main".into()),
+            ("venue_id".into(), "BINANCE".into()),
+        ]),
+        permission: Permission::Trading,
+        dry_run: false,
+    };
+    let mut venue = NeverCalledVenue;
+    let mut source_seq = 1;
+    let error =
+        PortExecutionService::new(&mut venue, &mut state, "retry-worker", 20, &mut source_seq)
+            .cancel_command(&command)
+            .expect_err("duplicate CancelPending must not trigger a second Venue cancel");
+    assert!(error.contains("禁止重复调用 Venue"), "{error}");
+    assert_eq!(state.events.len(), 1);
+    assert_eq!(state.orders[0].status, OrderStatus::Accepted);
+}
+
+#[test]
+fn preexisting_pending_submit_requires_reconciliation_before_retry() {
+    let mut state = PortState::default();
+    let mut pending = port_order(87);
+    pending.status = OrderStatus::PendingSubmit;
+    state.orders.push(pending.clone());
+    let mut venue = NeverCalledVenue;
+    let mut source_seq = 0;
+
+    let error =
+        PortExecutionService::new(&mut venue, &mut state, "retry-worker", 20, &mut source_seq)
+            .submit(pending)
+            .expect_err("a persisted pre-submit state is ambiguous after restart");
+
+    assert!(error.contains("必须先对账"), "{error}");
+    assert_eq!(source_seq, 1);
+    assert_eq!(state.orders[0].status, OrderStatus::Unknown);
+    assert!(matches!(
+        state.events.last().map(|event| &event.event),
+        Some(ExecutionEvent::ReconcileRequired {
+            client_order_id: 87
+        })
     ));
 }
 
@@ -95,6 +930,7 @@ fn undeclared_order_type_is_rejected_before_registration_or_venue_side_effect() 
             };
             VenueCapabilities {
                 market_scope: VenueMarketScope::InstrumentVenue,
+                exact_orders: false,
                 order_types: &[VenueOrderType::Market],
                 data_tiers: &[],
                 cancel: false,
@@ -102,6 +938,9 @@ fn undeclared_order_type_is_rejected_before_registration_or_venue_side_effect() 
                 reconciliation: false,
                 idempotent_client_order_id: false,
             }
+        }
+        fn execution_readiness(&self) -> Result<(), String> {
+            Ok(())
         }
         fn submit_order(&mut self, _order: Order, _ts: u64) -> Result<Vec<ExecutionEvent>, String> {
             self.submits += 1;
@@ -166,6 +1005,9 @@ fn venue_market_query_and_reconciliation_capabilities_are_enforced() {
         }
         fn capabilities(&self) -> VenueCapabilities {
             BINANCE_SPOT_VENUE_CAPABILITIES
+        }
+        fn execution_readiness(&self) -> Result<(), String> {
+            Ok(())
         }
         fn submit_order(&mut self, _order: Order, _ts: u64) -> Result<Vec<ExecutionEvent>, String> {
             panic!("out-of-scope market must be rejected before submission")

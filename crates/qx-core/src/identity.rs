@@ -54,29 +54,84 @@ impl fmt::Display for VenueId {
 }
 
 /// 可交易工具标识 = native symbol + venue，点号分隔。
-#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct InstrumentId {
-    pub symbol: String,
+    symbol: String,
     pub venue: VenueId,
 }
 
 impl InstrumentId {
-    pub fn new(symbol: impl Into<String>, venue: VenueId) -> Self {
+    /// Explicit sentinel identity for absent/legacy wire fields; it is not a tradeable product.
+    pub fn unknown() -> Self {
         Self {
-            symbol: symbol.into(),
-            venue,
+            symbol: "UNKNOWN".into(),
+            venue: VenueId::new("UNKNOWN"),
         }
+    }
+
+    /// Shared lexical guard for symbols received through textual identity boundaries.
+    /// Supports common spot (`BTC-USDT`, `BTC/USDT`) and derivative
+    /// (`BTC/USDT:USDT`) forms while excluding path and request syntax.
+    pub fn is_valid_symbol(symbol: &str) -> bool {
+        if symbol.is_empty()
+            || symbol.len() > 128
+            || symbol.starts_with(|c: char| {
+                c.is_ascii_alphabetic() && symbol.as_bytes().get(1) == Some(&b':')
+            })
+        {
+            return false;
+        }
+        let mut previous_separator = true;
+        for byte in symbol.bytes() {
+            if byte.is_ascii_alphanumeric() {
+                previous_separator = false;
+            } else if matches!(byte, b'/' | b':' | b'_' | b'-') && !previous_separator {
+                previous_separator = true;
+            } else {
+                return false;
+            }
+        }
+        !previous_separator
+    }
+
+    /// Construct a typed identity after validating the native symbol.
+    pub fn new(symbol: impl Into<String>, venue: VenueId) -> Option<Self> {
+        let symbol = symbol.into();
+        Self::is_valid_symbol(&symbol).then_some(Self { symbol, venue })
+    }
+
+    pub fn symbol(&self) -> &str {
+        &self.symbol
     }
 
     /// 解析 `"BTCUSDT-PERP.BINANCE"` → symbol=`BTCUSDT-PERP`, venue=`BINANCE`
     pub fn parse(s: &str) -> Option<Self> {
         let (sym, ven) = s.rsplit_once('.')?;
-        if sym.is_empty() || ven.is_empty() {
+        if !Self::is_valid_symbol(sym) || ven.is_empty() {
             return None;
         }
-        Some(Self {
-            symbol: sym.to_string(),
-            venue: VenueId::new(ven),
+        Self::new(sym, VenueId::new(ven))
+    }
+}
+
+impl<'de> Deserialize<'de> for InstrumentId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RawInstrumentId {
+            symbol: String,
+            venue: VenueId,
+        }
+
+        let raw = RawInstrumentId::deserialize(deserializer)?;
+        if !InstrumentId::is_valid_symbol(&raw.symbol) {
+            return Err(serde::de::Error::custom("invalid instrument symbol"));
+        }
+        Ok(Self {
+            symbol: raw.symbol,
+            venue: raw.venue,
         })
     }
 }
@@ -134,7 +189,7 @@ mod tests {
     #[test]
     fn parse_instrument_id() {
         let id = InstrumentId::parse("BTCUSDT-PERP.BINANCE").unwrap();
-        assert_eq!(id.symbol, "BTCUSDT-PERP");
+        assert_eq!(id.symbol(), "BTCUSDT-PERP");
         assert_eq!(id.venue.as_str(), "BINANCE");
         assert_eq!(format!("{}", id), "BTCUSDT-PERP.BINANCE");
     }
@@ -143,5 +198,44 @@ mod tests {
     fn canonical_is_not_instrument() {
         let c = CanonicalProduct::new("btc", "usdt");
         assert_eq!(format!("{}", c), "BTC-USDT");
+    }
+
+    #[test]
+    fn instrument_symbol_validation_accepts_market_forms_and_rejects_path_syntax() {
+        for symbol in ["BTCUSDT", "000001", "BTC-USDT", "BTC/USDT:USDT", "BTC_USDT"] {
+            assert!(InstrumentId::is_valid_symbol(symbol), "{symbol}");
+            assert!(InstrumentId::parse(&format!("{symbol}.BINANCE")).is_some());
+        }
+        for symbol in [
+            "",
+            "../../etc/passwd",
+            "/etc/passwd",
+            "C:temp",
+            "BTC?USDT",
+            "BTC\nUSDT",
+            "BTC.USDT",
+            "BTC--USDT",
+            "BTC/",
+            "é",
+        ] {
+            assert!(!InstrumentId::is_valid_symbol(symbol), "{symbol:?}");
+            assert!(InstrumentId::parse(&format!("{symbol}.BINANCE")).is_none());
+        }
+        assert!(!InstrumentId::is_valid_symbol(&"A".repeat(129)));
+        assert!(InstrumentId::new("BTC/USDT:USDT", VenueId::new("BINANCE")).is_some());
+        assert!(InstrumentId::new("../../etc/passwd", VenueId::new("BINANCE")).is_none());
+    }
+
+    #[test]
+    fn instrument_id_deserialization_uses_the_shared_symbol_guard() {
+        let id = InstrumentId::new("BTC/USDT:USDT", VenueId::new("BINANCE")).unwrap();
+        let serialized = serde_json::to_value(&id).unwrap();
+        assert_eq!(serialized["symbol"], "BTC/USDT:USDT");
+        assert_eq!(serialized["venue"], "BINANCE");
+        assert!(serde_json::from_value::<InstrumentId>(serialized).is_ok());
+        assert!(serde_json::from_str::<InstrumentId>(
+            r#"{"symbol":"../../etc/passwd","venue":"BINANCE"}"#
+        )
+        .is_err());
     }
 }

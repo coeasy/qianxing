@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "hosted_linux_resource_bounded_real_data_backtest_baseline",
+  "generated_at_utc": "2026-11-13T05:11:10Z",
+  "source": {
+    "code_base_commit": "c5969958064764aa0178763b20fc0d53dd3f66b3",
+    "measurement_source_fingerprint": "b5af79fae6750fac781e17344122323c167e5a77c78ec9b2772e5805d540feb3",
+    "measurement_source_fingerprint_schema": 4,
+    "binary_sha256": "fa84a6359c30ea365251fd432e615077c24f9bb740f36376cd6fd4a2a5b4a669",
+    "bars_sha256": "d3032cefeb01493b9e3bbb656bab902feb43f3cce18a7678769b2ff7e54fcc03",
+    "spec_template_sha256": "c31ea09d798ee501af347e27eb0856e8f20ac35615e1d404775b01e480ddb360"
+  },
+  "workflow": {
+    "run_id": 43369478560,
+    "run_number": 604,
+    "job": "Blocking registered performance regressions",
+    "job_conclusion": "success",
+    "artifact_name": "performance-baseline",
+    "artifact_id": 14011929731,
+    "artifact_size_bytes": 9302,
+    "artifact_sha256": "e4e708f4064a97af9a85e2ad5d311ff014d469e86ed4769de2ebd2e4dc0cda75"
+  },
+  "environment": {
+    "runner_os": "Linux",
+    "runner_arch": "x86_64",
+    "container_image": "ubuntu:24.04@sha256:2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcecaf5",
+    "container_runtime": "docker",
+    "cgroup_version": 2,
+    "cgroup_cpu_limit_count": 2.0,
+    "cgroup_memory_limit_bytes": 8589934592,
+    "logical_cpu_count": 4,
+    "total_ram_bytes": 16758398976
+  },
+  "workload": {
+    "market": "BTCUSDT spot",
+    "timeframe": "15m",
+    "history_days": 180,
+    "bars": 17280,
+    "repeats": 7,
+    "deterministic_across_repeats": true,
+    "result_hash": "ec0156aed78ab9ef"
+  },
+  "measurements": {
+    "p50_ms": 621.911,
+    "p95_ms": 631.91,
+    "mean_ms": 620.395,
+    "bars_per_second_at_p50": 27785.31,
+    "peak_process_rss_bytes": 86679552,
+    "peak_process_tree_rss_bytes": 86679552,
+    "peak_process_count": 1,
+    "resource_samples": 7,
+    "peak_rss_samples_available": 7
+  },
+  "comparison": {
+    "status": "seeded_first_sample",
+    "reason": "The benchmark comparator skipped older measurements because the measurement source fingerprint format changed; it recorded this compatible sample as the new baseline.",
+    "regression_conclusion": "not_evaluated"
+  },
+  "scope_limitations": [
+    "This is a hosted Linux real-market-data performance baseline under enforced 2 vCPU and 8 GiB cgroup limits, not a comparison against Freqtrade, NautilusTrader, or another competitor.",
+    "The successful performance job means workload and quota assertions passed; old-baseline comparisons were skipped, so it does not prove absence of a performance regression.",
+    "The fixture uses a frozen public Binance spot dataset and template cost rules; this is not a current live-feed, account-fee, or trading result."
+  ]
+}

@@ -1,0 +1,65 @@
+verdict=FAILED passed=446 failed=39 ignored=0 filtered=0
+FAILED_ROWS=39 BLOCKS=39 PANIC_FILES=18
+== cluster tally ==
+  A_snapshot_guard     19
+  B_instrument_role    9
+  OTHER_ledger_face    11
+  SUM=39
+== per-test attribution ==
+  A_snapshot_guard     backtest_cost_provenance::cost_rules_latency_reaches_the_bar_kernel_an called `Result::unwrap()` on an `Err` value: "策略 DatasetBundle 缺少 bars snapshot，拒绝执行无来源绑定的 | crates/qx-cli/tests/unit/backtest_cost_provenance.rs
+  A_snapshot_guard     backtest_entries::backtest_summary_records_the_effective_risk_rule_set called `Result::unwrap()` on an `Err` value: "策略 DatasetBundle 缺少 bars snapshot，拒绝执行无来源绑定的 | crates/qx-cli/tests/unit/backtest_entries.rs
+  A_snapshot_guard     backtest_entries::cross_language_strategy_backtest_publishes_the_v7_ar 跨语言策略经 qx-app 执行: "策略 DatasetBundle 缺少 bars snapshot，拒绝执行无来源绑定的 BarFrame: strategy-builtin | crates/qx-cli/tests/unit/backtest_entries.rs
+  A_snapshot_guard     backtest_entries::run_manifests_bear_the_built_code_identity           called `Result::unwrap()` on an `Err` value: "策略 DatasetBundle 缺少 bars snapshot，拒绝执行无来源绑定的 | crates/qx-cli/tests/unit/backtest_entries.rs
+  A_snapshot_guard     backtest_fill_model::each_reachable_fill_model_changes_the_result_and_ called `Result::unwrap()` on an `Err` value: "策略 DatasetBundle 缺少 bars snapshot，拒绝执行无来源绑定的 | crates/qx-cli/tests/unit/backtest_fill_model.rs
+  A_snapshot_guard     backtest_risk_provenance::every_backtest_entry_reads_the_same_risk_rul called `Result::unwrap()` on an `Err` value: "策略 DatasetBundle 缺少 bars snapshot，拒绝执行无来源绑定的 | crates/qx-cli/tests/unit/backtest_risk_provenance.rs
+  A_snapshot_guard     backtest_signal_provenance::declaring_the_default_values_says_config_w called `Result::unwrap()` on an `Err` value: "策略 DatasetBundle 缺少 bars snapshot，拒绝执行无来源绑定的 | crates/qx-cli/tests/unit/backtest_signal_provenance.rs
+  A_snapshot_guard     backtest_signal_provenance::knobs_outside_the_list_neither_fail_the_ru called `Result::unwrap()` on an `Err` value: "策略 DatasetBundle 缺少 bars snapshot，拒绝执行无来源绑定的 | crates/qx-cli/tests/unit/backtest_signal_provenance.rs
+  A_snapshot_guard     backtest_signal_provenance::the_list_names_the_kind_knobs_regardless_o called `Result::unwrap()` on an `Err` value: "策略 DatasetBundle 缺少 bars snapshot，拒绝执行无来源绑定的 | crates/qx-cli/tests/unit/backtest_signal_provenance.rs
+  A_snapshot_guard     backtest_signal_provenance::the_summary_tracks_the_effective_windows_a called `Result::unwrap()` on an `Err` value: "策略 DatasetBundle 缺少 bars snapshot，拒绝执行无来源绑定的 | crates/qx-cli/tests/unit/backtest_signal_provenance.rs
+  A_snapshot_guard     market_spec_single_source::changed_market_spec_in_the_same_runtime_get first frozen spec run: "策略 DatasetBundle 缺少 bars snapshot，拒绝执行无来源绑定的 BarFrame: strategy-bu | crates/qx-cli/tests/unit/market_spec_single_source.rs
+  A_snapshot_guard     market_spec_single_source::each_market_spec_shape_publishes_its_own_so 回测链读不懂 product-shape，实际: 策略 DatasetBundle 缺少 bars snapshot，拒绝执行无来源绑定的 BarFrame: strategy-b | crates/qx-cli/tests/unit/market_spec_single_source.rs
+  A_snapshot_guard     market_spec_single_source::the_backtest_chain_reads_a_ccxt_shaped_spec 回测链读不懂 frozen-shape，实际: 策略 DatasetBundle 缺少 bars snapshot，拒绝执行无来源绑定的 BarFrame: strategy-bu | crates/qx-cli/tests/unit/market_spec_single_source.rs
+  A_snapshot_guard     market_spec_single_source::the_backtest_chain_reads_the_generated_froz 回测链读得懂 worker 那一形状的 spec，实际: 策略 DatasetBundle 缺少 bars snapshot，拒绝执行无来源绑定的 BarFrame: strate | crates/qx-cli/tests/unit/market_spec_single_source.rs
+  A_snapshot_guard     report_html::json_mode_with_html_keeps_stdout_parseable_and_lists_all_ 生成 v7 summary fixture: "策略 DatasetBundle 缺少 bars snapshot，拒绝执行无来源绑定的 BarFrame: strategy-bu | crates/qx-cli/tests/unit/mod.rs
+  A_snapshot_guard     report_html::report_bundle_validation_failure_preserves_existing_outpu 生成 v7 summary fixture: "策略 DatasetBundle 缺少 bars snapshot，拒绝执行无来源绑定的 BarFrame: strategy-bu | crates/qx-cli/tests/unit/mod.rs
+  A_snapshot_guard     report_html::strategy_diagnostics_bind_to_verified_run_and_render_offl 生成 v7 summary fixture: "策略 DatasetBundle 缺少 bars snapshot，拒绝执行无来源绑定的 BarFrame: strategy-bu | crates/qx-cli/tests/unit/mod.rs
+  A_snapshot_guard     run_entry_argument_honesty::unified_run_report_writes_html_and_standal 生成 v7 summary fixture: "策略 DatasetBundle 缺少 bars snapshot，拒绝执行无来源绑定的 BarFrame: strategy-bu | crates/qx-cli/tests/unit/mod.rs
+  A_snapshot_guard     settlement_currency_single_source::changing_only_the_settlement_curren USDT 链必须跑通: 策略 DatasetBundle 缺少 bars snapshot，拒绝执行无来源绑定的 BarFrame: strategy-builtin   | tes/qx-cli/tests/unit/settlement_currency_single_source.rs
+  B_instrument_role    live_pending_order_reservation::live_balance_snapshot_does_not_reserve called `Result::unwrap()` on an `Err` value: "FAIL_CLOSED: live execution worker binance-e | crates/qx-cli/tests/unit/live_pending_order_reservation.rs
+  B_instrument_role    live_pending_order_reservation::live_balance_snapshot_reserves_post_sn called `Result::unwrap()` on an `Err` value: "FAIL_CLOSED: live execution worker binance-e | crates/qx-cli/tests/unit/live_pending_order_reservation.rs
+  B_instrument_role    live_pending_order_reservation::live_balance_snapshot_reserves_same_cu called `Result::unwrap()` on an `Err` value: "FAIL_CLOSED: live execution worker binance-e | crates/qx-cli/tests/unit/live_pending_order_reservation.rs
+  B_instrument_role    live_pending_order_reservation::live_balance_snapshot_reserves_same_ma called `Result::unwrap()` on an `Err` value: "FAIL_CLOSED: live execution worker binance-e | crates/qx-cli/tests/unit/live_pending_order_reservation.rs
+  B_instrument_role    live_pending_order_reservation::live_derivative_candidate_fails_closed FAIL_CLOSED: live execution worker binance-execution 的 market spec 缺少 dataset_instrument_r | crates/qx-cli/tests/unit/live_pending_order_reservation.rs
+  B_instrument_role    live_pending_order_reservation::live_fill_after_balance_snapshot_requi FAIL_CLOSED: live execution worker binance-execution 的 market spec 缺少 dataset_instrument_r | crates/qx-cli/tests/unit/live_pending_order_reservation.rs
+  B_instrument_role    live_pending_order_reservation::live_spot_admission_uses_quote_asset_b called `Result::unwrap()` on an `Err` value: "FAIL_CLOSED: live execution worker binance-e | crates/qx-cli/tests/unit/live_pending_order_reservation.rs
+  B_instrument_role    live_pending_order_reservation::live_spot_candidate_ignores_pending_sp called `Result::unwrap()` on an `Err` value: "FAIL_CLOSED: live execution worker binance-e | crates/qx-cli/tests/unit/live_pending_order_reservation.rs
+  B_instrument_role    live_pending_order_reservation::live_spot_sell_uses_base_free_balance_ called `Result::unwrap()` on an `Err` value: "FAIL_CLOSED: live execution worker binance-e | crates/qx-cli/tests/unit/live_pending_order_reservation.rs
+  OTHER_ledger_face    api_endpoint_table_routes::each_endpoint_table_lists_exactly_the_dispa 表 "| 入口 | 返回 | 说明 |" 与 handle_inner 的分派集合不平：只在这张表 [] / 这张表里没有的实现路由 ["/strategies/deploymen | crates/qx-cli/tests/unit/api_endpoint_table_routes.rs
+  OTHER_ledger_face    api_endpoint_table_routes::non_200_column_names_match_the_read_face_im 读面会写进 `{"error": …}` 的这些码名在接口文档里没有任何名字：["deployment_node_query_not_supported", "operation_ | crates/qx-cli/tests/unit/api_endpoint_table_routes.rs
+  OTHER_ledger_face    ashare_submit_guard::ccxt_worker_entry_refuses_the_ashare_section_befo 要由 A 股闸门先拒掉: worker ccxt-exec live execution must list symbols when using a single-market  | crates/qx-cli/tests/unit/ashare_submit_guard.rs
+  OTHER_ledger_face    control_command_executor_coverage::control_command_kinds_match_executo crates/qx-cli/src/workers/strategy_worker.rs 已经不派发任何控制命令了，把它从派发者名单里删掉   | tes/qx-cli/tests/unit/control_command_executor_coverage.rs
+  OTHER_ledger_face    deploy_template_coverage::every_deploy_template_loads_through_its_regi deploy 模板读取覆盖失败 6 处: qianxing.runtime.production.example.json 被拒了，但报错里点不出已知的缺口 ["config va | crates/qx-cli/tests/unit/deploy_template_coverage.rs
+  OTHER_ledger_face    event_log_face_wiring::event_log_read_and_write_faces_are_declared_at_ assertion `left == right` failed: crates/qx-cli/src/strategy_binding.rs 的读面声明份数不对（期望 3）：少一 | crates/qx-cli/tests/unit/event_log_face_wiring.rs
+  OTHER_ledger_face    live_submit_fail_closed::submit_risk_gate_is_shared_across_venues_and_ assertion failed: require_worker_risk_spec(&configured, &command, None).is_ok()   | crates/qx-cli/tests/unit/live_submit_fail_closed.rs
+  OTHER_ledger_face    pipeline_metrics_open_sites::account_pipeline_open_sites_are_either_co 生产源码里找不到函数 run_paper_pipeline_once_with_report 的 pipeline 打开站点：名单已经腐烂   failures:     test | crates/qx-cli/tests/unit/pipeline_metrics_open_sites.rs
+  OTHER_ledger_face    pipeline_metrics_open_sites::open_site_ledger_actually_sees_the_produc assertion `left == right` failed: 扫描到的站点总数与两份名单之和不等: {"collect_pending": (2, 0), "executio | crates/qx-cli/tests/unit/pipeline_metrics_open_sites.rs
+  OTHER_ledger_face    reexport_zero_reader_surface::reexported_public_names_have_a_reader_be #206：下面这些公共面只被门面的 `pub use` 行搬到 crate 外，整棵树里没有任何读者。门禁把再导出行算成读者，所以它们恒绿；要么接上真读者，要么整块删掉并写进 CH | crates/qx-cli/tests/unit/reexport_zero_reader_surface.rs
+  OTHER_ledger_face    strategy_order_identity_round_scope::cross_venue_intent_uses_its_accou called `Result::unwrap()` on an `Err` value: "FAIL_CLOSED: live execution worker execution | s/qx-cli/tests/unit/strategy_order_identity_round_scope.rs
+== reachability face (non-crates paths read by the panicking test files) ==
+  PANIC_FILES=18 RESOLVED=18 MISSING=0
+  deploy/README.md  [DIRTY]
+  deploy/does-not-exist.spec.json
+  python/tests/fixtures/strategy_target.py
+== intersection of that read面 with the working tree's dirty set ==
+  DIRTY_PATHS=431 REFS=25 HIT_CRATES=9 HIT_OWN_SCOPE=0 HIT_OTHER_NONCRATES=1
+  HIT_CRATES crates/qx-api/src/lib.rs
+  HIT_CRATES crates/qx-cli/src/strategy_binding.rs
+  HIT_CRATES crates/qx-cli/src/venue_runtime/paper_worker.rs
+  HIT_CRATES crates/qx-cli/src/workers/strategy_worker.rs
+  HIT_CRATES crates/qx-control/src/lib.rs
+  HIT_CRATES crates/qx-runtime/src/pipeline.rs
+  HIT_CRATES crates/qx-service/src/api_host.rs
+  HIT_CRATES crates/qx-service/src/api_read_model.rs
+  HIT_CRATES crates/qx-storage/src/lib.rs
+  HIT_OTHER_NONCRATES deploy/README.md
+ADJUDICATE_OK clusters=A_snapshot_guard:19,B_instrument_role:9,OTHER_ledger_face:11 failed=39 hit_own_scope=0 hit_crates=9 hit_other_noncrates=1

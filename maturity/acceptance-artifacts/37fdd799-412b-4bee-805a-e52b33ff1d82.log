@@ -1,0 +1,2 @@
+LEG s10_pointers rc=1 seconds=57.45 bytes=3122
+GATE_FAIL pointers citation buckets 2685+0+0+150+0 != examined 4617; the partition is no longer closed, so some bucket stopped counting rows

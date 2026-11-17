@@ -12,9 +12,13 @@ fn control_and_query_routes_are_audited() {
         .lines()
         .filter(|line| !line.starts_with("# "))
         .count();
-    // 4 条 `qx_api_*` 自身计数 + 2 条 `qx_control_retired_*` 退场计数：
-    // 退场计数少了读者，「内存工作集有界」就只是写法，运维面看不见它有没有真的发生。
-    assert_eq!(samples, 6, "自身样本行:\n{}", metrics.body);
+    // 4 条 `qx_api_*`、2 条控制面退场计数，以及 3 条持久运行 watcher 容量样本。
+    assert_eq!(samples, 9, "自身样本行:\n{}", metrics.body);
+    assert!(metrics.body.contains("qx_app_run_watchers_active "));
+    assert!(metrics.body.contains("qx_app_run_watcher_capacity 64\n"));
+    assert!(metrics
+        .body
+        .contains("qx_app_run_watcher_rejections_total "));
     let command = ControlCommand {
         command_id: 1,
         request_id: "api-1".into(),

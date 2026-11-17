@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "name": "strategy-account-position-empty-snapshot-sequence",
+  "strategy_id": "update-test",
+  "account_id": "paper",
+  "venue_id": "BINANCE",
+  "expected_callback_order": [
+    "paper:BINANCE:0:account_snapshot",
+    "paper:BINANCE:23:position_snapshot"
+  ],
+  "events": [
+    {
+      "schema_version": 1,
+      "event": "account_snapshot",
+      "event_seq": 0,
+      "ts": 10,
+      "account_id": "paper",
+      "venue_id": "BINANCE",
+      "balances": []
+    },
+    {
+      "schema_version": 1,
+      "event": "position_snapshot",
+      "event_seq": 23,
+      "ts": 10,
+      "account_id": "paper",
+      "venue_id": "BINANCE",
+      "positions": []
+    }
+  ]
+}

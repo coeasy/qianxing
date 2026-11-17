@@ -1,0 +1,15 @@
+$ cargo test -p qx-runtime --lib pipeline::tests::failed_submit_reopens_as_unknown_and_requires_authoritative_rejection --offline -j1
+exit_code=0
+
+[stdout]
+
+running 1 test
+test pipeline::tests::failed_submit_reopens_as_unknown_and_requires_authoritative_rejection ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 100 filtered out; finished in 0.04s
+
+
+[stderr]
+   Compiling qx-runtime v0.3.0 (D:\aex_work\qianxing\crates\qx-runtime)
+    Finished `test` profile [unoptimized] target(s) in 4.27s
+     Running unittests src\lib.rs (target\debug\deps\qx_runtime-ca7749673a8f61d1.exe)

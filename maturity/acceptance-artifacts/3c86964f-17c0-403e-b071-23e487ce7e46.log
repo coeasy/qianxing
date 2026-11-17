@@ -1,0 +1,7 @@
+$ python benchmarks/run_prepared_evaluation_capacity.py --binary target/debug/qx-cli.exe --queue-backend sqlite --control-queue-only --queue-capacity 4096 --out maturity/evidence/control-command-queue-capacity-sqlite-2026-10-29.json
+exit_code=0
+
+[stdout]
+{"crash_recovery_count": 0, "crash_recovery_samples": 0, "largest_journal_bytes": 0, "out": "maturity\\evidence\\control-command-queue-capacity-sqlite-2026-10-29.json", "queue_backend": "sqlite", "queue_kind": "control-command", "queue_overflow_rejected": true, "queue_pending": 4096, "result_sha256": "5d87bb66e6b2cbad8363dff8b5b05ec68b68d15fc0182c780a1d6b07db3db740", "workload_count": 0}
+
+[stderr]

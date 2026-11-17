@@ -1,0 +1,14 @@
+$ target/r01-clean-install-windows/installed-venv/Scripts/python.exe tools/accept_strategy_project_import_audit.py
+exit_code=0
+
+[stdout]
+
+[stderr]
+test_opaque_importer_is_explicitly_unverifiable (python.tests.test_strategy_project_import_audit.StrategyProjectImportAuditTests.test_opaque_importer_is_explicitly_unverifiable) ... ok
+test_removed_file_module_origin_is_hashed_and_remains_in_import_manifest (python.tests.test_strategy_project_import_audit.StrategyProjectImportAuditTests.test_removed_file_module_origin_is_hashed_and_remains_in_import_manifest) ... ok
+test_zip_import_remains_fingerprinted_after_module_is_removed (python.tests.test_strategy_project_import_audit.StrategyProjectImportAuditTests.test_zip_import_remains_fingerprinted_after_module_is_removed) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 1.952s
+
+OK

@@ -1,0 +1,7 @@
+VARIANT profile_builtin  id=strategy-builtin bundle=qianxing.dataset-bundle.bar-frame.example.json     bars=qianxing.bar-frame.example.json        bt_rc=0   fp=dataset-bundle:4ba99b02bd8a0454
+VARIANT strategy_macd    id=strategy-macd  bundle=None                                               bars=qianxing.bar-frame.example.json        bt_rc=0   fp=barframe:613fdc1dc0b779e7
+VARIANT both             id=strategy-macd  bundle=None                                               bars=qianxing.bar-frame.example.json        bt_rc=0   fp=barframe:613fdc1dc0b779e7
+  FACE strategy_id          state=moved {"profile_builtin": "strategy-builtin", "strategy_macd": "strategy-macd", "both": "strategy-macd"}
+  FACE dataset_bundle_path  state=moved {"profile_builtin": "qianxing.dataset-bundle.bar-frame.example.json", "strategy_macd": null, "both": null}
+  FACE bars_snapshot_path   state=same {"profile_builtin": "qianxing.bar-frame.example.json", "strategy_macd": "qianxing.bar-frame.example.json", "both": "qianxing.bar-frame.example.json"}
+READINGS .task-tmp\r7_builtin_template_readings.json

@@ -1,0 +1,53 @@
+$ cargo test -p qx-cli --features sqlite,postgres --bin qx-cli workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts -- --nocapture
+exit_code=0
+
+[stdout]
+
+running 1 test
+
+running 1 test
+
+running 1 test
+
+running 1 test
+test workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts has been running for over 60 seconds
+
+running 1 test
+
+running 1 test
+
+running 1 test
+test workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 497 filtered out; finished in 135.18s
+
+
+[stderr]
+   Compiling qx-core v0.4.0 (/tmp/qianxing-current/crates/qx-core)
+   Compiling qx-guanxing v0.4.0 (/tmp/qianxing-current/crates/qx-guanxing)
+   Compiling qx-datastruct v0.4.0 (/tmp/qianxing-current/crates/qx-datastruct)
+   Compiling qx-data v0.4.0 (/tmp/qianxing-current/crates/qx-data)
+   Compiling qx-risk v0.4.0 (/tmp/qianxing-current/crates/qx-risk)
+   Compiling qx-zhenlu v0.4.0 (/tmp/qianxing-current/crates/qx-zhenlu)
+   Compiling qx-control v0.4.0 (/tmp/qianxing-current/crates/qx-control)
+   Compiling qx-strategy v0.4.0 (/tmp/qianxing-current/crates/qx-strategy)
+   Compiling qx-spec v0.4.0 (/tmp/qianxing-current/crates/qx-spec)
+   Compiling qx-scheduler v0.4.0 (/tmp/qianxing-current/crates/qx-scheduler)
+   Compiling qx-protocol v0.4.0 (/tmp/qianxing-current/crates/qx-protocol)
+   Compiling qx-storage v0.4.0 (/tmp/qianxing-current/crates/qx-storage)
+   Compiling qx-execution v0.4.0 (/tmp/qianxing-current/crates/qx-execution)
+   Compiling qx-provider v0.4.0 (/tmp/qianxing-current/crates/qx-provider)
+   Compiling qx-factor v0.4.0 (/tmp/qianxing-current/crates/qx-factor)
+   Compiling qx-app v0.4.0 (/tmp/qianxing-current/crates/qx-app)
+   Compiling qx-runtime v0.4.0 (/tmp/qianxing-current/crates/qx-runtime)
+   Compiling qx-xingban v0.4.0 (/tmp/qianxing-current/crates/qx-xingban)
+   Compiling qx-process-io v0.4.0 (/tmp/qianxing-current/crates/qx-process-io)
+   Compiling qx-genglu v0.4.0 (/tmp/qianxing-current/crates/qx-genglu)
+   Compiling qx-adapter v0.4.0 (/tmp/qianxing-current/crates/qx-adapter)
+   Compiling qx-cli v0.4.0 (/tmp/qianxing-current/crates/qx-cli)
+   Compiling qx-api v0.4.0 (/tmp/qianxing-current/crates/qx-api)
+   Compiling qx-orchestrator v0.4.0 (/tmp/qianxing-current/crates/qx-orchestrator)
+   Compiling qx-service v0.4.0 (/tmp/qianxing-current/crates/qx-service)
+   Compiling qx-plugin v0.4.0 (/tmp/qianxing-current/crates/qx-plugin)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2m 04s
+     Running unittests src/main.rs (/target/debug/deps/qx_cli-a1656ed2b72888c8)

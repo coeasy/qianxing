@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from qianxing_ashare import (  # noqa: E402
     ASHARE_SCHEMA_VERSION,
+    AshareProviderError,
     SCALE,
     _CORPORATE_ACTION_TYPES,
     _canonical_action_type,
@@ -114,6 +115,20 @@ class CrossLanguageActionContractTest(unittest.TestCase):
         for name in sorted(_CORPORATE_ACTION_TYPES):
             with self.subTest(action_type=name):
                 self.assertEqual(_canonical_action_type({"action_type": name}), name)
+
+    def test_unrecognized_provider_action_names_fail_closed(self) -> None:
+        """未知事件不能退化成会参与现金分红折算的 unknown。"""
+
+        for action_type in ("spin-off", "unknown", "除权除息"):
+            with self.subTest(action_type=action_type):
+                with self.assertRaises(AshareProviderError) as raised:
+                    normalize_corporate_action_rows(
+                        [{"ex_date": "2024-06-03", "action_type": action_type}],
+                        code="000001",
+                        source="test-provider",
+                    )
+                self.assertEqual(raised.exception.category, "unsupported")
+                self.assertEqual(raised.exception.source, "test-provider")
 
     def test_raw_named_input_columns_are_taken_as_already_scaled(self) -> None:
         """`*_raw` 输入名是已定点整数（Rust 读侧同一口径），不能再乘一次 SCALE。"""

@@ -1,0 +1,8 @@
+$ python -c import os,runpy,subprocess; os.environ['CARGO_PROFILE_DEV_DEBUG']='0'; subprocess.run(['cargo','check','-p','qx-cli','-j','1'],check=True); runpy.run_path('tools/check_architecture.py')['multi_account_depth_evidence_pack_check']()
+exit_code=0
+
+[stdout]
+[PASS] 多账户深度 Evidence pack 单一拥有来源 Evidence 复核、portable export 二次复核及 staging 原子发布顺序
+
+[stderr]
+    Finished `dev` profile [unoptimized] target(s) in 0.51s

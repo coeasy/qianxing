@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "kind": "supplier-public-readonly-probe",
+  "observed_at_utc": "2026-10-22T17:43:06Z",
+  "venue": "binance",
+  "network": "testnet",
+  "instrument": "BTCUSDT.BINANCE",
+  "command": "target/release/qx-cli.exe binance-public-probe testnet BTCUSDT.BINANCE",
+  "process_exit_code": 0,
+  "binary_sha256": "64fa287b0b42404d6f58905e6cde415f31c1f02a206d67c73c34deaecdfe2f7e",
+  "response": {
+    "bid_raw": 81336970000000,
+    "ask_raw": 81336980000000,
+    "bid_qty_raw": 36531700000,
+    "ask_qty_raw": 704840000,
+    "supplier_timestamp_ms": 1792690976984
+  },
+  "credentials_present": false,
+  "private_account_calls": false,
+  "orders_sent": false,
+  "sandbox_tested_flip_allowed": false,
+  "scope": "Credential-free Binance Spot Testnet public ticker reachability only; authenticated account, order lifecycle, restart recovery, reconciliation, and vendor historical-data import remain unverified."
+}

@@ -5,7 +5,10 @@ fn full_health_readout_replays_structured_json_and_paper_artifacts() {
     let first = observe("all-json", &["all", "--json"], 1);
     let second = observe("all-json", &["all", "--json"], 2);
     assert_eq!(first.exit_code, second.exit_code);
-    assert_eq!(first.artifacts, second.artifacts);
+    assert_eq!(
+        super::canonical_artifact_paths(&first.artifacts),
+        super::canonical_artifact_paths(&second.artifacts)
+    );
     assert!(
         matches!(first.exit_code, 0 | 1),
         "all --json should report readiness through its normal pass/blocked exit: {first:?}"

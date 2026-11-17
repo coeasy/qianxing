@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/strategy-deployment-node-snapshot-v1.json",
+  "title": "Strategy deployment node snapshot ingress v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "generated_at_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Source node snapshot time in Unix milliseconds; must not be later than server receipt time."
+    },
+    "deployments": {
+      "type": "array",
+      "maxItems": 1024,
+      "items": {
+        "$ref": "strategy-deployment-status-v1.json"
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "generated_at_ms",
+    "deployments"
+  ]
+}

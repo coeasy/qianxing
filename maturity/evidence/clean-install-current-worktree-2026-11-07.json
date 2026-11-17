@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "kind": "qianxing_clean_install_acceptance",
+  "acceptance_id": "clean-install-windows-py313-current-worktree-20261107-r3",
+  "generated_at_utc": "2026-11-07T12:03:12+00:00",
+  "source": {
+    "head_commit": "4a70e85093906d1fc114970ec6349121dbcaa9f6",
+    "working_tree_changes_included": true,
+    "dirty_path_count": 691,
+    "measurement_source_fingerprint": "285ea726a2573b9db7a2db145837eb7d3e3f3a52290b7c35750c5ef7646aded7"
+  },
+  "environment": {
+    "platform": "win32",
+    "architecture": "AMD64",
+    "python": "3.13.13",
+    "os_version": "10.0.22631"
+  },
+  "package": {
+    "version": "0.3.0",
+    "wheel": "qianxing-0.3.0-cp310-abi3-win_amd64.whl",
+    "wheel_sha256": "195a482235486cccbe50e394a8201fd4639e950cba346ea207e15afd09b2c669",
+    "wheel_bytes": 22683222,
+    "cli_identity": "qianxing 0.3.0 (build 4a70e85-dirty, target x86_64-pc-windows-msvc, profile release, schemas 1db063770a475ac1f5a13d3494810c1136a1b2fe16694838ff98d87358714a91)",
+    "cli_sha256": "a71055713b68c74ccb0160374c45009fbba7225b334a7c11ccd74686526fe08f",
+    "cli_bytes": 43613696
+  },
+  "work_dir": "D:\\aex_work\\qx-clean-install-20261107-r3",
+  "validation": {
+    "fresh_virtual_environment_install": true,
+    "separate_offline_cli_install": true,
+    "native_extension_target": "x86_64-pc-windows-msvc",
+    "native_platform_compatibility": "matched",
+    "native_app": "complete",
+    "cli_target": "x86_64-pc-windows-msvc",
+    "cli_platform_compatibility": "matched",
+    "schema_catalog": "matched",
+    "quickstart_exit": 0,
+    "quickstart_project_files": 17,
+    "python_example_modules_compiled": 13,
+    "python_strategy_example_invoked": true,
+    "builtin_strategy_count": 17
+  },
+  "limitations": [
+    "Windows local clean-install acceptance only; Linux and macOS legs remain pending.",
+    "This wheel and CLI were built from a dirty, unpublished workspace and are not a release artifact.",
+    "The acceptance work directory and installed artifacts are outside the repository at the recorded path."
+  ]
+}

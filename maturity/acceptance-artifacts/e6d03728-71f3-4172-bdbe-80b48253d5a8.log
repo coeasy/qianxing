@@ -1,0 +1,8 @@
+$ python -c import os,runpy,subprocess; os.environ['CARGO_PROFILE_DEV_DEBUG']='0'; subprocess.run(['cargo','check','-p','qx-cli','-j','1'],check=True); runpy.run_path('tools/check_architecture.py')['multi_account_depth_evidence_recompute_check']()
+exit_code=0
+
+[stdout]
+[PASS] 多账户深度 Evidence 独立复算和隔离 staging 生命周期归 recompute owner，facade 保持输入/Evidence 验证先于复算
+
+[stderr]
+    Finished `dev` profile [unoptimized] target(s) in 0.53s

@@ -156,6 +156,10 @@
           "type": "string",
           "minLength": 1
         },
+        "manifest_run_id": {
+          "type": "string",
+          "minLength": 1
+        },
         "instrument": {
           "type": "string",
           "minLength": 1
@@ -237,6 +241,10 @@
           "minLength": 1
         },
         "fills": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event_trace": {
           "type": "string",
           "minLength": 1
         }

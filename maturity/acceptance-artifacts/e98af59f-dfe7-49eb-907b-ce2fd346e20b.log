@@ -1,0 +1,40 @@
+DOCTOR qianxing.runtime.ashare.example.json                     rc=0 fail_lines=0
+DOCTOR qianxing.runtime.binance-testnet.example.json            rc=2 fail_lines=2
+  READ [FAIL] runtime_reference: worker binance-execution-main instrument_spec_path 与标的 BTCUSDT.BINANCE 预检失败: FAIL_CLOSED: live execution worker binance-execution-main 的 market spec 缺少签名角色目录 (BTCUSDT.BINANCE)
+  READ [FAIL] worker binance-execution-main instrument_spec_path 与标的 BTCUSDT.BINANCE 预检失败: FAIL_CLOSED: live execution worker binance-execution-main 的 market spec 缺少签名角色目录 (BTCUSDT.BINANCE)
+DOCTOR qianxing.runtime.builtin-strategy.example.json           rc=0 fail_lines=0
+DOCTOR qianxing.runtime.builtin-strategy.okx.example.json       rc=0 fail_lines=0
+DOCTOR qianxing.runtime.ccxt.example.json                       rc=2 fail_lines=2
+  READ [FAIL] runtime_reference: worker ccxt-execution-main live execution must list symbols when using a single-market spec so role evidence can be bound
+  READ [FAIL] worker ccxt-execution-main live execution must list symbols when using a single-market spec so role evidence can be bound
+DOCTOR qianxing.runtime.console.example.json                    rc=0 fail_lines=0
+DOCTOR qianxing.runtime.consumer.example.json                   rc=0 fail_lines=0
+DOCTOR qianxing.runtime.example.json                            rc=0 fail_lines=0
+DOCTOR qianxing.runtime.messaging.example.json                  rc=0 fail_lines=0
+DOCTOR qianxing.runtime.multi-venue-arbitrage.example.json      rc=2 fail_lines=4
+  READ [FAIL] runtime_reference: worker execution-binance-usdm instrument_spec_path 集合预检失败: FAIL_CLOSED: live execution worker execution-binance-usdm 的 market spec 缺少签名角色目录 (BTC/USDT:USDT.BINANCE)
+  READ [FAIL] runtime_reference: worker execution-okx-swap instrument_spec_path 集合预检失败: FAIL_CLOSED: live execution worker execution-okx-swap 的 market spec 缺少签名角色目录 (BTC/USDT:USDT.BINANCE)
+  READ [FAIL] worker execution-binance-usdm instrument_spec_path 集合预检失败: FAIL_CLOSED: live execution worker execution-binance-usdm 的 market spec 缺少签名角色目录 (BTC/USDT:USDT.BINANCE)
+DOCTOR qianxing.runtime.multi-venue-contract.example.json       rc=2 fail_lines=4
+  READ [FAIL] runtime_reference: worker execution-binance-usdm instrument_spec_path 集合预检失败: FAIL_CLOSED: live execution worker execution-binance-usdm 的 market spec 缺少签名角色目录 (BTC/USDT:USDT.BINANCE)
+  READ [FAIL] runtime_reference: worker execution-okx-swap instrument_spec_path 集合预检失败: FAIL_CLOSED: live execution worker execution-okx-swap 的 market spec 缺少签名角色目录 (BTC/USDT:USDT.BINANCE)
+  READ [FAIL] worker execution-binance-usdm instrument_spec_path 集合预检失败: FAIL_CLOSED: live execution worker execution-binance-usdm 的 market spec 缺少签名角色目录 (BTC/USDT:USDT.BINANCE)
+DOCTOR qianxing.runtime.paper-strategy.example.json             rc=0 fail_lines=0
+DOCTOR qianxing.runtime.postgres.example.json                   rc=0 fail_lines=0
+DOCTOR qianxing.runtime.production.example.json                 rc=2 fail_lines=8
+  READ [FAIL] runtime_reference: worker binance-execution-main live execution must list symbols when using a single-market spec so role evidence can be bound
+  READ [FAIL] runtime_reference: strategy.research_snapshot_path 文件不存在: /var/lib/qianxing/research/production-strategy-v1.json (configured=/var/lib/qianxing/research/production-strategy-v1.json)
+  READ [FAIL] runtime_reference: strategy.dataset_bundle_path 文件不存在: /var/lib/qianxing/research/production-strategy-v1.bundle.json (configured=/var/lib/qianxing/research/production-strategy-v1.bundle.json)
+DOCTOR qianxing.runtime.sqlite.example.json                     rc=0 fail_lines=0
+DOCTOR qianxing.runtime.strategy-backtest.example.json          rc=0 fail_lines=0
+DOCTOR qianxing.runtime.strategy-columnar.example.json          rc=0 fail_lines=0
+DOCTOR qianxing.runtime.strategy-framed.example.json            rc=0 fail_lines=0
+DOCTOR qianxing.runtime.strategy-multi-backtest.example.json    rc=0 fail_lines=0
+DOCTOR qianxing.runtime.strategy-shared.example.json            rc=0 fail_lines=0
+CENSUS total=20 rc0=15 nonzero=5 fail_dump=.task-tmp\r6_doctor_census_fails.txt
+  OK qianxing.runtime.ashare.example.json,qianxing.runtime.builtin-strategy.example.json,qianxing.runtime.builtin-strategy.okx.example.json,qianxing.runtime.console.example.json,qianxing.runtime.consumer.example.json,qianxing.runtime.example.json,qianxing.runtime.messaging.example.json,qianxing.runtime.paper-strategy.example.json,qianxing.runtime.postgres.example.json,qianxing.runtime.sqlite.example.json,qianxing.runtime.strategy-backtest.example.json,qianxing.runtime.strategy-columnar.example.json,qianxing.runtime.strategy-framed.example.json,qianxing.runtime.strategy-multi-backtest.example.json,qianxing.runtime.strategy-shared.example.json
+  NONZERO qianxing.runtime.binance-testnet.example.json,qianxing.runtime.ccxt.example.json,qianxing.runtime.multi-venue-arbitrage.example.json,qianxing.runtime.multi-venue-contract.example.json,qianxing.runtime.production.example.json
+  CAUSE single-market 需列 symbols=4
+  CAUSE 其它=2
+  CAUSE 外部绝对路径文件不存在=4
+  CAUSE 缺少签名角色目录=10

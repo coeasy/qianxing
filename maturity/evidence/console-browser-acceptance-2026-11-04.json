@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "kind": "qianxing_console_browser_acceptance",
+  "reviewed_at": "2026-11-04",
+  "environment": "isolated_windows_local_loopback",
+  "observation_method": "codex_in_app_browser_accessibility_tree",
+  "bootstrap_token_recorded": false,
+  "operator_id": "console-operator",
+  "browser": {
+    "name": "ChatGPT in-app browser",
+    "tab_title": "牵星 Qianxing · 控制台",
+    "origin": "http://127.0.0.1",
+    "connected": true,
+    "bff_http_acceptance_run_id": "aef1e68c3adb4a9e945751adf87857c8"
+  },
+  "revision": {
+    "http_status": 201,
+    "worker_id": "strategy-console-fixture",
+    "revision": 1,
+    "created_by": "console-operator"
+  },
+  "operation": {
+    "http_status": 200,
+    "operation_id": "ce4d4a70-83e1-4289-ba27-f7102e130e28",
+    "action": "deploy",
+    "state": "accepted",
+    "requested_by": "console-operator"
+  },
+  "deployment_projection": {
+    "desired_revision": 1,
+    "desired_running": true,
+    "observed": null,
+    "trading_enabled": null,
+    "blocking_reasons": [
+      "live_readiness_not_evaluated",
+      "worker_unobserved",
+      "host_lifecycle_not_observed",
+      "host_capabilities_not_observed",
+      "checkpoint_roundtrip_not_observed",
+      "live_reconciliation_missing"
+    ]
+  },
+  "readiness": {
+    "http_status": 503,
+    "ready": false,
+    "summary": "worker_metrics_unpublished",
+    "layer_statuses": {
+      "L": "not_assessed",
+      "O": "blocked",
+      "P": "not_assessed",
+      "R": "pass"
+    },
+    "layer_projection_source": "maturity/evidence/console-bff-acceptance-2026-11-04.json"
+  },
+  "effects": {
+    "revision_and_operation_records": "isolated_local_fixture_only",
+    "supervisor_started": false,
+    "venue_worker_started": false,
+    "orders_sent": false
+  },
+  "limitations": [
+    "The UI used the same-origin BFF and correctly reported WebSocket as not applicable, falling back to HTTP polling.",
+    "This validates the browser workflow and fail-closed projection only; authoritative live readiness remains unevaluated."
+  ]
+}

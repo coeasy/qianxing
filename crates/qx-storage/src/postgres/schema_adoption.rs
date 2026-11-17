@@ -10,13 +10,7 @@ pub fn adopt_legacy_postgres_schema(dsn: &str, schema: &str) -> Result<u32, Stor
             "PostgreSQL DSN 和 schema 名称不能为空".into(),
         ));
     }
-    let mut config: postgres::Config = dsn.parse().map_err(pg_error)?;
-    config.connect_timeout(CONNECT_TIMEOUT);
-    let tls = native_tls::TlsConnector::builder()
-        .build()
-        .map_err(|error| StorageError::Io(format!("PostgreSQL TLS 初始化失败: {error}")))?;
-    let connector = postgres_native_tls::MakeTlsConnector::new(tls);
-    let mut client = config.connect(connector).map_err(pg_error)?;
+    let mut client = Client::connect(dsn, CONNECT_TIMEOUT)?;
     configure_client(&mut client)?;
     adopt_legacy_postgres_client(&mut client, schema)
 }
@@ -88,6 +82,10 @@ fn adopt_legacy_postgres_client(client: &mut Client, schema: &str) -> Result<u32
             .batch_execute(crate::schema_migrations::POSTGRES_V2_SCHEMA)
             .map_err(pg_error)?;
         let expected_v2 = postgres_schema_fingerprint(&mut transaction, &control_schema)?;
+        transaction
+            .batch_execute(crate::schema_migrations::POSTGRES_V3_SCHEMA)
+            .map_err(pg_error)?;
+        let expected_v3 = postgres_schema_fingerprint(&mut transaction, &control_schema)?;
 
         transaction
             .query_one(
@@ -100,9 +98,11 @@ fn adopt_legacy_postgres_client(client: &mut Client, schema: &str) -> Result<u32
             1
         } else if actual == expected_v2 {
             2
+        } else if actual == expected_v3 {
+            3
         } else {
             return Err(StorageError::Conflict(format!(
-                "PostgreSQL schema {schema:?} 与已知 v1/v2 迁移结构不完全一致，拒绝认领"
+                "PostgreSQL schema {schema:?} 与已知 v1/v2/v3 迁移结构不完全一致，拒绝认领"
             )));
         };
         transaction
@@ -114,11 +114,19 @@ fn adopt_legacy_postgres_client(client: &mut Client, schema: &str) -> Result<u32
                 &[&"1"],
             )
             .map_err(pg_error)?;
-        if version == 2 {
+        if version >= 2 {
             transaction
                 .execute(
                     "INSERT INTO qx_schema_migrations(version, applied_ts) VALUES ($1, 'manual-adoption')",
                     &[&"2"],
+                )
+                .map_err(pg_error)?;
+        }
+        if version >= 3 {
+            transaction
+                .execute(
+                    "INSERT INTO qx_schema_migrations(version, applied_ts) VALUES ($1, 'manual-adoption')",
+                    &[&"3"],
                 )
                 .map_err(pg_error)?;
         }
@@ -137,7 +145,7 @@ fn adopt_legacy_postgres_client(client: &mut Client, schema: &str) -> Result<u32
     Ok(adopted_version)
 }
 
-fn postgres_schema_fingerprint<C: GenericClient>(
+fn postgres_schema_fingerprint<C: QueryClient>(
     client: &mut C,
     schema: &str,
 ) -> Result<Vec<String>, StorageError> {

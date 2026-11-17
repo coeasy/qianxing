@@ -82,6 +82,8 @@ fn run(
             out_of_order_rows,
             missing_intervals,
             interval_ms: Some(spec.interval_ms),
+            acquisition_cutoff_ms: None,
+            excluded_unclosed_rows: None,
             timezone: spec.timezone.clone(),
             corporate_action_coverage: false,
             usable_tiers: vec![spec.tier.as_str().to_owned()],

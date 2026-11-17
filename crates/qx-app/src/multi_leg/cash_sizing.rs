@@ -79,6 +79,7 @@ mod tests {
             low: high,
             close: high,
             volume: 1,
+            exact_ohlcv: None,
         }
     }
 

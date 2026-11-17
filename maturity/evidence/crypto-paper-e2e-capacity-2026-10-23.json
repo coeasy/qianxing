@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "crypto_paper_worker_acceptance_e2e",
+  "generated_at_utc": "2026-10-23T03:36:29.470083+00:00",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "measurement_source_fingerprint": "e597d98d0e13aab3b4e8537c59983a2d0b7714757ba5e64ec19a16a8e9342acf",
+  "measurement_source_fingerprint_schema": 3,
+  "binary": "qx-cli.exe",
+  "binary_sha256": "46405955f680169d465a94034e98b12895ffc974f5b3333891ea2e9e9e7a74c4",
+  "scenario": "tools/paper_acceptance.py: scheduler -> strategy -> Paper execution -> Ledger/EventLog/audit, same-root idempotent rerun, and independent-root parity",
+  "profile_coverage_claim": false,
+  "measurement_method": {
+    "process_tree": "run_measured samples the Python acceptance driver and descendants every 10 ms when psutil is available",
+    "memory": "main-process OS peak RSS plus sampled aggregate process-tree RSS; tree samples may miss short spikes",
+    "scope": "each sample creates two isolated roots, runs the Paper chain, verifies an idempotent rerun, checks audit termination and compares independent fact surfaces"
+  },
+  "records": [
+    {
+      "benchmark": "end_to_end",
+      "operations": "crypto-paper-worker-acceptance-v1",
+      "samples": 3,
+      "median_ms": 2972.817,
+      "p95_ms": 3021.597,
+      "raw_ms": [
+        2972.817,
+        3021.597,
+        2931.466
+      ],
+      "verified_main_chain_counts_per_independent_root": {
+        "orders_submitted": 1,
+        "fills": 1,
+        "ledger_entries": 4
+      },
+      "peak_rss_bytes_p95": 17764352.0,
+      "process_tree_peak_rss_bytes_p95": 26841088.0,
+      "peak_process_count_p95": 2.0,
+      "tree_cpu_seconds_p95": 0.25,
+      "tree_io_read_bytes_p95": 56035503.0,
+      "tree_io_write_bytes_p95": 74402.0,
+      "raw_samples": [
+        {
+          "elapsed_ms": 2972.8166999993846,
+          "orders_submitted": 1,
+          "fills": 1,
+          "ledger_entries": 4,
+          "peak_rss_bytes": 17719296,
+          "process_tree_peak_rss_bytes": 26787840,
+          "peak_process_count": 2,
+          "tree_cpu_seconds": 0.25,
+          "tree_io_read_bytes": 56035503,
+          "tree_io_write_bytes": 74402
+        },
+        {
+          "elapsed_ms": 3021.5969999990193,
+          "orders_submitted": 1,
+          "fills": 1,
+          "ledger_entries": 4,
+          "peak_rss_bytes": 17399808,
+          "process_tree_peak_rss_bytes": 26542080,
+          "peak_process_count": 2,
+          "tree_cpu_seconds": 0.15625,
+          "tree_io_read_bytes": 56034403,
+          "tree_io_write_bytes": 66110
+        },
+        {
+          "elapsed_ms": 2931.466099995305,
+          "orders_submitted": 1,
+          "fills": 1,
+          "ledger_entries": 4,
+          "peak_rss_bytes": 17764352,
+          "process_tree_peak_rss_bytes": 26841088,
+          "peak_process_count": 2,
+          "tree_cpu_seconds": 0.25,
+          "tree_io_read_bytes": 56017879,
+          "tree_io_write_bytes": 66087
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "The worker acceptance fixture uses one Paper order and does not model funding provider retrieval, eight-hour funding cadence, or an externally deployed database.",
+    "Maker/taker, precision, weighted rate-limit, partial-fill and funding-ledger performance is measured separately by qx_zhenlu_crypto_paper_lifecycle_v2; this E2E row is not a complete crypto-paper profile claim."
+  ]
+}

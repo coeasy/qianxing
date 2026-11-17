@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "strategy": {
+    "fast_window": 2,
+    "slow_window": 3,
+    "exposure_bps": 9000,
+    "start_ts": 100,
+    "lot_raw": 1000000000
+  },
+  "instrument": "BTCUSDT.BINANCE",
+  "available_margin_raw": 1000000000000,
+  "close_raw": [
+    3000000000,
+    2000000000,
+    1000000000,
+    4000000000,
+    3000000000,
+    2000000000
+  ],
+  "expected_intents": [
+    {
+      "bar_index": 3,
+      "side": "Buy",
+      "qty_raw": 225000000000,
+      "reduce_only": false
+    },
+    {
+      "bar_index": 5,
+      "side": "Sell",
+      "qty_exact": "225",
+      "reduce_only": true
+    }
+  ]
+}

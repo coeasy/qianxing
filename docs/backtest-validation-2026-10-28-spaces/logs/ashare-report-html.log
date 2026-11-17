@@ -1,0 +1,15 @@
+牵星 Qianxing — 分级校准，量天定位
+
+[Report] html=D:\aex_work\qianxing\docs\backtest-validation-2026-10-28-spaces\ashare-backtest.html
+[Report] equity_svg=D:\aex_work\qianxing\docs\backtest-validation-2026-10-28-spaces\ashare-backtest.equity.svg
+[Report] fills_svg=D:\aex_work\qianxing\docs\backtest-validation-2026-10-28-spaces\ashare-backtest.fills.svg
+[Report] monthly_svg=D:\aex_work\qianxing\docs\backtest-validation-2026-10-28-spaces\ashare-backtest.monthly.svg
+[Report] summary=D:\workspace\qv spaces28\a1\data\qianxing-ashare\runs\strategy-backtest_strategy-ashare_000001.SZSE_19042528fb5c61685310cfa7c26ec34e58d72e27dea6ca19b2502474f2bb8b61_134288aa2f947994fc7f6d10-b1916385388c5610.v7.summary.json
+[Report]  schema_version=7 input=declared account=declared replay=declared run_record=declared ashare_analysis=MISSING_IN_THIS_GENERATION execution_attempts=declared
+[Report]  strategy=strategy-ashare instrument=000001.SZSE bars=6 fills=1
+[Report]  return_bps=1 max_drawdown_bps=0 fees_raw=5104500000 turnover_raw=1045000000000 final_equity_raw=100019895500000
+[Report]  input_data_hash=982df19cca407443 result_hash=6e120606d81369b5 replay_log_digest=6e120606d81369b5
+[Report]  input_verified=D:\workspace\qv spaces28\a1\qianxing.ashare.bar-frame.example.json input_kind=barframe input_id=strategy-bars:000001.SZSE input_fingerprint=5e59cfcf3adca434
+[Report]  account_initial_cash_raw=100000000000000 account_source=builtin-default
+[Report]  replay_events=13 replay_ledger_entries=4/4
+[Report]  risk_rule_set_version=conservative-default-v1+implicit-no-short

@@ -1,0 +1,17 @@
+SHOT a-declared declare=True rc=0 declared_value='qianxing.dataset-bundle.ashare.example.json'
+  READ [Strategy · Backtest] strategy=strategy-ashare instrument=000001.SZSE bars=6 fills=1 return_bps=1 max_drawdown_bps=0 result_hash=6e120606d81369b5
+  READ [RunManifest] run_id=strategy-backtest:strategy-ashare:000001.SZSE:1389f2e73d8b8321411bfe22497712b423113e0b6d8dcd3d8b1443eb6f13d430:3fc04a5af452decfb95071e4 data_fingerprint=dataset-bundle:099c5f20c38
+  PATH .equity.csv data/qianxing-ashare/runs/strategy-backtest_strategy-ashare_000001.SZS 6eca9b1ee01265a7
+  PATH .fills.csv data/qianxing-ashare/runs/strategy-backtest_strategy-ashare_000001.SZS f9fb8d007287434b
+  ART .equity.csv count=1 head=6eca9b1ee01265a7
+  ART .fills.csv count=1 head=f9fb8d007287434b
+SHOT b-null declare=False rc=0 declared_value='qianxing.dataset-bundle.ashare.example.json'
+  READ [Strategy · Backtest] strategy=strategy-ashare instrument=000001.SZSE bars=6 fills=1 return_bps=1 max_drawdown_bps=0 result_hash=6e120606d81369b5
+  READ [RunManifest] run_id=strategy-backtest:strategy-ashare:000001.SZSE:de1022567a1543cde48a3313fb4e8a2161e6512ef21687c23663d0523e330f0d:e32358c1582a036eab094187 data_fingerprint=barframe:5e59cfcf3adca434 
+  PATH .equity.csv data/qianxing-ashare/runs/strategy-backtest_strategy-ashare_000001.SZS 6eca9b1ee01265a7
+  PATH .fills.csv data/qianxing-ashare/runs/strategy-backtest_strategy-ashare_000001.SZS f9fb8d007287434b
+  ART .equity.csv count=1 head=6eca9b1ee01265a7
+  ART .fills.csv count=1 head=f9fb8d007287434b
+CONTROL rc_a=0 rc_b=0 result_line_equal=True artifacts_equal=True
+SEMANTICS stable
+DIR .task-tmp\test-tmp\ashare-semantics-1793496596

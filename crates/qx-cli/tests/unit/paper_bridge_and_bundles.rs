@@ -86,8 +86,10 @@ fn paper_market_bridge_mirrors_quote_into_account_event_log() {
             instrument: &instrument,
             bid: Price::from_raw(100),
             bid_qty: Quantity::from_i64(2),
+            bid_qty_exact: Some(qx_core::ExactDecimal::parse("2.0000000001").unwrap()),
             ask: Price::from_raw(101),
             ask_qty: Quantity::from_i64(3),
+            ask_qty_exact: Some(qx_core::ExactDecimal::parse("3.0000000002").unwrap()),
             event_ts: 1_000,
             receive_ts: 1_001,
             source_seq: 7,
@@ -104,6 +106,14 @@ fn paper_market_bridge_mirrors_quote_into_account_event_log() {
     assert_eq!(restored_quote.ask, Price::from_raw(101));
     assert_eq!(restored_quote.bid_qty, Quantity::from_i64(2));
     assert_eq!(restored_quote.ask_qty, Quantity::from_i64(3));
+    assert_eq!(
+        restored_quote.bid_qty_exact,
+        Some(qx_core::ExactDecimal::parse("2.0000000001").unwrap())
+    );
+    assert_eq!(
+        restored_quote.ask_qty_exact,
+        Some(qx_core::ExactDecimal::parse("3.0000000002").unwrap())
+    );
     let _ = std::fs::remove_dir_all(root);
 }
 

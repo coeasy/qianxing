@@ -1,0 +1,30 @@
+  OK   run5_map_has_the_audit_row rows=19
+  OK   widening_preserved_every_earlier_line old=16 new=26
+  OK   widening_added_only_head_roster_rows added=10
+  OK   head_roster_rows_equal_the_head_face rows=10 face=10
+  OK   pre_shot_is_the_booked_baseline_face detail={'pointers_artifact_links': '121', 'pointers_audit_exit': '1', 'pointers_baseline': '146', 'pointers_broken_everywhere': '0', 'pointers_head_face': '10', 'pointers_head_rows': '10', 'pointers_local_only': '146', 'pointers_other_links': '25', 'pointers_rc': '0', 'pointers_scanned_files': '58'}
+  OK   pre_shot_audit_exit_is_the_probes_own_red audit_exit=1
+  OK   leg_rc_is_not_the_audit_exit leg_rc=0 audit_exit=1
+  OK   gun1_raised_only_the_local_only_face detail={'pointers_artifact_links': '121', 'pointers_audit_exit': '1', 'pointers_baseline': '146', 'pointers_broken_everywhere': '0', 'pointers_head_face': '10', 'pointers_head_rows': '10', 'pointers_local_only': '147', 'pointers_other_links': '26', 'pointers_rc': '1', 'pointers_scanned_files': '58'}
+  OK   gun1_killed_the_leg rc=1
+  OK   gun1_restored_by_sha
+  OK   gun2_raised_only_the_broken_face detail={'pointers_artifact_links': '121', 'pointers_audit_exit': '1', 'pointers_baseline': '146', 'pointers_broken_everywhere': '1', 'pointers_head_face': '10', 'pointers_head_rows': '10', 'pointers_local_only': '146', 'pointers_other_links': '25', 'pointers_rc': '1', 'pointers_scanned_files': '58'}
+  OK   gun2_killed_the_leg rc=1
+  OK   gun2_printed_its_broken_row
+  OK   gun2_restored_by_sha
+  OK   gun3_is_an_equivalent_mutation detail={'pointers_artifact_links': '121', 'pointers_audit_exit': '1', 'pointers_baseline': '146', 'pointers_broken_everywhere': '0', 'pointers_head_face': '10', 'pointers_head_rows': '10', 'pointers_local_only': '146', 'pointers_other_links': '25', 'pointers_rc': '0', 'pointers_scanned_files': '58'} rc=0
+  OK   gun3_restored_by_sha
+  OK   gun4_killed_the_leg_by_tightening_below_the_measured_face rc=1 baseline=145 local=146
+  OK   gun5_loosening_passes_and_prints_the_knob_value rc=0 baseline=999
+  OK   gun6_mutant_is_a_one_line_lie changed=1
+  OK   gun6_killed_the_leg_with_a_refusal rc=2 gate_fail=True
+  OK   audit_restored_by_sha now=8f001913113214dd was=8f001913113214dd
+  OK   doc_restored_by_sha now=13d4c8d116eb1604 was=13d4c8d116eb1604
+  OK   verdict_run_is_green_on_final_bytes detail={'pointers_artifact_links': '121', 'pointers_audit_exit': '1', 'pointers_baseline': '146', 'pointers_broken_everywhere': '0', 'pointers_head_face': '10', 'pointers_head_rows': '10', 'pointers_local_only': '146', 'pointers_other_links': '25', 'pointers_rc': '0', 'pointers_scanned_files': '58'}
+  OK   no_injection_survived_into_the_verdict_run
+TALLY fired=8 adjudicated=6 killed=4 equivalent=2 survived=0
+  OK   tally_adds_up killed+equivalent+survived=6 expected 6 injections/knobs/liar
+  OK   every_adjudicated_shot_is_killed_or_equivalent survived=0
+  OK   the_two_reference_shots_are_not_counted_as_guns fired=8
+CHECKS ok=27 bad=0 rows=27
+GUNS_OK shots=8 killed=4 equivalent=2

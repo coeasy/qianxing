@@ -1,6 +1,7 @@
 //! 调度器：UTC tick 归一、调度状态装载、到期作业分派，以及实时策略作业的规格构造。
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use qx_runtime::{RuntimeConfig, StrategyRuntimeConfig, WorkerRole};
 use qx_scheduler::{
@@ -9,9 +10,11 @@ use qx_scheduler::{
 };
 use qx_storage::JsonStateStore;
 
+#[cfg(test)]
+use crate::live_strategy_snapshot_digest;
 use crate::{
-    build_identity, lease_clock, live_strategy_snapshot_digest, resolve_runtime_relative_path,
-    runtime_path, ConfiguredJobQueue,
+    build_identity, lease_clock, live_strategy_input_digest, resolve_runtime_relative_path,
+    runtime_path, runtime_timestamp_ms, ConfiguredJobQueue,
 };
 
 pub(crate) fn scheduler_manifest(
@@ -28,9 +31,9 @@ pub(crate) fn scheduler_manifest(
     )
 }
 
-/// 实时策略 worker 每一根闭合 Bar 对应的作业规格与运行记录。
+/// 实时策略 worker 每个新行情/Timer 触发指纹对应的作业规格与运行记录。
 ///
-/// `idempotency_key` 就是 BarFrame 指纹：同一根闭合 Bar 重放不会二次下单；
+/// `idempotency_key` 就是输入触发指纹：同一根 Bar、同一 Tick 或同一 Timer 时间桶重放不会二次下单；
 /// `dry_run` 只按环境的 `paper` 判定，与 worker 角色无关。能走到这里的写法已由
 /// `RuntimeConfig::validate` 的闭合名单 `ENVIRONMENT_VOCAB` 收口，四种写法各自的提交臂
 /// 由 `tests/environment_submit_arm_table.rs` 钉住。
@@ -250,6 +253,26 @@ pub(crate) fn strategy_run_is_final(
         }))
 }
 
+/// 收口一次已经完成策略效果与 durable checkpoint 提交的 Scheduler run。
+/// 普通执行和崩溃恢复复用同一处状态转换，避免两条成功路径产生不同结果码。
+pub(crate) fn complete_strategy_job_run(
+    state_store: &JsonStateStore,
+    state_path: &Path,
+    run_id: u64,
+    finished_ts: u64,
+) -> Result<(), String> {
+    state_store
+        .transact_scheduler_at(state_path, |scheduler| {
+            scheduler
+                .finish_run_with_code(run_id, true, None, finished_ts)
+                .map(|_| ())
+                .map_err(|error| format!("完成 JobRun 失败: {error:?}"))
+        })
+        .map_err(|error| format!("回写 JobRun 状态失败: {error:?}"))?
+        .1
+        .map_err(|error| format!("完成 JobRun 被拒绝: {error}"))
+}
+
 /// 把策略作业的失败写回它自己的 JobRun（`JobStatus::Failed` + 固定错误码）。
 ///
 /// 失败不回写的话，这条运行只剩「被下一轮调度 tick 升级成 `error_code="TIMEOUT"`」这一条出口，
@@ -286,15 +309,33 @@ pub(crate) struct StrategyJobLease<'a> {
     pub(crate) queue: &'a ConfiguredJobQueue,
     pub(crate) queued: &'a qx_storage::QueuedJob,
     pub(crate) worker_id: &'a str,
-    pub(crate) fencing_token: u64,
-    pub(crate) lease_now: u64,
+    pub(crate) lease_owner: &'a str,
+    pub(crate) lease_seconds: u64,
 }
 
-/// 实时策略作业的快照指纹闸门：指纹一变，这笔订单的依据就不是生成时看到的那一根闭合 Bar，
-/// 于是确认掉条目并播报跳过。执行前与执行中两处判定共用这段收口（V13 R2 第十二遍 #190 顺带收口）。
+static STRATEGY_LEASE_INSTANCE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+/// Give each strategy worker process a distinct queue owner, even when several
+/// processes were started with the same configured worker ID. The configured
+/// ID still controls routing; this value is only used for claim/ack fencing.
+pub(crate) fn strategy_job_lease_owner(worker_id: &str) -> String {
+    let started_at_nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let sequence = STRATEGY_LEASE_INSTANCE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    format!(
+        "{worker_id}@{}-{started_at_nanos}-{sequence}",
+        std::process::id()
+    )
+}
+
+/// 实时策略作业的输入指纹闸门：指纹一变，订单依据已不是生成时看到的行情或 Timer 桶，
+/// 于是确认掉条目并播报跳过。执行前与执行中两处判定共用这段收口。
 ///
 /// 返回 `true` 表示调用方应当跳过这次执行；`expected_digest` 为 `None` 的不是实时策略作业，直接放行。
 /// `digest_now` 是取快照指纹的时钟：执行前用本轮 tick，执行中用重新读取的墙钟。
+#[cfg(test)]
 pub(crate) fn live_strategy_job_is_stale(
     lease: &StrategyJobLease<'_>,
     strategy: &StrategyRuntimeConfig,
@@ -307,16 +348,67 @@ pub(crate) fn live_strategy_job_is_stale(
         return Ok(false);
     };
     let current_digest = live_strategy_snapshot_digest(strategy, digest_now)?;
+    live_strategy_job_is_stale_with_digest(
+        lease,
+        expected_digest,
+        current_digest,
+        reason,
+        ack_failure,
+    )
+}
+
+pub(crate) fn live_strategy_job_is_stale_with_config(
+    lease: &StrategyJobLease<'_>,
+    config: &RuntimeConfig,
+    root: &Path,
+    strategy: &StrategyRuntimeConfig,
+    expected_digest: Option<u64>,
+    digest_now: u64,
+    reason: &str,
+    ack_failure: &str,
+) -> Result<bool, String> {
+    let Some(expected_digest) = expected_digest else {
+        return Ok(false);
+    };
+    let current_digest = live_strategy_input_digest(config, root, strategy, digest_now)?;
+    live_strategy_job_is_stale_with_digest(
+        lease,
+        expected_digest,
+        current_digest,
+        reason,
+        ack_failure,
+    )
+}
+
+fn live_strategy_job_is_stale_with_digest(
+    lease: &StrategyJobLease<'_>,
+    expected_digest: u64,
+    current_digest: Option<u64>,
+    reason: &str,
+    ack_failure: &str,
+) -> Result<bool, String> {
     if current_digest == Some(expected_digest) {
         return Ok(false);
     }
+    let claim_now = lease_clock(runtime_timestamp_ms());
+    let current_lease = lease
+        .queue
+        .claim(
+            lease.queued.run.run_id,
+            lease.lease_owner,
+            claim_now,
+            lease.lease_seconds,
+        )
+        .map_err(|error| {
+            format!("{ack_failure}: 当前 worker 已失去租约或 fencing 权限: {error:?}")
+        })?;
     lease
         .queue
         .ack_at(
             lease.queued.run.run_id,
-            lease.worker_id,
-            lease.fencing_token,
-            lease.lease_now,
+            lease.lease_owner,
+            current_lease.fencing_token,
+            lease_clock(runtime_timestamp_ms()),
         )
         .map_err(|error| format!("{ack_failure}: {error:?}"))?;
     println!(

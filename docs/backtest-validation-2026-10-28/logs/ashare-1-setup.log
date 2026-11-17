@@ -1,0 +1,5 @@
+牵星 Qianxing — 分级校准，量天定位
+
+[初始化] 已创建 D:\workspace\qval-1028a\a1\qianxing.runtime.json profile=ashare environment=paper fingerprint=40b4b83f0e583ba7ac56f567996a4a69060b231166422f8456d54e5571cd48ae assets=6 strategy=none
+[ProjectManifest] path=D:\workspace\qval-1028a\a1\qianxing.project.json fingerprint=0014b5906b1d3feb
+下一步：qx-cli doctor D:\workspace\qval-1028a\a1\qianxing.runtime.json；qx-cli backtest D:\workspace\qval-1028a\a1\qianxing.runtime.json D:\workspace\qval-1028a\a1\qianxing.ashare.bar-frame.example.json D:\workspace\qval-1028a\a1\qianxing.ashare.spot.spec.json

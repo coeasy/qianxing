@@ -1,0 +1,22 @@
+$ python benchmarks/run_strategy_worker_crash_recovery.py --runtime deploy/qianxing.runtime.paper-strategy.example.json --binary target/debug/qx-cli.exe --output maturity/evidence/strategy-worker-crash-recovery-2026-10-29.json
+exit_code=1
+
+[stdout]
+
+[stderr]
+Traceback (most recent call last):
+  File "D:\aex_work\qianxing\benchmarks\run_strategy_worker_crash_recovery.py", line 146, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "D:\aex_work\qianxing\benchmarks\run_strategy_worker_crash_recovery.py", line 93, in main
+    raise RuntimeError(
+    ...<2 lines>...
+    )
+RuntimeError: control_command_persisted: expected injected exit 86, got 2
+stdout:
+牵星 Qianxing — 分级校准，量天定位
+
+
+stderr:
+[qx-cli · CLI] Paper 主链路验收失败: 初始化 Scheduler 状态失败: Io("拒绝访问。 (os error 5)")
+

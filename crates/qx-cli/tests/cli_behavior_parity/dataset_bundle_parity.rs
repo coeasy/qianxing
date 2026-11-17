@@ -8,10 +8,14 @@ fn dataset_bundle_cli_replays_the_persisted_artifact_contract() {
         .and_then(Path::parent)
         .expect("qx-cli tests are two levels below the workspace root");
     let bundle = root
-        .join("deploy/qianxing.dataset-bundle.example.json")
+        .join("deploy/qianxing.dataset-bundle.bar-frame.example.json")
         .to_string_lossy()
         .into_owned();
-    let args = ["dataset-bundle", bundle.as_str(), "data"];
+    let bars = root
+        .join("deploy/qianxing.bar-frame.example.json")
+        .to_string_lossy()
+        .into_owned();
+    let args = ["dataset-bundle", bundle.as_str(), "data", bars.as_str()];
     let first = observe("dataset-bundle", &args, 1);
     let second = observe("dataset-bundle", &args, 2);
     assert_eq!(first.exit_code, 0, "dataset-bundle failed: {first:?}");
@@ -19,12 +23,12 @@ fn dataset_bundle_cli_replays_the_persisted_artifact_contract() {
     assert!(
         first
             .stdout
-            .contains("[Data · Bundle] bundle=ashare.example"),
+            .contains("[Data · Bundle] bundle=strategy-bars.BTCUSDT.BINANCE"),
         "dataset-bundle must report the saved manifest identity: {first:?}"
     );
     assert_eq!(
         first.artifacts,
-        ["data/bundles/ashare.example--snapshot-v1.bundle.json"],
+        ["data/bundles/strategy-bars.BTCUSDT.BINANCE--barframe-example-v1.bundle.json"],
         "dataset-bundle must write exactly the versioned manifest"
     );
     assert_eq!(first.artifact_digests.len(), 1);

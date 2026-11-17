@@ -1,0 +1,16 @@
+$ python -c import os,runpy,subprocess,sys; x=runpy.run_path('tools/check_architecture.py',run_name='gate_module'); x['c_abi_strategy_host_module_check'](); x['builtin_strategy_host_module_check'](); x['python_strategy_provider_module_check'](); x['python_runtime_host_capability_forwarding_check'](); x['native_trust_check'](); sys.exit(1 if x['failures'] else subprocess.call(['cargo','check','--workspace','-j','1'],env={**os.environ,'CARGO_PROFILE_DEV_DEBUG':'0'}))
+exit_code=0
+
+[stdout]
+[PASS] C ABI trusted loader、checkpoint/callback 校验、错误映射与执行回调排序由 c_abi adapter 唯一拥有，保留调用门面
+[PASS] 内置 Rust 策略的配置装配、双腿数据读取、确定事件投递与共享 contract 输出由 builtin 子模块唯一拥有，保留稳定入口
+[PASS] Python strategy provider selection/配置由 providers 子模块唯一拥有，凭证仍与普通 worker 环境隔离，host facade 保留启动顺序
+[PASS] Rust Runtime class and module-function capability catalogs reach strategy observations and isolated workers
+[PASS] in-process 原生策略的信任门模块在盘（qx-cli/src/native_trust.rs）
+[PASS] 信任门提供「是否放行」与「三元组匹配」两个判定，且都不是测试专用
+[PASS] `load_c_abi_strategy` 在 `dlopen` 之前先过信任门（挡在加载之前，而不是加载之后）
+[PASS] 配置面暴露 `c_abi_trusted_native`（缺省 false）与 `c_abi_target_triple` 两格
+[PASS] 信任门开关缺省为 false（默认拒绝，不是默认放行）
+
+[stderr]
+    Finished `dev` profile [unoptimized] target(s) in 0.60s

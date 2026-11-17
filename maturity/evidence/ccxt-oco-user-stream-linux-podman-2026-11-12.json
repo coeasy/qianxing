@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "ccxt_oco_user_stream_local_validation",
+  "generated_at_utc": "2026-11-12T06:26:06Z",
+  "source": {
+    "code_base_commit": "73562f9d",
+    "worktree_dirty": true,
+    "dirty_paths_related_to_this_evidence": [
+      "crates/qx-service/src/ccxt_reconcile_host.rs",
+      "crates/qx-service/src/ccxt_user_stream_host.rs"
+    ]
+  },
+  "environment": {
+    "host_os": "Windows 11",
+    "linux_runtime": "Podman 6.1.4",
+    "container_image": "mirror.gcr.io/library/rust:1.98.1-bookworm",
+    "dependency_resolution": "offline, locked"
+  },
+  "results": [
+    {
+      "command": "cargo check --offline --locked -j 2 -p qx-service -p qx-cli",
+      "environment": "Podman Linux",
+      "passed": true
+    },
+    {
+      "command": "cargo test --offline --locked -j 2 -p qx-service ccxt_user_stream_syncs_only_matching_native_oco_group_facts -- --nocapture",
+      "environment": "Windows 11",
+      "selected_tests": 1,
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "cargo test --offline --locked -j 2 -p qx-service ccxt_user_stream_syncs_only_matching_native_oco_group_facts -- --nocapture",
+      "environment": "Podman Linux",
+      "selected_tests": 1,
+      "passed": 1,
+      "failed": 0
+    }
+  ],
+  "scope_limitations": [
+    "The test verifies local EventLog-to-order-group projection, child ID persistence, account/venue isolation, and repeat projection idempotency.",
+    "No exchange API or private stream was connected. Real OKX/Bitget event shapes, trigger races, reconnect gaps, and venue restart recovery remain unverified.",
+    "CCXT OCO maturity remains implemented-unverified; local projection checks do not authorize sandbox or production use."
+  ]
+}

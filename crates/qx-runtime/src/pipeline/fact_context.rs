@@ -40,16 +40,8 @@ pub(super) fn enrich_runtime_event_context(
 ) {
     let context = &mut metadata.context;
     match event {
-        RuntimeExternalEvent::AccountBalanceSnapshot {
-            account_id,
-            venue_id,
-            ..
-        }
-        | RuntimeExternalEvent::AccountPositionSnapshot {
-            account_id,
-            venue_id,
-            ..
-        } => {
+        RuntimeExternalEvent::AccountBalanceSnapshot { account_id, .. }
+        | RuntimeExternalEvent::AccountPositionSnapshot { account_id, .. } => {
             if context.account_id.trim().is_empty() {
                 context.account_id = account_id.clone();
             }
@@ -64,9 +56,6 @@ pub(super) fn enrich_runtime_event_context(
             }
             if context.strategy_id.trim().is_empty() {
                 context.strategy_id = "external-account-state".into();
-            }
-            if context.signal_id.trim().is_empty() {
-                context.signal_id = venue_id.clone();
             }
         }
         RuntimeExternalEvent::AccountCashflow { cashflow } => {
@@ -85,15 +74,98 @@ pub(super) fn enrich_runtime_event_context(
             if context.strategy_id.trim().is_empty() {
                 context.strategy_id = "external-cashflow".into();
             }
+        }
+        RuntimeExternalEvent::OrderAmended { order, .. }
+        | RuntimeExternalEvent::OrderAmendmentPending { order, .. } => {
+            if context.account_id.trim().is_empty() {
+                context.account_id = order.account_id.clone();
+            }
+            if context.portfolio_id.trim().is_empty() {
+                context.portfolio_id = order.account_id.clone();
+            }
+            if context.tenant_id.trim().is_empty() {
+                context.tenant_id = order.account_id.clone();
+            }
+            if context.run_id.trim().is_empty() {
+                context.run_id = format!("account:{}", order.account_id);
+            }
+            if context.strategy_id.trim().is_empty() {
+                context.strategy_id = order
+                    .trace
+                    .as_ref()
+                    .and_then(|trace| trace.strategy_id.clone())
+                    .unwrap_or_else(|| "external-execution".into());
+            }
             if context.signal_id.trim().is_empty() {
-                context.signal_id = cashflow.venue_id.clone();
+                context.signal_id = order
+                    .trace
+                    .as_ref()
+                    .and_then(|trace| trace.signal_id)
+                    .map(|value| value.to_string())
+                    .unwrap_or_default();
+            }
+            if context.intent_id.trim().is_empty() {
+                context.intent_id = order
+                    .trace
+                    .as_ref()
+                    .and_then(|trace| trace.intent_id)
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| format!("order:{}", order.client_id));
+            }
+        }
+        RuntimeExternalEvent::OrderStatusReconciled {
+            client_order_id,
+            account_id,
+            ..
+        } => {
+            if context.account_id.trim().is_empty() {
+                context.account_id = account_id.clone();
+            }
+            if context.portfolio_id.trim().is_empty() {
+                context.portfolio_id = account_id.clone();
+            }
+            if context.tenant_id.trim().is_empty() {
+                context.tenant_id = account_id.clone();
+            }
+            if context.run_id.trim().is_empty() {
+                context.run_id = format!("account:{account_id}");
+            }
+            if context.intent_id.trim().is_empty() {
+                context.intent_id = format!("order:{client_order_id}");
+            }
+        }
+        RuntimeExternalEvent::FeeAdjustment {
+            account_id,
+            order_id,
+            ..
+        } => {
+            if context.account_id.trim().is_empty() {
+                context.account_id = account_id.clone();
+            }
+            if context.portfolio_id.trim().is_empty() {
+                context.portfolio_id = account_id.clone();
+            }
+            if context.tenant_id.trim().is_empty() {
+                context.tenant_id = account_id.clone();
+            }
+            if context.run_id.trim().is_empty() {
+                context.run_id = format!("account:{account_id}");
+            }
+            if context.strategy_id.trim().is_empty() {
+                context.strategy_id = "external-fee-adjustment".into();
+            }
+            if context.intent_id.trim().is_empty() {
+                context.intent_id = format!("order:{order_id}");
             }
         }
         RuntimeExternalEvent::Fill { fill } => enrich_fill_context(context, fill),
         RuntimeExternalEvent::FillWithSpec { fill, .. } => enrich_fill_context(context, fill),
         RuntimeExternalEvent::MarketQuote { .. }
+        | RuntimeExternalEvent::MarketOrderBook { .. }
         | RuntimeExternalEvent::FundingRateSnapshot { .. }
         | RuntimeExternalEvent::Accepted { .. }
+        | RuntimeExternalEvent::Rejected { .. }
+        | RuntimeExternalEvent::CancelPending { .. }
         | RuntimeExternalEvent::Cancelled { .. }
         | RuntimeExternalEvent::ReconcileRequired { .. } => {}
     }

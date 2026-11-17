@@ -105,7 +105,12 @@ fn submit_risk_gate_is_shared_across_venues_and_rejects_broken_specs() {
         "CCXT 链必须与 Binance 共用同一 fail-closed 口径: {error}"
     );
 
-    let spec_path = workspace_binance_spot_spec().to_string_lossy().into_owned();
+    let source_spec: TradingInstrumentSpec =
+        serde_json::from_slice(&std::fs::read(workspace_binance_spot_spec()).unwrap()).unwrap();
+    let spec_path =
+        write_signed_market_spec_fixture(&root, "signed-binance-spot.json", &source_spec)
+            .to_string_lossy()
+            .into_owned();
     let configured = mk_worker(
         "binance-exec-main",
         WorkerRole::Execution,

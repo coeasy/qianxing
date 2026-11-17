@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "kind": "event_log_init_segment_default",
+  "acceptance_id": "event-log-init-segment-default-current-worktree-2026-11-07",
+  "generated_at_utc": "2026-11-07T14:05:35+00:00",
+  "source": {
+    "head_commit": "4a70e85093906d1fc114970ec6349121dbcaa9f6",
+    "working_tree_changes_included": true,
+    "dirty_path_count_at_measurement": 692,
+    "sha256": {
+      "crates/qx-runtime/src/runtime_config/schema.rs": "06082bf3ac0486334d66fa454509bf20510e8b513c68f46d042bcac1b282c60b",
+      "crates/qx-runtime/src/runtime_config/schema_tests.rs": "aa0a0da0941dd4eecd19e6a26062caefdffe9bc7b3fba81b02f72387ae287c48",
+      "crates/qx-cli/src/init_project.rs": "af56188cd5adad9373d74f4f2c74d0c51f26d3c37d52dceb062b914984c1e45c",
+      "crates/qx-cli/tests/init_project_process.rs": "756ffc8756b4bad932c4a5f67ae14d65e84b76ae80fd6ace82feec1115de8f34"
+    }
+  },
+  "change": {
+    "behavior": "qx-cli init writes event_log_segment_events=1024 for new file-backed projects. Existing runtime JSON that omits the field retains the legacy flat log setting; sqlite and postgres templates remain unaffected.",
+    "migration_policy": "No automatic migration or ledger layout switch. Existing configurations preserve their serialized setting and the runtime backend switch gate remains fail-closed."
+  },
+  "checks": [
+    {
+      "command": "cargo test -p qx-runtime segmented_event_log_storage_configuration_is_positive_and_optional -j 1",
+      "result": "passed",
+      "passed": 1,
+      "failed": 0,
+      "covers": "Legacy JSON without event_log_segment_events and positive/zero configuration validation."
+    },
+    {
+      "command": "cargo test -p qx-cli --test project_commands -j 1 with TMP/TEMP set to workspace .tmp-test/cargo-temp",
+      "result": "passed",
+      "passed": 47,
+      "failed": 0,
+      "covers": "Generated file-backed profile and built-in strategy init configurations select 1024 events per segment."
+    },
+    {
+      "command": "cargo test --workspace --all-features -j 1 --quiet with TMP/TEMP set to workspace .tmp-test/cargo-temp",
+      "result": "passed",
+      "exit_code": 0,
+      "postgres_service_tests": "ignored because QX_TEST_POSTGRES_DSN and a PostgreSQL service were unavailable"
+    },
+    {
+      "command": "python -m pytest python/tests -q",
+      "result": "passed",
+      "passed": 687,
+      "skipped": 14,
+      "failed": 0
+    },
+    {
+      "command": "cargo clippy --workspace --all-targets -j 1 -- -D warnings",
+      "result": "passed",
+      "exit_code": 0
+    },
+    {
+      "command": "cargo clippy --workspace --lib --bins -j 1 -- -D clippy::unwrap_used -D clippy::expect_used",
+      "result": "passed",
+      "exit_code": 0
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "result": "passed"
+    },
+    {
+      "command": "python tools/check_architecture.py --fast",
+      "result": "passed",
+      "shards": 4,
+      "named_checks": 372,
+      "duplicates": 0
+    },
+    {
+      "command": "python tools/generate_unverified.py --check and python tools/generate_capability_catalog.py --check",
+      "result": "passed"
+    },
+    {
+      "command": "python tools/check_markdown_links.py",
+      "result": "passed",
+      "tracked_files": 78,
+      "path_citations": 4172,
+      "case_mismatches": 0,
+      "ambiguous": 0
+    },
+    {
+      "command": "cargo build --release -p qx-cli -j 1; qx-cli init --strategy macd; qx-cli runtime-check --json",
+      "result": "passed",
+      "release_init_event_log_segment_events": 1024,
+      "runtime_check": "passed"
+    },
+    {
+      "command": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_python_wheel.ps1 -Python python -OutputDirectory .tmp-audit/wheel-release-20261107; python tools/check_python_wheel.py; clean virtual environment install and tools/python_wheel_smoke.py",
+      "result": "passed",
+      "wheel": "qianxing-0.3.0-cp310-abi3-win_amd64.whl",
+      "size_bytes": 22766475,
+      "sha256": "f35078108ea554867a969321219c43cf7738667e4161682a3d66a4e5d3b062e4",
+      "clean_install_smoke": "passed: 17 strategies, 13 classic selections, 4 parameter grid cases, 2 accounts, 1/2 multileg cases"
+    }
+  ],
+  "limitations": [
+    "Linux container execution is unavailable on this Windows host: Podman has no configured machine; WSL and Hyper-V Windows features are disabled. Linux cross-target cargo check also requires a Linux GCC toolchain not installed locally.",
+    "GitHub Actions ubuntu-latest remains the authoritative Linux execution path; this local evidence is not Linux runtime evidence.",
+    "Full Paper worker performance and PostgreSQL service acceptance remain outstanding.",
+    "The repository worktree is dirty and no formal release artifact or commit was produced."
+  ]
+}

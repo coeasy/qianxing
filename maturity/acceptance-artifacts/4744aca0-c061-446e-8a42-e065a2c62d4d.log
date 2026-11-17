@@ -1,0 +1,64 @@
+$ D:\aex_work\qianxing\python\.venv\Scripts\python.exe tools/accept_clean_install.py --python D:\aex_work\qianxing\python\.venv\Scripts\python.exe --work-dir D:\aex_work\qianxing\target\r20-install-work-retry --wheel D:\aex_work\qianxing\target\r20-wheel-out\qx_python-0.3.0-cp310-abi3-win_amd64.whl
+exit_code=1
+
+[stdout]
+$ 'D:\aex_work\qianxing\python\.venv\Scripts\python.exe' -m venv 'D:\aex_work\qianxing\target\r20-install-work-retry\installed-venv'
+$ 'D:\aex_work\qianxing\target\r20-install-work-retry\installed-venv\Scripts\python.exe' -m pip install --no-index 'D:\aex_work\qianxing\target\r20-wheel-out\qx_python-0.3.0-cp310-abi3-win_amd64.whl'
+Processing d:\aex_work\qianxing\target\r20-wheel-out\qx_python-0.3.0-cp310-abi3-win_amd64.whl
+Installing collected packages: qx-python
+Successfully installed qx-python-0.3.0
+$ cargo install --path 'D:\aex_work\qianxing\crates\qx-cli' --locked --offline --root 'D:\aex_work\qianxing\target\r20-install-work-retry\installed-cli' --force
+$ 'D:\aex_work\qianxing\target\r20-install-work-retry\installed-cli\bin\qx-cli.exe' version
+qianxing 0.3.0 (build 7f719a8-dirty, target x86_64-pc-windows-msvc, profile release, schemas c7e5863e86f7be138e7b90a91564c2fc664e53bdf39b5b29b5b5204e1e4510fa)
+$ 'D:\aex_work\qianxing\target\r20-install-work-retry\installed-cli\bin\qx-cli.exe' help
+$ 'D:\aex_work\qianxing\target\r20-install-work-retry\installed-cli\bin\qx-cli.exe' quickstart sample-project
+
+[stderr]
+  Installing qx-cli v0.3.0 (D:\aex_work\qianxing\crates\qx-cli)
+    Finished `release` profile [optimized] target(s) in 1.04s
+  Installing D:\aex_work\qianxing\target\r20-install-work-retry\installed-cli\bin\qx-cli.exe
+   Installed package `qx-cli v0.3.0 (D:\aex_work\qianxing\crates\qx-cli)` (executable `qx-cli.exe`)
+warning: be sure to add `D:\aex_work\qianxing\target\r20-install-work-retry\installed-cli\bin` to your PATH to be able to run the installed binaries
+Exception in thread Thread-9 (_readerthread):
+Traceback (most recent call last):
+  File "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\subprocess.py", line 1599, in _readerthread
+    buffer.append(fh.read())
+                  ^^^^^^^^^
+UnicodeDecodeError: 'gbk' codec can't decode byte 0x94 in position 18: illegal multibyte sequence
+Exception in thread Thread-11 (_readerthread):
+Traceback (most recent call last):
+  File "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\threading.py", line 1075, in _bootstrap_inner
+Exception in thread Thread-12 (_readerthread):
+Traceback (most recent call last):
+  File "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\threading.py", line 1012, in run
+    self.run()
+  File "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\subprocess.py", line 1599, in _readerthread
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\subprocess.py", line 1599, in _readerthread
+    buffer.append(fh.read())
+                  ^^^^^^^^^
+UnicodeDecodeError: 'gbk' codec can't decode byte 0xad in position 5: illegal multibyte sequence
+    buffer.append(fh.read())
+                  ^^^^^^^^^
+UnicodeDecodeError: 'gbk' codec can't decode byte 0x94 in position 18: illegal multibyte sequence
+Traceback (most recent call last):
+  File "D:\aex_work\qianxing\tools\accept_clean_install.py", line 170, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "D:\aex_work\qianxing\tools\accept_clean_install.py", line 108, in main
+    quickstart = run([str(cli), "quickstart", "sample-project"], cwd=sample_parent, env=cli_env)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\aex_work\qianxing\tools\accept_clean_install.py", line 21, in run
+    result = subprocess.run(command, cwd=cwd, env=env, text=True, capture_output=True, check=True)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\subprocess.py", line 571, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['D:\\aex_work\\qianxing\\target\\r20-install-work-retry\\installed-cli\\bin\\qx-cli.exe', 'quickstart', 'sample-project']' returned non-zero exit status 2.

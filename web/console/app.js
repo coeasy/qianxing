@@ -1,8 +1,8 @@
 // 牵星 Qianxing · 控制台（M1' 快照 + M2' 实时事件 + M3' 控制面）
 //
 // 读面：读取 qx-api 的只读端点，并用 WebSocket 接收增量事件。
-// 写面：**只有一条**——`POST /control/commands`（控制面受理入口）。它不发送订单：
-// 下单要走这条命令，由控制面受理 → 判定执行者 → 走到终态退场，页面不直连任何下单端点。
+// 写面只提交到受认证的控制命令与策略部署入口；控制命令本身不发送订单：
+// 下单要走控制面受理 → 判定执行者 → 走到终态退场，页面不直连任何下单端点。
 //
 // 下面这份 API_PATHS 是控制台与后端的唯一接线表：门禁 web_console_check 会
 // 逐条核对这里的每个路径都真的出现在 qx-api 的路由表里，"前端调用了一个后端
@@ -13,18 +13,26 @@ const API_PATHS = {
   ready: "/ready",
   snapshot: "/account/snapshot",
   snapshotEnvelope: "/account/snapshot/envelope",
+  accountActivity: "/account/activity",
   balances: "/account/balances",
   orders: "/account/orders",
+  orderGroups: "/account/order-groups",
   positions: "/account/positions",
   ledger: "/account/ledger",
   reconcileReports: "/reconcile/reports",
   schedulerRuns: "/scheduler/runs",
+  strategyDeployments: "/strategies/deployments",
+  strategyDeploymentRevisions: "/strategies/deployments/revisions",
+  strategyDeploymentOperations: "/strategies/deployments/operations",
   controlAudit: "/control/audit",
   controlCommands: "/control/commands",
+  productCapabilityCatalog: "/app/capabilities",
+  productCapabilityQuery: "/app/capabilities/query",
   appValidateDataset: "/app/validate-dataset",
   appBacktest: "/app/backtest",
   appBacktestRun: "/app/backtest/start",
   appVerify: "/app/verify",
+  appResearchArtifacts: "/app/research-artifacts",
   appCompareRuns: "/app/compare-runs",
   appRunExperiment: "/app/run-experiment/start",
   appDepthBacktest: "/app/depth-backtest/start",
@@ -34,11 +42,13 @@ const API_PATHS = {
   appMultiLegExperiment: "/app/run-multi-leg-experiment/start",
   appMultiAccountBacktest: "/app/multi-account-backtest/start",
   appMultiAccountDepthBacktest: "/app/multi-account-depth-backtest/start",
+  appMultiAccountJointBacktest: "/app/multi-account-joint-backtest/start",
   appMultiMarketBacktest: "/app/multi-market-backtest/start",
   appMultiMarketDepthBacktest: "/app/multi-market-depth-backtest/start",
   appMultiMarketExperiment: "/app/run-multi-market-experiment/start",
   appMultiMarketDepthExperiment: "/app/run-multi-market-depth-experiment/start",
   appRunStatus: "/app/runs/{run_id}",
+  appRunEvents: "/app/runs/{run_id}/events",
   appRunCancel: "/app/runs/{run_id}/cancel",
   events: "/events",
   eventsLive: "/events/live",
@@ -55,6 +65,7 @@ const EXTENDED_RESEARCH_ROUTES = {
   appMultiLegExperiment: API_PATHS.appMultiLegExperiment,
   appMultiAccountBacktest: API_PATHS.appMultiAccountBacktest,
   appMultiAccountDepthBacktest: API_PATHS.appMultiAccountDepthBacktest,
+  appMultiAccountJointBacktest: API_PATHS.appMultiAccountJointBacktest,
   appMultiMarketBacktest: API_PATHS.appMultiMarketBacktest,
   appMultiMarketDepthBacktest: API_PATHS.appMultiMarketDepthBacktest,
   appMultiMarketExperiment: API_PATHS.appMultiMarketExperiment,
@@ -83,6 +94,7 @@ const state = {
   base: "",
   timer: null,
   refreshInFlight: false,
+  strategyOperationId: null,
   ws: null,
   wsAlive: false,
   // 连接拓扑：同源 BFF（页面就是这一层发的）与跨源直连 qx-api 是两条不同的路。
@@ -94,6 +106,22 @@ const state = {
   // 服务端就会把「还没基线」读成「你超前了」并回 409。
   cursor: null,
   baselineSeq: null,
+  defaultAccountId: null,
+  defaultVenueId: null,
+  activityAccountId: null,
+  activityVenueId: null,
+  activityClientOrderId: null,
+  activityExchangeOrderId: null,
+  activityRunId: null,
+  activityStrategyId: null,
+  activitySignalId: null,
+  activityIntentId: null,
+  activityCorrelationId: null,
+  activityAfter: null,
+  activityBefore: null,
+  activityPage: null,
+  activityRequestSeq: 0,
+  activitySelectionDirty: false,
   events: [],
   wsFramesSeen: 0,
   wsUnknownFrames: [],
@@ -103,6 +131,8 @@ const state = {
   commandSeq: 1,
   lastCommand: null,
   activeResearchRunId: null,
+  activeResearchRunEventSeq: 0,
+  activeResearchRunEvents: [],
 };
 
 const $ = (id) => document.getElementById(id);
@@ -236,12 +266,14 @@ function asNumber(value) {
 // 反方向也核——app.js 里出现的每个 `*_raw` 都必须在这份名册里。
 // 于是"后端改了字段名"与"前端凭空读一列"都在门禁当场变红，而不是等用户看到一列永久的 —。
 const RESPONSE_FIELDS = {
-  snapshotTop: ["protocol", "schema_version", "header", "cash_raw", "equity_raw", "available_raw", "margin_raw", "frozen_raw", "realized_pnl_raw", "unrealized_pnl_raw", "fees_raw", "funding_raw", "positions", "orders", "fills", "transfers", "reconcile"],
+  snapshotTop: ["protocol", "schema_version", "header", "cash_raw", "equity_raw", "equity_diagnostic", "available_raw", "margin_raw", "frozen_raw", "realized_pnl_raw", "unrealized_pnl_raw", "fees_raw", "funding_raw", "positions", "orders", "fills", "transfers", "reconcile"],
   snapshotHeader: ["snapshot_id", "account_id", "portfolio_id", "venue_id", "trading_day", "as_of", "event_seq", "state_hash"],
-  orderRow: ["order_id", "client_order_id", "instrument", "side", "quantity_raw", "filled_raw", "status"],
-  positionRow: ["instrument", "quantity_raw", "today_quantity_raw", "average_price_raw", "mark_price_raw", "unrealized_pnl_raw", "margin_raw"],
-  balances: ["cash_raw", "equity_raw", "available_raw", "margin_raw"],
+  orderRow: ["order_id", "client_order_id", "instrument", "side", "quantity_raw", "filled_raw", "status", "exact_amounts"],
+  orderGroupRow: ["schema_version", "intent", "status", "venue_group_id", "legs"],
+  positionRow: ["instrument", "settlement_currency", "quantity_raw", "today_quantity_raw", "average_price_raw", "mark_price_raw", "unrealized_pnl_raw", "margin_raw", "exact_amounts"],
+  balances: ["cash_raw", "equity_raw", "equity_diagnostic", "available_raw", "margin_raw"],
   eventRow: ["seq", "ts", "prio", "kind", "receive_time", "engine_time", "source_seq", "correlation_id", "metadata"],
+  accountActivityEventRow: ["event_id", "seq", "ts", "prio", "kind", "receive_time", "engine_time", "source_seq", "correlation_id", "metadata", "client_order_id", "exchange_order_id", "run_id", "strategy_id", "signal_id", "intent_id"],
   envelope: ["schema_version", "kind", "tenant_id", "run_id", "account_id", "portfolio_id", "venue_id", "as_of", "event_seq", "cursor", "state_hash", "source", "lineage", "data"],
 };
 
@@ -249,9 +281,11 @@ const RESPONSE_FIELDS = {
 // `columns` 逐个对齐——门禁 web_console_check 双向核对这两处，所以"后端从来没有这一列"
 // 与"页面多开了一列表头"都在门禁变红，而不是等用户看到一列永久的 —。
 const TABLE_SPECS = {
-  "orders-table": { roster: "orderRow", columns: ["instrument", "side", "status", "quantity_raw", "filled_raw"] },
-  "positions-table": { roster: "positionRow", columns: ["instrument", "quantity_raw", "today_quantity_raw", "average_price_raw", "mark_price_raw", "unrealized_pnl_raw", "margin_raw"] },
+  "orders-table": { roster: "orderRow", columns: ["instrument", "side", "status", "quantity_raw", "filled_raw", "client_order_id"] },
+  "order-groups-table": { roster: "orderGroupRow", columns: ["intent", "status", "venue_group_id", "legs"] },
+  "positions-table": { roster: "positionRow", columns: ["instrument", "settlement_currency", "quantity_raw", "today_quantity_raw", "average_price_raw", "mark_price_raw", "unrealized_pnl_raw", "margin_raw"] },
   "events-table": { roster: "eventRow", columns: ["seq", "kind", "ts", "correlation_id"] },
+  "account-activity-events-table": { roster: "accountActivityEventRow", columns: ["event_id", "seq", "kind", "ts", "client_order_id", "exchange_order_id", "run_id", "strategy_id", "signal_id", "intent_id", "correlation_id"] },
 };
 
 // 价格是定点数而 0 不是合法价格（`wire.rs` 的 PositionSnapshot 交代过这条纪律），
@@ -269,11 +303,55 @@ function cellText(key, value) {
   return String(value);
 }
 
+function exactDecimalText(value) {
+  if (!value || typeof value !== "object") return "—";
+  const coefficient = value.coefficient;
+  const scale = value.scale;
+  if (typeof coefficient !== "string" || !/^-?\d+$/.test(coefficient)
+      || !Number.isInteger(scale) || scale < 0 || scale > 18) return "—";
+  const negative = coefficient.startsWith("-");
+  const magnitude = BigInt(negative ? coefficient.slice(1) : coefficient);
+  if (magnitude === 0n) return "0";
+  if (scale === 0) return `${negative ? "-" : ""}${magnitude}`;
+  const divisor = 10n ** BigInt(scale);
+  const whole = magnitude / divisor;
+  const fraction = (magnitude % divisor).toString().padStart(scale, "0").replace(/0+$/, "");
+  return `${negative ? "-" : ""}${whole}.${fraction}`;
+}
+
+function orderAmountText(key, order) {
+  const exact = order?.exact_amounts;
+  if (exact && (key === "quantity_raw" || key === "filled_raw")) {
+    return exactDecimalText(key === "quantity_raw" ? exact.quantity : exact.filled);
+  }
+  return cellText(key, order?.[key]);
+}
+
+function positionAmountText(key, position) {
+  const exactKey = {
+    quantity_raw: "quantity",
+    average_price_raw: "average_price",
+    mark_price_raw: "mark_price",
+    unrealized_pnl_raw: "unrealized_pnl",
+    margin_raw: "initial_margin",
+  }[key];
+  const exact = position?.exact_amounts;
+  if (exactKey && exact && exact[exactKey] !== null && exact[exactKey] !== undefined) {
+    return exactDecimalText(exact[exactKey]);
+  }
+  return cellText(key, position?.[key]);
+}
+
 // 名册里声明过、这一份响应里却没有的字段。空数组就是形状齐全。
 function missingFields(roster, record) {
   const names = RESPONSE_FIELDS[roster] || [];
   if (!record || typeof record !== "object") return names.slice();
-  return names.filter((name) => !(name in record));
+  const optional = roster === "orderRow" || roster === "positionRow"
+    ? new Set(["exact_amounts"])
+    : roster === "accountActivityEventRow"
+      ? new Set(["signal_id", "intent_id"])
+      : new Set();
+  return names.filter((name) => !optional.has(name) && !(name in record));
 }
 
 function shapeText(missing) {
@@ -294,6 +372,56 @@ function el(tag, text, cls) {
   if (text !== undefined && text !== null) node.textContent = String(text);
   if (cls) node.className = cls;
   return node;
+}
+
+function orderGroupDetailNode(record) {
+  const details = document.createElement("details");
+  details.className = "order-group-details";
+  const summary = document.createElement("summary");
+  summary.textContent = "查看完整订单组事实";
+  const facts = document.createElement("pre");
+  facts.className = "order-group-facts";
+  // This is the persisted domain snapshot, not the exchange's raw HTTP request/response.
+  // Use textContent so account-controlled IDs and venue strings can never become markup.
+  facts.textContent = JSON.stringify(record, null, 2);
+  details.append(summary, facts);
+  return details;
+}
+
+function focusAccountActivityForOrder(order, exchangeOrderId = null) {
+  const instrument = order?.instrument ?? {};
+  const venue = instrument.venue?.venue ?? instrument.venue ?? state.defaultVenueId;
+  const accountId = order?.account_id ?? state.defaultAccountId;
+  const clientOrderId = order?.client_id ?? order?.client_order_id;
+  if (!clientOrderId || !accountId || !venue) return;
+  $("account-activity-account-id").value = String(accountId);
+  $("account-activity-venue-id").value = String(venue);
+  $("account-activity-client-order-id").value = String(clientOrderId);
+  $("account-activity-exchange-order-id").value = exchangeOrderId ? String(exchangeOrderId) : "";
+  $("account-activity-signal-id").value = "";
+  $("account-activity-intent-id").value = "";
+  $("card-account-activity").scrollIntoView({ behavior: "smooth", block: "start" });
+  $("account-activity-load").click();
+}
+
+function focusAccountActivityForCorrelation(correlationId) {
+  if (typeof correlationId !== "string" || !correlationId.trim()) return;
+  const accountId = $("account-activity-account-id").value.trim() || state.defaultAccountId;
+  const venueId = $("account-activity-venue-id").value.trim() || state.defaultVenueId;
+  if (!accountId || !venueId) return;
+  $("account-activity-account-id").value = String(accountId);
+  $("account-activity-venue-id").value = String(venueId);
+  for (const id of [
+    "account-activity-client-order-id",
+    "account-activity-exchange-order-id",
+    "account-activity-run-id",
+    "account-activity-strategy-id",
+    "account-activity-signal-id",
+    "account-activity-intent-id",
+  ]) $(id).value = "";
+  $("account-activity-correlation-id").value = correlationId;
+  $("card-account-activity").scrollIntoView({ behavior: "smooth", block: "start" });
+  $("account-activity-load").click();
 }
 
 function rows(container, pairs) {
@@ -415,6 +543,17 @@ async function refreshSnapshot() {
   const snap = await getJson(API_PATHS.snapshot);
   if (!snap.ok) {
     // 404「该账户还没有投影」与 400「键形状非法」/429/503 是四件事，折成同一句就读不回来了。
+    const keepExplicitActivityScope = state.activitySelectionDirty;
+    state.activityAccountId = null;
+    state.activityVenueId = null;
+    state.defaultAccountId = null;
+    state.defaultVenueId = null;
+    state.activityAfter = null;
+    state.activityBefore = null;
+    if (!keepExplicitActivityScope) {
+      $("account-activity-account-id").value = "";
+      $("account-activity-venue-id").value = "";
+    }
     rows($("snapshot-rows"), [["状态", `HTTP ${snap.status}${errorOf(snap.body) ? " " + errorOf(snap.body) : ""}`]]);
     return;
   }
@@ -424,6 +563,27 @@ async function refreshSnapshot() {
   // 会永久印空白——不是"没数据"，是读错了层。
   const header = b.header || {};
   state.baselineSeq = asNumber(header.event_seq);
+  const accountId = typeof header.account_id === "string" ? header.account_id : null;
+  const venueId = typeof header.venue_id === "string" ? header.venue_id : null;
+  const selectionFollowsDefault = !state.activitySelectionDirty && (!state.activityAccountId || (
+    state.activityAccountId === state.defaultAccountId &&
+    state.activityVenueId === state.defaultVenueId
+  ));
+  const defaultSelectionChanged = selectionFollowsDefault && (
+    state.activityAccountId !== accountId || state.activityVenueId !== venueId
+  );
+  if (defaultSelectionChanged) {
+    state.activityAfter = null;
+    state.activityBefore = null;
+  }
+  state.defaultAccountId = accountId;
+  state.defaultVenueId = venueId;
+  if (selectionFollowsDefault) {
+    state.activityAccountId = accountId;
+    state.activityVenueId = venueId;
+    $("account-activity-account-id").value = accountId || "";
+    $("account-activity-venue-id").value = venueId || "";
+  }
   rows($("snapshot-rows"), [
     ["schema_version", b.schema_version],
     ["snapshot_id", header.snapshot_id],
@@ -453,13 +613,116 @@ async function refreshBalances() {
   const cash = b.cash_raw && typeof b.cash_raw === "object" && !Array.isArray(b.cash_raw)
     ? Object.entries(b.cash_raw).map(([k, v]) => `${k}=${money(v)}`).join("  ") || "（无现金记录）"
     : money(b.cash_raw);
+  const diagnostic = b.equity_diagnostic;
+  const equityReasonLabels = {
+    missing_mark_prices: "持仓缺少标记价",
+    exchange_balance_includes_spot_positions: "交易所余额已包含现货持仓，避免重复计值",
+    unsupported_portfolio_valuation: "组合暂不支持此估值口径",
+    arithmetic_overflow: "权益计算溢出",
+  };
+  const equityReason = diagnostic?.reason
+    ? `${equityReasonLabels[diagnostic.reason] ?? diagnostic.reason}${diagnostic.missing_mark_instruments?.length ? `：${diagnostic.missing_mark_instruments.join("、")}` : ""}`
+    : "—";
   rows($("balances-rows"), [
     ["cash_raw", cash],
     ["equity_raw", money(b.equity_raw)],
+    ["权益不可用原因", equityReason],
     ["available_raw", money(b.available_raw)],
     ["margin_raw", money(b.margin_raw)],
     ["字段核对", shapeText(missingFields("balances", b))],
   ]);
+}
+
+async function refreshAccountActivity() {
+  const requestSeq = ++state.activityRequestSeq;
+  const meta = $("account-activity-meta");
+  const selectedAccount = $("account-activity-account-id").value.trim();
+  const selectedVenue = $("account-activity-venue-id").value.trim();
+  const selectedClientOrderId = $("account-activity-client-order-id").value.trim();
+  const selectedExchangeOrderId = $("account-activity-exchange-order-id").value.trim();
+  const selectedRunId = $("account-activity-run-id").value.trim();
+  const selectedStrategyId = $("account-activity-strategy-id").value.trim();
+  const selectedSignalId = $("account-activity-signal-id").value.trim();
+  const selectedIntentId = $("account-activity-intent-id").value.trim();
+  const selectedCorrelationId = $("account-activity-correlation-id").value.trim();
+  if (state.activityAccountId !== selectedAccount || state.activityVenueId !== selectedVenue || state.activityClientOrderId !== selectedClientOrderId || state.activityExchangeOrderId !== selectedExchangeOrderId || state.activityRunId !== selectedRunId || state.activityStrategyId !== selectedStrategyId || state.activitySignalId !== selectedSignalId || state.activityIntentId !== selectedIntentId || state.activityCorrelationId !== selectedCorrelationId) {
+    state.activityAfter = null;
+    state.activityBefore = null;
+  }
+  state.activityAccountId = selectedAccount || null;
+  state.activityVenueId = selectedVenue || null;
+  state.activityClientOrderId = selectedClientOrderId || null;
+  state.activityExchangeOrderId = selectedExchangeOrderId || null;
+  state.activityRunId = selectedRunId || null;
+  state.activityStrategyId = selectedStrategyId || null;
+  state.activitySignalId = selectedSignalId || null;
+  state.activityIntentId = selectedIntentId || null;
+  state.activityCorrelationId = selectedCorrelationId || null;
+  state.activitySelectionDirty = false;
+  if (!state.activityAccountId || !state.activityVenueId) {
+    state.activityPage = null;
+    rows(meta, [["状态", "账户快照没有可用于收窄查询的 account_id / venue_id"]]);
+    fillTable("account-activity-events-table", { ok: true, body: [] });
+    $("account-activity-prev").disabled = true;
+    $("account-activity-next").disabled = true;
+    return;
+  }
+  const query = new URLSearchParams({
+    account_id: state.activityAccountId,
+    venue_id: state.activityVenueId,
+    limit: "50",
+  });
+  if (state.activityAfter !== null) query.set("after", String(state.activityAfter));
+  if (state.activityBefore !== null) query.set("before", String(state.activityBefore));
+  if (state.activityClientOrderId !== null) query.set("client_order_id", state.activityClientOrderId);
+  if (state.activityExchangeOrderId !== null) query.set("exchange_order_id", state.activityExchangeOrderId);
+  if (state.activityRunId !== null) query.set("run_id", state.activityRunId);
+  if (state.activityStrategyId !== null) query.set("strategy_id", state.activityStrategyId);
+  if (state.activitySignalId !== null) query.set("signal_id", state.activitySignalId);
+  if (state.activityIntentId !== null) query.set("intent_id", state.activityIntentId);
+  if (state.activityCorrelationId !== null) query.set("correlation_id", state.activityCorrelationId);
+  const response = await getJson(`${API_PATHS.accountActivity}?${query.toString()}`);
+  // A slow response for an earlier account/filter selection must not overwrite the
+  // latest page. Disconnect also advances the sequence to invalidate in-flight reads.
+  if (requestSeq !== state.activityRequestSeq) return;
+  if (!response.ok) {
+    state.activityPage = null;
+    rows(meta, [["状态", `HTTP ${response.status}${errorOf(response.body) ? ` ${errorOf(response.body)}` : ""}`]]);
+    fillTable("account-activity-events-table", response);
+    $("account-activity-prev").disabled = true;
+    $("account-activity-next").disabled = true;
+    return;
+  }
+  const report = response.body || {};
+  const identity = report.identity || {};
+  const eventPage = report.events || {};
+  const completeness = report.completeness || {};
+  const contextCoverage = completeness.event_context_coverage;
+  const optionalCoverageText = (field, label) => (
+    contextCoverage && Object.prototype.hasOwnProperty.call(contextCoverage, field)
+      ? `${contextCoverage[field]}/${contextCoverage.total_events ?? 0} ${label}`
+      : `${label} 未提供`
+  );
+  state.activityPage = eventPage;
+  const countText = (name) => {
+    const group = report[name] || {};
+    return `${group.returned ?? 0}/${group.total ?? 0}${group.truncated ? "（截断）" : ""}`;
+  };
+  rows(meta, [
+    ["账户 / venue", `${identity.account_id ?? "—"} / ${identity.venue_id ?? "—"}`],
+    ["快照 as_of / age", `${tsText(identity.snapshot_as_of_ms)} / ${cellText("age_ms", report.as_of_age_ms)}`],
+    ["余额字段完整度", ["equity", "available", "margin", "fees", "funding"].map((key) => `${key}:${completeness[`${key}_reported`] === true ? "有" : "无"}`).join(" · ")],
+    ["持仓 / 订单 / 成交 / 划转行数", `${countText("positions")} / ${countText("orders")} / ${countText("fills")} / ${countText("transfers")}`],
+    ["事件历史范围", completeness.event_history_scope ?? "未知（不代表交易所全量历史）"],
+    ["事件上下文覆盖", contextCoverage ? `${contextCoverage.with_correlation_id ?? 0}/${contextCoverage.total_events ?? 0} correlation · ${contextCoverage.with_non_account_run_id ?? 0}/${contextCoverage.total_events ?? 0} 非账户 run · ${contextCoverage.with_strategy_id ?? 0}/${contextCoverage.total_events ?? 0} strategy · ${optionalCoverageText("with_signal_id", "signal")} · ${optionalCoverageText("with_intent_id", "intent")} · ${contextCoverage.with_client_order_id ?? 0}/${contextCoverage.total_events ?? 0} client order · ${contextCoverage.with_exchange_order_id ?? 0}/${contextCoverage.total_events ?? 0} exchange order` : "旧版报告未提供"],
+    ["事件页", `${(eventPage.rows || []).length}/${eventPage.available_total ?? 0}${eventPage.client_order_id !== null && eventPage.client_order_id !== undefined ? ` · client_order_id=${eventPage.client_order_id}` : ""}${eventPage.exchange_order_id ? ` · exchange_order_id=${eventPage.exchange_order_id}` : ""}${eventPage.run_id ? ` · run_id=${eventPage.run_id}` : ""}${eventPage.strategy_id ? ` · strategy_id=${eventPage.strategy_id}` : ""}${eventPage.signal_id ? ` · signal_id=${eventPage.signal_id}` : ""}${eventPage.intent_id ? ` · intent_id=${eventPage.intent_id}` : ""}${eventPage.correlation_id ? ` · correlation_id=${eventPage.correlation_id}` : ""} · older=${Boolean(eventPage.has_older)} · newer=${Boolean(eventPage.has_newer)}`],
+  ]);
+  fillTable("account-activity-events-table", {
+    ok: true,
+    body: Array.isArray(eventPage.rows) ? eventPage.rows : [],
+  });
+  $("account-activity-prev").disabled = eventPage.has_older !== true;
+  $("account-activity-next").disabled = eventPage.has_newer !== true;
 }
 
 function fillTable(tableId, response) {
@@ -504,35 +767,148 @@ function fillTable(tableId, response) {
   }
   for (const record of records) {
     const tr = el("tr");
-    for (const key of spec.columns) tr.append(el("td", cellText(key, record ? record[key] : null)));
+    if (tableId === "order-groups-table") {
+      const intent = record.intent ?? {};
+      const legs = Array.isArray(record.legs) ? record.legs : [];
+      const firstOrder = legs[0]?.order ?? {};
+      const intentText = `${intent.group_id ?? "—"} · ${intent.kind ?? "—"} · ${intent.execution ?? "—"} · ${firstOrder.account_id ?? "—"} / ${instrumentText(firstOrder.instrument)}`;
+      const legsCell = el("td");
+      for (const leg of legs) {
+        const order = leg.order ?? {};
+        const exact = order.exact_amounts ?? {};
+        const requested = exact.quote_budget !== undefined && exact.quote_budget !== null
+          ? `quote_budget ${exact.quote_budget}`
+          : exact.quantity ?? order.qty?.raw ?? order.qty ?? "—";
+        const filled = exact.filled ?? order.filled?.raw ?? order.filled ?? "—";
+        const line = el("div", `${leg.role ?? "—"}: client=${order.client_id ?? "—"} · ${order.side ?? "—"} ${instrumentText(order.instrument)} · ${order.status ?? "—"} · 成交 ${filled}/${requested} · venue_order=${leg.venue_order_id ?? "—"}`, "order-group-leg");
+        if (order.client_id && order.account_id && order.instrument?.venue) {
+          const lookup = el("button", "查看账户事件", "ghost order-group-event-link");
+          lookup.type = "button";
+          lookup.title = `按客户端和交易所订单号查询账户事件`;
+          lookup.addEventListener("click", () => focusAccountActivityForOrder(order, leg.venue_order_id));
+          line.append(lookup);
+        }
+        legsCell.append(line);
+      }
+      if (legs.length === 0) legsCell.textContent = "—";
+      const intentCell = el("td");
+      intentCell.append(el("div", intentText), orderGroupDetailNode(record));
+      tr.append(intentCell);
+      for (const value of [record.status, record.venue_group_id]) tr.append(el("td", cellText("order_group", value)));
+      tr.append(legsCell);
+      tbody.append(tr);
+      continue;
+    }
+    for (const key of spec.columns) {
+      const text = spec.roster === "orderRow"
+        ? orderAmountText(key, record)
+        : spec.roster === "positionRow"
+          ? positionAmountText(key, record)
+          : cellText(key, record ? record[key] : null);
+      const td = el("td", text);
+      if (tableId === "orders-table" && key === "client_order_id" && record.client_order_id && state.defaultAccountId && state.defaultVenueId) {
+        const lookup = el("button", "查看账户事件", "ghost order-event-link");
+        lookup.type = "button";
+        lookup.title = "按客户端订单号查询账户活动事件";
+        lookup.addEventListener("click", () => focusAccountActivityForOrder(record));
+        td.append(lookup);
+      }
+      if (tableId === "account-activity-events-table" && key === "correlation_id"
+          && typeof record.correlation_id === "string" && record.correlation_id.trim()) {
+        const lookup = el("button", "查看关联事件", "ghost correlation-event-link");
+        lookup.type = "button";
+        lookup.title = "按此 correlation_id 查看关联事件及同一订单的完整保留生命周期";
+        lookup.addEventListener("click", () => focusAccountActivityForCorrelation(record.correlation_id));
+        td.append(lookup);
+      }
+      tr.append(td);
+    }
     tbody.append(tr);
   }
 }
 
 async function refreshTables() {
-  const [orders, positions] = await Promise.all([getJson(API_PATHS.orders), getJson(API_PATHS.positions)]);
+  const [orders, orderGroups, positions] = await Promise.all([getJson(API_PATHS.orders), getJson(API_PATHS.orderGroups), getJson(API_PATHS.positions)]);
   fillTable("orders-table", orders);
-  // 持仓列取的是 `PositionSnapshot` 真的发出来的那七格。后端从来没有 `side` / `cost_raw` /
+  fillTable("order-groups-table", orderGroups);
+  // 持仓列取的是 `PositionSnapshot` 真的发出来的字段。后端从来没有 `side` / `cost_raw` /
   // `market_value_raw`（wire.rs），而页面此前照着它们开了三列——那三列永久是 —。
   // 市值也不在页面里现算：那是「各处手抄折算」要防的事，属于后端估值单点。
   fillTable("positions-table", positions);
 }
 
 async function refreshReadModels() {
-  const [ledger, recon, sched, audit] = await Promise.all([
+  const [ledger, recon, sched, audit, deployments] = await Promise.all([
     getJson(API_PATHS.ledger),
     getJson(API_PATHS.reconcileReports),
     getJson(API_PATHS.schedulerRuns),
     getJson(API_PATHS.controlAudit),
+    getJson(API_PATHS.strategyDeployments),
   ]);
   const count = (r) => (Array.isArray(r.body) ? `${r.body.length} 条` : `HTTP ${r.status}`);
-  rows($("readmodels-rows"), [
+  const readModelRows = [
     ["/account/ledger", count(ledger)],
     ["/reconcile/reports", count(recon)],
     ["/scheduler/runs", count(sched)],
     ["/control/audit", count(audit)],
-  ]);
+  ];
+  if (!recon.ok || !Array.isArray(recon.body)) {
+    readModelRows.push(["对账详情", `HTTP ${recon.status}: ${errorOf(recon.body) || "报告不可用"}`]);
+  } else if (!recon.body.length) {
+    readModelRows.push(["对账详情", "没有持久化对账报告；不能据此认定账户无差异"]);
+  } else {
+    for (const report of recon.body) {
+      const orderIssues = Array.isArray(report.order_issues) ? report.order_issues.length : null;
+      const balanceDiscrepancies = Array.isArray(report.balance_discrepancies)
+        ? report.balance_discrepancies.length : null;
+      const missingFacts = orderIssues === null || balanceDiscrepancies === null;
+      const hasDiscrepancies = !missingFacts && (orderIssues > 0 || balanceDiscrepancies > 0);
+      const ageMs = Number.isSafeInteger(report.observed_ts)
+        ? Date.now() - report.observed_ts : null;
+      const ageText = ageMs === null ? "未知" : ageMs < 0 ? "时间超前" : `${ageMs}ms`;
+      const result = missingFacts ? "报告字段不完整" : hasDiscrepancies ? "存在差异" : "报告记录 0 项差异";
+      readModelRows.push([
+        `对账 ${report.worker_id || "未知 worker"} / ${report.account_id || "未知账户"} / ${report.venue_id || "未知 venue"}`,
+        `${result}; observed=${tsText(report.observed_ts)}; age=${ageText}; order_issues=${orderIssues ?? "未知"}; balance_discrepancies=${balanceDiscrepancies ?? "未知"}`,
+      ]);
+    }
+  }
+  rows($("readmodels-rows"), readModelRows);
   // 控制面②③两阶段从这份审计里推进：受理之后命令走到哪一步，这里看得见。
+  const deploymentRows = [];
+  if (!deployments.ok || !Array.isArray(deployments.body)) {
+    deploymentRows.push(["状态", `HTTP ${deployments.status}: ${errorOf(deployments.body) || "部署观察不可用"}`]);
+  } else if (!deployments.body.length) {
+    deploymentRows.push(["状态", "未配置启用的策略 worker"]);
+  } else {
+    for (const deployment of deployments.body) {
+      deploymentRows.push([
+        String(deployment.worker_id),
+        `${deployment.state}; desired_revision=${deployment.desired_revision ?? "—"}; desired_running=${deployment.desired_running ?? "未声明"}; observed=${tsText(deployment.observed_at_ms)}; trading_enabled=${deployment.trading_enabled === null ? "未评估" : deployment.trading_enabled}`,
+      ]);
+      deploymentRows.push([`${deployment.worker_id} / 阻塞原因`,
+        Array.isArray(deployment.blocking_reasons) ? deployment.blocking_reasons.join(", ") : "响应缺少阻塞原因"]);
+      const reconciliation = deployment.reconciliation;
+      if (reconciliation) {
+        deploymentRows.push([`${deployment.worker_id} / 账户对账`,
+          `${reconciliation.state}; fresh=${reconciliation.fresh_report_count}/${reconciliation.matching_report_count}; age=${reconciliation.freshest_age_ms === null ? "—" : `${reconciliation.freshest_age_ms}ms`}`]);
+        if (Array.isArray(reconciliation.blocking_reasons) && reconciliation.blocking_reasons.length) {
+          deploymentRows.push([`${deployment.worker_id} / 对账阻塞`, reconciliation.blocking_reasons.join(", ")]);
+        }
+      }
+      if (deployment.latest_operation) {
+        const operation = deployment.latest_operation;
+        deploymentRows.push([`${deployment.worker_id} / 最新操作`, `${operation.action} · ${operation.state} · ${operation.operation_id}`]);
+        if (operation.error_message) deploymentRows.push([`${deployment.worker_id} / 操作错误`, `${operation.error_code || "error"}: ${operation.error_message}`]);
+      }
+      if (Array.isArray(deployment.operation_history)) {
+        for (const operation of deployment.operation_history.slice(0, 5)) {
+          deploymentRows.push([`${deployment.worker_id} / 历史操作`, `${operation.action} · ${operation.state} · ${operation.operation_id}`]);
+        }
+      }
+    }
+  }
+  rows($("strategy-deployments-rows"), deploymentRows);
   advancePhases(audit.body);
   renderControl();
 }
@@ -555,22 +931,215 @@ async function postJsonText(path, body) {
   if (csrf) headers[CSRF_HEADER_NAME] = csrf;
   const response = await fetchWithTimeout(state.base + path, {
     method: "POST",
+    credentials: "same-origin",
     headers,
     body,
   });
   return { status: response.status, ok: response.ok, body: await readJson(response) };
 }
 
+function newRequestId() {
+  if (globalThis.crypto?.randomUUID) return crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`;
+}
+
+async function submitStrategyRevision(event) {
+  event.preventDefault();
+  const output = $("strategy-revision-output");
+  const form = $("strategy-revision-form");
+  const button = form.querySelector('button[type="submit"]');
+  if (!state.base) { output.textContent = "请先连接 API"; return; }
+  if (!isLoopbackControlTarget(state.base)) { renderLocalOnlyRejected(); return; }
+  let config;
+  try {
+    config = JSON.parse($("deployment-runtime-config").value);
+    if (!config || typeof config !== "object" || Array.isArray(config)) throw new Error("RuntimeConfig 顶层必须是 JSON 对象");
+  } catch (error) {
+    output.textContent = `RuntimeConfig 无效：${error.message}`;
+    return;
+  }
+  const payload = {
+    worker_id: $("deployment-worker-id").value.trim(),
+    revision: Number($("deployment-revision").value),
+    bundle_sha256: $("deployment-bundle-sha256").value.trim().toLowerCase(),
+    plan_sha256: $("deployment-plan-sha256").value.trim().toLowerCase(),
+    runtime_config_json: JSON.stringify(config),
+    desired_running: $("deployment-desired-running").checked,
+  };
+  button.disabled = true;
+  output.textContent = "正在提交不可变修订…";
+  try {
+    const response = await postJson(API_PATHS.strategyDeploymentRevisions, payload);
+    output.textContent = JSON.stringify({ http_status: response.status, response: response.body }, null, 2);
+    if (response.ok) {
+      $("operation-worker-id").value = payload.worker_id;
+      $("operation-target-revision").value = String(payload.revision);
+      void refreshReadModels();
+    }
+  } catch (error) {
+    output.textContent = `提交失败：${error.message}`;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function submitStrategyDeploymentOperation(event) {
+  event.preventDefault();
+  const output = $("strategy-operation-output");
+  const form = $("strategy-operation-form");
+  const button = form.querySelector('button[type="submit"]');
+  if (!state.base) { output.textContent = "请先连接 API"; return; }
+  if (!isLoopbackControlTarget(state.base)) { renderLocalOnlyRejected(); return; }
+  const operationId = newRequestId();
+  state.strategyOperationId = operationId;
+  const payload = {
+    operation_id: operationId,
+    idempotency_key: newRequestId(),
+    worker_id: $("operation-worker-id").value.trim(),
+    action: $("deployment-action").value,
+    target_revision: Number($("operation-target-revision").value),
+  };
+  button.disabled = true;
+  output.textContent = "正在提交部署操作…";
+  try {
+    const response = await postJson(API_PATHS.strategyDeploymentOperations, payload);
+    output.textContent = JSON.stringify({ http_status: response.status, response: response.body }, null, 2);
+    if (response.ok && response.body?.state === "accepted") {
+      void pollStrategyDeploymentOperation(operationId, 15);
+    } else if (response.ok) {
+      void refreshReadModels();
+    }
+  } catch (error) {
+    output.textContent = `提交失败。操作 ID：${operationId}。可用“查询操作状态”确认是否已受理。\n${error.message}`;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function refreshStrategyDeploymentOperation() {
+  const operationId = state.strategyOperationId;
+  const output = $("strategy-operation-output");
+  if (!state.base) { output.textContent = "请先连接 API"; return null; }
+  if (!operationId) { output.textContent = "还没有本页提交的 operation_id"; return null; }
+  try {
+    const response = await getJson(`${API_PATHS.strategyDeploymentOperations}?operation_id=${encodeURIComponent(operationId)}`);
+    output.textContent = JSON.stringify({ http_status: response.status, response: response.body }, null, 2);
+    if (response.ok && response.body?.state !== "accepted") void refreshReadModels();
+    return response;
+  } catch (error) {
+    output.textContent = `查询失败：${error.message}`;
+    return null;
+  }
+}
+
+async function pollStrategyDeploymentOperation(operationId, remaining) {
+  if (remaining <= 0 || state.strategyOperationId !== operationId) return;
+  const response = await refreshStrategyDeploymentOperation();
+  if (!response?.ok || response.body?.state !== "accepted") return;
+  window.setTimeout(() => { void pollStrategyDeploymentOperation(operationId, remaining - 1); }, 2000);
+}
+
+async function loadProductCapabilityCatalog() {
+  const output = $("product-capability-output");
+  output.textContent = "正在读取能力目录…";
+  try {
+    const response = await getJson(API_PATHS.productCapabilityCatalog);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const capabilities = response.body?.coverage_catalog?.capabilities;
+    if (!Array.isArray(capabilities)) throw new Error("服务端没有返回产品能力目录");
+    const ids = capabilities.map((item) => item.id).filter((id) => typeof id === "string");
+    const facets = response.body?.coverage_catalog?.execution_scope_facets ?? {};
+    const datalists = [
+      ["product-capability-ids", ids],
+      ["product-capability-venues", facets.venue],
+      ["product-capability-products", facets.product],
+      ["product-capability-account-modes", facets.account_mode],
+      ["product-capability-account-models", facets.account_models],
+      ["product-capability-margin-modes", facets.margin_modes],
+      ["product-capability-operations", facets.operations],
+    ];
+    for (const [listId, values] of datalists) {
+      const list = $(listId);
+      if (!list || !Array.isArray(values)) continue;
+      list.replaceChildren(...values.filter((value) => typeof value === "string").map((value) => {
+        const option = document.createElement("option");
+        option.value = value;
+        return option;
+      }));
+    }
+    output.textContent = JSON.stringify({
+      schema_version: response.body.coverage_catalog.schema_version,
+      source_updated_at: response.body.coverage_catalog.source_updated_at,
+      count: capabilities.length,
+      execution_scope_facets: facets,
+      capabilities,
+    }, null, 2);
+  } catch (error) {
+    output.textContent = `读取能力目录失败：${error.message}`;
+  }
+}
+
+async function queryProductCapability() {
+  const output = $("product-capability-output");
+  const fields = [
+    ["capability_id", "product-capability-id"],
+    ["venue", "product-capability-venue"],
+    ["product", "product-capability-product"],
+    ["account_mode", "product-capability-account-mode"],
+    ["account_model", "product-capability-account-model"],
+    ["margin_mode", "product-capability-margin-mode"],
+    ["operation", "product-capability-operation"],
+  ];
+  const query = Object.fromEntries(fields
+    .map(([key, id]) => [key, $(id).value.trim()])
+    .filter(([, value]) => value.length > 0));
+  if (Object.keys(query).length === 0) {
+    output.textContent = "请输入能力 ID，或至少填写一个交易范围条件";
+    return;
+  }
+  output.textContent = "正在查询能力证据…";
+  try {
+    const response = await postJson(API_PATHS.productCapabilityQuery, query);
+    output.textContent = JSON.stringify(response.body, null, 2);
+  } catch (error) {
+    output.textContent = `查询能力证据失败：${error.message}`;
+  }
+}
+
 function controlCommandFromForm() {
   const requestId = $("cmd-request").value.trim() || `console-${Date.now()}`;
+  const kind = $("cmd-kind").value;
+  const payload = {};
+  if (["CancelOrder", "CancelOrderGroup"].includes(kind)) {
+    payload.account_id = $("cmd-account").value.trim();
+    payload.venue_id = $("cmd-venue").value.trim();
+  } else {
+    const payloadText = $("cmd-payload-json").value.trim();
+    if (payloadText) {
+      let value;
+      try {
+        value = JSON.parse(payloadText);
+      } catch (error) {
+        throw new Error(`payload JSON 格式错误：${error.message}`);
+      }
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new Error("payload JSON 顶层必须是对象");
+      }
+      if (kind === "SubmitOrderGroup") payload.order_group_json = JSON.stringify(value);
+      else if (kind === "SubmitOrder" || kind === "AmendOrder") payload.order_json = JSON.stringify(value);
+      else Object.assign(payload, value);
+    } else if (["SubmitOrder", "SubmitOrderGroup", "AmendOrder"].includes(kind)) {
+      throw new Error("该命令需要填写订单或订单组 JSON");
+    }
+  }
   const command = {
     command_id: state.commandSeq,
     request_id: requestId,
     operator_id: $("cmd-operator").value.trim(),
     reason: $("cmd-reason").value.trim(),
-    kind: $("cmd-kind").value,
+    kind: kind,
     target: $("cmd-target").value.trim(),
-    payload: {},
+    payload: payload,
     permission: $("cmd-permission").value,
     dry_run: $("cmd-dry-run").checked,
   };
@@ -581,14 +1150,18 @@ function controlCommandFromForm() {
 async function submitCommand(event) {
   if (event) event.preventDefault();
   if (!state.base || !isLoopbackControlTarget(state.base)) return;
-  const command = controlCommandFromForm();
-  const result = await postJson(API_PATHS.controlCommands, command);
-  // 阶段①受理：202 是"收下并落了审计"，不是"已经执行"。4xx/5xx 各有自己的语义，
-  // 页面照实印出来，不把任何一种折成"成功"。
-  state.lastCommand = { command, result, phases: [describeAccepted(result)] };
-  renderControl();
-  // 受理之后立刻回读审计，把②③两阶段推进一格。
-  await refreshReadModels();
+  try {
+    const command = controlCommandFromForm();
+    const result = await postJson(API_PATHS.controlCommands, command);
+    // 阶段①受理：202 是"收下并落了审计"，不是"已经执行"。4xx/5xx 各有自己的语义，
+    // 页面照实印出来，不把任何一种折成"成功"。
+    state.lastCommand = { command, result, phases: [describeAccepted(result)] };
+    renderControl();
+    // 受理之后立刻回读审计，把②③两阶段推进一格。
+    await refreshReadModels();
+  } catch (error) {
+    $("control-rows").textContent = `命令未受理：${error && error.message ? error.message : error}`;
+  }
 }
 
 // ---- 研究面板：校验 → 回测 → 复核 ----
@@ -596,6 +1169,7 @@ async function runResearch(validateOnly) {
   const output = $("research-output");
   const buttons = [$("research-validate"), $("research-run")];
   if (!state.base) return;
+  clearResearchReport();
   for (const button of buttons) button.disabled = true;
   output.textContent = "正在校验数据集…";
   try {
@@ -625,6 +1199,9 @@ async function runResearch(validateOnly) {
     output.textContent = "回测完成，正在复核四份产物…";
     const verification = await postJson(API_PATHS.appVerify, backtest.body);
     output.textContent = JSON.stringify({ validation, backtest, verification }, null, 2);
+    if (verification.ok && verification.body?.verified === true) {
+      renderResearchReport(backtest.body, verification.body);
+    }
   } catch (error) {
     output.textContent = error instanceof SyntaxError
       ? `回测规格 JSON 无效：${error.message}`
@@ -662,11 +1239,2390 @@ function syncResearchStrategySelector() {
   }
 }
 
+const UNIFIED_EVENT_CACHE_LIMIT = 50000;
+const UNIFIED_EVENT_PAGE_SIZE = 300;
+
+const researchReportState = {
+  rows: [], kind: "", detailRequest: 0, selectedRow: null,
+  latestArtifactView: null, comparisonCurves: [], unifiedReports: [], outcome: null,
+  strategyDiagnostics: null, eventPageRequest: 0, accountBatch: null, jointAccountReport: null,
+  unifiedEventGeneration: 0, unifiedEventLoading: false, unifiedEventPage: 0,
+  unifiedEventRows: null, unifiedEventVerifiedCount: 0,
+};
+
+function clearResearchReport() {
+  researchReportState.rows = [];
+  researchReportState.kind = "";
+  researchReportState.detailRequest += 1;
+  researchReportState.selectedRow = null;
+  researchReportState.latestArtifactView = null;
+  researchReportState.outcome = null;
+  researchReportState.accountBatch = null;
+  researchReportState.jointAccountReport = null;
+  researchReportState.strategyDiagnostics = null;
+  $("research-diagnostic-select-row").hidden = true;
+  $("research-diagnostic-select").replaceChildren();
+  researchReportState.eventPageRequest += 1;
+  researchReportState.comparisonCurves = [];
+  researchReportState.unifiedEventGeneration += 1;
+  researchReportState.unifiedEventLoading = false;
+  researchReportState.unifiedEventPage = 0;
+  researchReportState.unifiedEventRows = null;
+  researchReportState.unifiedEventVerifiedCount = 0;
+  $("research-unified-events-load").disabled = false;
+  $("research-unified-events-all").disabled = false;
+  $("research-unified-events-next").disabled = true;
+  $("research-unified-events-page-prev").disabled = true;
+  $("research-unified-events-page-next").disabled = true;
+  researchReportState.unifiedReports = [];
+  $("card-research-report").hidden = true;
+  $("research-report-table").tBodies[0].replaceChildren();
+  $("research-unified-events-table").tBodies[0].replaceChildren();
+  $("research-unified-events-status").textContent = "";
+  $("research-unified-events-page-status").textContent = "";
+  $("research-report-plot").replaceChildren();
+  $("research-report-detail").textContent = "选择表格行查看";
+  $("research-artifact-drilldown").hidden = true;
+  $("research-account-detail").hidden = true;
+  $("research-account-events").open = false;
+  $("research-account-status").textContent = "";
+  $("research-account-event-status").textContent = "";
+  $("research-account-event-page-status").textContent = "";
+  $("research-account-event-filter").value = "";
+  $("research-account-event-count").textContent = "";
+  $("research-account-event-prev").disabled = true;
+  $("research-account-event-next").disabled = true;
+  $("research-artifact-status").textContent = "选择已有 Bar 或深度回测结果，读取经复核的净值、成交和行情明细。";
+  $("research-diagnostic-file").value = "";
+  $("research-diagnostic-result").hidden = true;
+  $("research-diagnostic-select-row").hidden = true;
+  $("research-diagnostic-select").replaceChildren();
+  $("research-diagnostic-import").hidden = false;
+  $("research-bars-heading").hidden = false;
+  $("research-bars-status").hidden = false;
+  $("research-bars-detail").hidden = false;
+  $("research-depth-detail").hidden = true;
+  $("research-events-detail").hidden = false;
+  $("research-timeline-detail").hidden = false;
+  $("research-diagnostic-status").textContent = "";
+  $("research-diagnostic-table").tBodies[0].replaceChildren();
+  $("research-diagnostic-pit-table").tBodies[0].replaceChildren();
+  $("research-diagnostic-pit-detail").textContent = "选择一条 PIT 样本查看账本版本";
+  $("research-diagnostic-pit-table").tBodies[0].replaceChildren();
+  $("research-timeline-status").textContent = "";
+  $("research-timeline-filter").value = "";
+  $("research-timeline-count").textContent = "";
+  $("research-event-page-status").textContent = "";
+  $("research-event-prev").disabled = true;
+  $("research-event-next").disabled = true;
+  $("research-equity-plot").replaceChildren();
+  $("research-position-plot").replaceChildren();
+  $("research-artifact-metrics").replaceChildren();
+  $("research-equity-legend").replaceChildren();
+  $("research-equity-comparison-status").textContent = "";
+  $("research-unified-status").textContent = "";
+  $("research-unified-filter").value = "all";
+  for (const id of ["research-unified-table", "research-account-table", "research-account-event-table", "research-equity-table", "research-fill-table", "research-event-table", "research-timeline-table", "research-depth-table", "research-market-depth-table"]) {
+    const table = $(id);
+    table.tHead.rows[0].replaceChildren();
+    table.tBodies[0].replaceChildren();
+  }
+}
+
+function researchBps(value) {
+  const number = asNumber(value);
+  return number === null ? "—" : `${(number / 100).toFixed(2)}% (${number} bp)`;
+}
+
+function researchMetric(label, value) {
+  const card = el("div", null, "research-metric");
+  card.append(el("span", label, "label"), el("span", value ?? "—", "value"));
+  return card;
+}
+
+function renderVerifiedArtifactMetrics(view) {
+  const host = $("research-artifact-metrics");
+  host.replaceChildren();
+  const summary = view.summary ?? {};
+  const metrics = summary.metrics ?? summary;
+  const exactMetrics = summary.metrics_exact ?? metrics.metrics_exact ?? {};
+  const exactFees = exactMetrics.fees_by_currency && typeof exactMetrics.fees_by_currency === "object"
+    ? Object.entries(exactMetrics.fees_by_currency).map(([currency, amount]) => `${currency} ${amount}`).join(" · ")
+    : null;
+  const exactTurnover = exactMetrics.turnover?.amount == null
+    ? null
+    : `${exactMetrics.turnover.amount} ${exactMetrics.turnover.currency ?? ""}`.trim();
+  const rejectionFacts = Array.isArray(summary.rejection_reasons)
+    ? summary.rejection_reasons
+    : (Array.isArray(summary.rejection_facts)
+      ? summary.rejection_facts.map(([reason, count]) => ({ reason, count }))
+      : []);
+  const rejected = summary.rejected_orders ?? rejectionFacts.reduce((total, item) => total + Number(item.count ?? 0), 0);
+  const values = [
+    ["收益", metrics.return_bps == null ? null : researchBps(metrics.return_bps)],
+    ["最大回撤", metrics.max_drawdown_bps == null ? null : researchBps(metrics.max_drawdown_bps)],
+    ["主腿收益", metrics.primary_return_bps == null ? null : researchBps(metrics.primary_return_bps)],
+    ["参考腿收益", metrics.reference_return_bps == null ? null : researchBps(metrics.reference_return_bps)],
+    ["手续费 raw", metrics.fees_raw],
+    ["资金费 raw", metrics.funding_raw],
+    ["换手 raw", metrics.turnover_raw],
+    ["成交额（精确）", exactTurnover],
+    ["手续费（分币种精确）", exactFees],
+    ["单位净成本 bp", metrics.cost_bps],
+    ["拒单数", rejected],
+    ["成交数", summary.fills],
+    ["期初资金", summary.account?.initial_cash_exact ?? summary.account?.initial_cash_raw],
+    ["期末权益 raw", metrics.final_equity_raw],
+  ];
+  for (const [label, value] of values) {
+    if (value !== undefined && value !== null) host.append(researchMetric(label, value));
+  }
+  if (rejectionFacts.length) {
+    host.append(researchMetric("拒单原因", rejectionFacts.map((item) => `${item.reason}: ${item.count}`).join("；")));
+  }
+}
+
+function showResearchDetail(value) {
+  const detail = $("research-report-detail");
+  detail.textContent = JSON.stringify(value, null, 2);
+  detail.closest("details").open = true;
+}
+
+function researchOutcomeForRow(row) {
+  if (row.source?.batch_id && Array.isArray(row.source?.runs)) return row.source;
+  if (row.source?.artifacts) return row.source;
+  if (row.source?.artifact_path && row.source?.markets_total !== undefined) return row.source;
+  if (row.source?.attribution_artifact) return row.source;
+  if (row.source?.outcome?.batch_id && Array.isArray(row.source.outcome?.runs)) return row.source.outcome;
+  if (row.source?.outcome?.artifacts) return row.source.outcome;
+  if (row.source?.outcome?.artifact_path && row.source.outcome?.markets_total !== undefined) return row.source.outcome;
+  if (row.source?.outcome?.attribution_artifact) return row.source.outcome;
+  return null;
+}
+
+function renderMultiMarketResearch(markets) {
+  const panel = $("research-markets-detail");
+  const status = $("research-markets-status");
+  const barStatus = $("research-market-bars-status");
+  panel.hidden = !Array.isArray(markets);
+  $("research-market-table").tHead.rows[0].replaceChildren();
+  $("research-market-table").tBodies[0].replaceChildren();
+  $("research-market-pnl-status").hidden = true;
+  $("research-market-pnl-plot").replaceChildren();
+  $("research-market-pnl-table").hidden = true;
+  $("research-market-pnl-table").tHead.rows[0].replaceChildren();
+  $("research-market-pnl-table").tBodies[0].replaceChildren();
+  $("research-market-bar-table").tHead.rows[0].replaceChildren();
+  $("research-market-bar-table").tBodies[0].replaceChildren();
+  $("research-market-depth-table").tHead.rows[0].replaceChildren();
+  $("research-market-depth-table").tBodies[0].replaceChildren();
+  $("research-market-depth-status").hidden = true;
+  $("research-market-depth-detail").hidden = true;
+  barStatus.hidden = false;
+  $("research-market-bar-table").hidden = false;
+  if (!Array.isArray(markets)) return;
+  const hasDepth = markets.some((market) => market.depth?.source_status === "verified");
+  status.textContent = `${markets.length} 个市场的输入指纹、已提供的数据质量清单和逐市场成交数已复核。点击一行查看该市场的${hasDepth ? "盘口或 Bar" : "Bar"}采样。`;
+  const rows = markets.map((market) => ({
+    instrument: market.instrument,
+    data_tier: market.data_tier ?? "bar",
+    rows: market.depth?.total ?? market.bars?.total ?? 0,
+    fills: market.fill_count ?? 0,
+    pnl_currency: market.pnl_contribution?.currency ?? "—",
+    pnl_contribution_raw: market.pnl_contribution?.rows?.at(-1)?.pnl_contribution_raw ?? "—",
+    pnl_contribution_exact: market.pnl_contribution?.rows?.at(-1)?.pnl_contribution_exact ?? "—",
+    quality: market.quality_status ?? "unknown",
+    data_fingerprint: market.data_fingerprint ?? "—",
+  }));
+  renderResearchObjectTable("research-market-table", rows, ["instrument", "data_tier", "rows", "fills", "pnl_currency", "pnl_contribution_raw", "pnl_contribution_exact", "quality", "data_fingerprint"]);
+  const rendered = [...$("research-market-table").tBodies[0].rows];
+  const showMarket = (index) => {
+    const market = markets[index];
+    if (!market) return;
+    const contribution = market.pnl_contribution;
+    const pnlStatus = $("research-market-pnl-status");
+    const pnlTable = $("research-market-pnl-table");
+    if (contribution) {
+      pnlStatus.hidden = false;
+      pnlTable.hidden = false;
+      pnlStatus.textContent = `${market.instrument} · ${contribution.currency} · ${contribution.total ?? 0} 个共享权益时点 · 展示 ${contribution.rows?.length ?? 0}${contribution.truncated ? "（有界采样）" : ""}。此标的是已归因盈亏贡献；未分配的初始现金不计入任何标的。`;
+      renderResearchObjectTable("research-market-pnl-table", contribution.rows ?? [], ["equity_index", "ts", "pnl_contribution_raw", "pnl_contribution_exact"]);
+      renderMarketContributionPlot(market);
+    } else {
+      pnlStatus.hidden = true;
+      $("research-market-pnl-plot").replaceChildren();
+      pnlTable.hidden = true;
+      pnlTable.tHead.rows[0].replaceChildren();
+      pnlTable.tBodies[0].replaceChildren();
+    }
+    const depth = market.depth?.source_status === "verified" ? market.depth : null;
+    barStatus.hidden = Boolean(depth);
+    $("research-market-bar-table").hidden = Boolean(depth);
+    $("research-market-depth-status").hidden = !depth;
+    $("research-market-depth-detail").hidden = !depth;
+    if (depth) {
+      const depthRows = depth.rows ?? [];
+      $("research-market-depth-status").textContent = `${market.instrument} · ${market.data_tier ?? "depth"} · ${depth.total ?? 0} 份盘口快照 · 展示 ${depthRows.length}${depth.truncated ? "（有界采样或档位截断）" : ""} · 数据指纹 ${market.data_fingerprint}`;
+      renderResearchObjectTable("research-market-depth-table", depthRows, ["ts", "sequence", "bids", "asks", "levels_truncated"]);
+      return;
+    }
+    const barRows = market.bars?.rows ?? [];
+    barStatus.textContent = `${market.instrument} · ${market.bars?.total ?? 0} 根 Bar · 展示 ${barRows.length}${market.bars?.truncated ? "（等距采样）" : ""} · 数据指纹 ${market.data_fingerprint}`;
+    renderResearchObjectTable("research-market-bar-table", barRows, ["ts", "open_raw", "high_raw", "low_raw", "close_raw", "volume_raw"]);
+  };
+  rendered.forEach((row, index) => {
+    row.setAttribute("role", "button");
+    row.tabIndex = 0;
+    row.setAttribute("aria-label", `查看 ${markets[index].instrument} 行情采样`);
+    row.onclick = () => showMarket(index);
+    row.onkeydown = (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        showMarket(index);
+      }
+    };
+  });
+  if (markets.length) showMarket(0);
+}
+
+async function loadResearchArtifactDetail(row, strategyDiagnostics = null, explicitOutcome = null) {
+  const requestId = ++researchReportState.detailRequest;
+  const preservedBatch = explicitOutcome && researchReportState.accountBatch
+    ? researchReportState.accountBatch
+    : null;
+  const outcome = explicitOutcome ?? researchOutcomeForRow(row);
+  const panel = $("research-artifact-drilldown");
+  const status = $("research-artifact-status");
+  researchReportState.latestArtifactView = null;
+  researchReportState.outcome = null;
+  researchReportState.accountBatch = preservedBatch;
+  researchReportState.jointAccountReport = null;
+  researchReportState.strategyDiagnostics = null;
+  researchReportState.eventPageRequest += 1;
+  panel.hidden = false;
+  $("research-equity-plot").replaceChildren();
+  $("research-position-plot").replaceChildren();
+  $("research-artifact-metrics").replaceChildren();
+  $("research-account-detail").hidden = !preservedBatch;
+  if (!preservedBatch) $("research-account-status").textContent = "";
+  const resetTables = ["research-equity-table", "research-fill-table", "research-event-table", "research-timeline-table", "research-market-table", "research-market-bar-table"];
+  if (!preservedBatch) resetTables.unshift("research-account-table", "research-account-event-table");
+  for (const id of resetTables) {
+    const table = $(id);
+    table.tHead.rows[0].replaceChildren();
+    table.tBodies[0].replaceChildren();
+  }
+  renderMultiMarketResearch(null);
+  $("research-diagnostic-result").hidden = true;
+  $("research-diagnostic-select-row").hidden = true;
+  $("research-diagnostic-select").replaceChildren();
+  $("research-diagnostic-status").textContent = "";
+  $("research-diagnostic-table").tBodies[0].replaceChildren();
+  $("research-diagnostic-pit-table").tBodies[0].replaceChildren();
+  $("research-diagnostic-pit-detail").textContent = "选择一条 PIT 样本查看账本版本";
+  $("research-timeline-status").textContent = "";
+  $("research-timeline-filter").value = "";
+  $("research-timeline-count").textContent = "";
+  $("research-event-page-status").textContent = "";
+  $("research-event-prev").disabled = true;
+  $("research-event-next").disabled = true;
+  if (!outcome) {
+    status.textContent = "该行没有可钻取的回测产物（比较摘要只含调用方指标）。";
+    return;
+  }
+  status.textContent = "正在读取 " + outcome.run_id + " 的产物并复核…";
+  let response;
+  try {
+    const request = Array.isArray(strategyDiagnostics)
+      ? { outcome, market_strategy_diagnostics: strategyDiagnostics }
+      : strategyDiagnostics?.account_strategy_diagnostics
+        ? { outcome, account_strategy_diagnostics: strategyDiagnostics.account_strategy_diagnostics }
+        : strategyDiagnostics
+          ? { outcome, strategy_diagnostics: strategyDiagnostics }
+          : outcome;
+    response = await postJson(API_PATHS.appResearchArtifacts, request);
+  } catch (error) {
+    if (requestId === researchReportState.detailRequest) status.textContent = "明细请求失败：" + error;
+    return;
+  }
+  if (requestId !== researchReportState.detailRequest) return;
+  if (!response.ok) {
+    status.textContent = "明细读取失败：" + (response.body?.message ?? response.body?.error ?? response.status);
+    return;
+  }
+  const view = response.body;
+  if (!view?.verification?.verified) {
+    status.textContent = "产物复核未通过：" + ((view?.verification?.mismatches ?? []).join("；") || "未返回复核细节");
+    return;
+  }
+  if (view.run_kind === "multi_account") {
+    renderResearchAccountBatch(view, outcome, strategyDiagnostics?.account_strategy_diagnostics ?? null);
+    return;
+  }
+  if (view.run_kind === "multi_account_joint") {
+    renderResearchJointAccountReport(view, outcome);
+    return;
+  }
+  renderResearchArtifactDetailView(view, outcome, strategyDiagnostics, preservedBatch?.selectedAccountId ?? null);
+}
+
+function renderResearchJointAccountReport(view, outcome) {
+  renderResearchArtifactDetailView(view, outcome, null, null);
+  const panel = $("research-account-detail");
+  const accounts = view.accounts ?? [];
+  researchReportState.accountBatch = null;
+  researchReportState.jointAccountReport = {
+    view, outcome, selected: null, pageRequest: 0,
+  };
+  $("research-diagnostic-import").hidden = true;
+  panel.hidden = false;
+  $("research-account-status").textContent = `联合账户 ${view.run_id} · ${view.summary.accounts_total} 个交易所账户 · ${view.summary.settlement_currency} · 资金与风险按账户隔离；事件样本按账户分别核验，不构造跨所全序。`;
+  renderResearchObjectTable("research-account-table", accounts, ["exchange_id", "account_id", "status", "return_bps", "max_drawdown_bps", "fills", "run_id"]);
+  const filter = $("research-account-event-instrument");
+  filter.replaceChildren(el("option", "账户事件样本"));
+  filter.disabled = true;
+  $("research-account-event-prev").disabled = true;
+  $("research-account-event-next").disabled = true;
+  $("research-account-event-page-status").textContent = "每个交易所账户单独分页；不建立跨交易所事件总序。";
+  $("research-account-event-status").textContent = "先选择交易所账户查看已重放核验的账户内事件。";
+  accounts.forEach((account, index) => {
+    const row = $("research-account-table").tBodies[0].rows[index];
+    if (!row) return;
+    row.classList.add("research-account-row");
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+    row.setAttribute("aria-label", `查看 ${account.exchange_id} 交易所账户 ${account.account_id}`);
+    const select = () => {
+      for (const item of $("research-account-table").tBodies[0].rows) item.removeAttribute("aria-current");
+      row.setAttribute("aria-current", "true");
+      $("research-account-events").open = true;
+      researchReportState.jointAccountReport.selected = {
+        exchangeId: account.exchange_id,
+        accountId: account.account_id,
+      };
+      renderResearchJointAccountEventPage(account);
+      renderResearchArtifactDetailView(account.report, null, null, `${account.exchange_id}:${account.account_id}`);
+    };
+    row.addEventListener("click", select);
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        select();
+      }
+    });
+  });
+  const first = accounts.findIndex((account) => account.status === "succeeded" && account.report?.verification?.verified);
+  if (first >= 0) $("research-account-table").tBodies[0].rows[first]?.click();
+  else $("research-artifact-status").textContent = "联合账户结构已核验，但没有可展开的成功账户。";
+}
+
+function renderResearchJointAccountEventPage(account) {
+  const joint = researchReportState.jointAccountReport;
+  if (!joint || !account?.report?.verification?.verified) return;
+  const events = account.report.events ?? {};
+  const rows = events.rows ?? [];
+  const offset = Number(events.offset ?? 0);
+  const total = Number(events.total ?? 0);
+  const end = offset + rows.length;
+  const first = rows.length ? offset + 1 : 0;
+  $("research-account-event-status").textContent = `${account.exchange_id} · ${account.account_id} · 事件顺序只在该账户内定义；完整日志已重放校验。`;
+  $("research-account-event-page-status").textContent = total
+    ? `账户内事件 ${first}–${end} / ${total}；交易所账户分别分页，不合并排序。`
+    : "该账户没有事件记录";
+  $("research-account-event-prev").disabled = events.previous_offset == null;
+  $("research-account-event-next").disabled = events.next_offset == null;
+  renderResearchTimeline(researchTimelineRows(rows), {
+    tableId: "research-account-event-table",
+    filterId: "research-account-event-filter",
+    countId: "research-account-event-count",
+  });
+}
+
+async function loadResearchJointAccountEventPage(direction) {
+  const joint = researchReportState.jointAccountReport;
+  const selected = joint?.selected;
+  if (!joint || !selected) return;
+  const currentAccount = joint.view.accounts?.find((account) =>
+    account.exchange_id === selected.exchangeId && account.account_id === selected.accountId);
+  const currentEvents = currentAccount?.report?.events;
+  const offset = direction === "next" ? currentEvents?.next_offset : currentEvents?.previous_offset;
+  if (!Number.isInteger(offset) || offset < 0) return;
+  const limit = Number(currentEvents.limit ?? 50);
+  const requestId = ++joint.pageRequest;
+  $("research-account-event-page-status").textContent = "正在重放并校验所选交易所账户事件日志…";
+  $("research-account-event-prev").disabled = true;
+  $("research-account-event-next").disabled = true;
+  try {
+    const request = {
+      outcome: joint.outcome,
+      joint_account_event_pages: {
+        [selected.exchangeId]: {
+          [selected.accountId]: { offset, limit },
+        },
+      },
+    };
+    const response = await postJson(API_PATHS.appResearchArtifacts, request);
+    if (researchReportState.jointAccountReport !== joint || requestId !== joint.pageRequest) return;
+    const next = response.body;
+    if (!response.ok || !next?.verification?.verified || next.run_id !== joint.view.run_id
+      || next.run_kind !== "multi_account_joint") {
+      $("research-account-event-page-status").textContent = "联合账户事件页复核失败："
+        + (next?.message ?? next?.error ?? response.status ?? "响应结构无效");
+      $("research-account-event-prev").disabled = currentEvents?.previous_offset == null;
+      $("research-account-event-next").disabled = currentEvents?.next_offset == null;
+      return;
+    }
+    joint.view = next;
+    const account = next.accounts?.find((item) =>
+      item.exchange_id === selected.exchangeId && item.account_id === selected.accountId);
+    if (!account) throw new Error("响应缺少所选交易所账户");
+    renderResearchJointAccountEventPage(account);
+    renderResearchArtifactDetailView(account.report, null, null, `${account.exchange_id}:${account.account_id}`);
+  } catch (error) {
+    if (researchReportState.jointAccountReport === joint && requestId === joint.pageRequest) {
+      $("research-account-event-page-status").textContent = "联合账户事件页读取失败：" + error;
+      $("research-account-event-prev").disabled = currentEvents?.previous_offset == null;
+      $("research-account-event-next").disabled = currentEvents?.next_offset == null;
+    }
+  }
+}
+
+function renderResearchAccountBatch(view, outcome, diagnosticAttachments = null) {
+  const panel = $("research-account-detail");
+  const status = $("research-artifact-status");
+  $("research-diagnostic-import").hidden = false;
+  const accounts = view.accounts ?? [];
+  const initialEventOffsets = Object.fromEntries(accounts
+    .filter((account) => account.status === "succeeded")
+    .map((account) => [account.account_id, 0]));
+  researchReportState.accountBatch = {
+    view, outcome, selectedAccountId: null,
+    diagnosticAttachments,
+    eventInstrument: view.event_instrument ?? "",
+    eventCursorHistory: [initialEventOffsets], eventCursorIndex: 0, eventPageRequest: 0,
+  };
+  panel.hidden = false;
+  $("research-account-status").textContent = `批次 ${view.run_id} · ${view.summary.accounts_succeeded} / ${view.summary.accounts_total} 个账户成功 · 加权收益 ${view.summary.weighted_return_bps == null ? "—" : researchBps(view.summary.weighted_return_bps)} · ${view.summary.settlement_currency} · 各账户资金、仓位和风险相互独立。`;
+  renderResearchObjectTable("research-account-table", accounts, ["account_id", "status", "instrument", "return_bps", "max_drawdown_bps", "fills", "run_id"]);
+  const instrumentFilter = $("research-account-event-instrument");
+  const instruments = [...new Set(accounts
+    .filter((account) => account.status === "succeeded" && account.instrument)
+    .map((account) => account.instrument))].sort();
+  instrumentFilter.replaceChildren();
+  const allInstruments = el("option", "全部标的");
+  allInstruments.value = "";
+  instrumentFilter.append(allInstruments);
+  for (const instrument of instruments) {
+    const option = el("option", instrument);
+    option.value = instrument;
+    instrumentFilter.append(option);
+  }
+  instrumentFilter.value = instruments.includes(researchReportState.accountBatch.eventInstrument)
+    ? researchReportState.accountBatch.eventInstrument
+    : "";
+  instrumentFilter.disabled = instruments.length < 2;
+  renderResearchAccountEventPage(view);
+  const rows = [...$("research-account-table").tBodies[0].rows];
+  rows.forEach((row, index) => {
+    row.classList.add("research-account-row");
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+    row.setAttribute("aria-label", `查看账户 ${accounts[index].account_id}`);
+    const select = () => selectResearchAccount(index);
+    row.addEventListener("click", select);
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        select();
+      }
+    });
+  });
+  const requestedAccountId = researchReportState.selectedRow?.parameters?.account_id;
+  const requestedIndex = accounts.findIndex((account) => account.account_id === requestedAccountId);
+  const firstVerifiedIndex = accounts.findIndex((account) => account.status === "succeeded" && account.report?.verification?.verified);
+  const selectedIndex = requestedIndex >= 0 ? requestedIndex : firstVerifiedIndex;
+  if (selectedIndex >= 0 && accounts[selectedIndex].status === "succeeded") {
+    selectResearchAccount(selectedIndex);
+  } else if (selectedIndex >= 0) {
+    status.textContent = `账户 ${accounts[selectedIndex].account_id} 未成功；可从上方批次表选择其他成功账户查看明细。`;
+    $("research-account-table").tBodies[0].rows[selectedIndex]?.setAttribute("aria-current", "true");
+  } else {
+    status.textContent = "批次结构已核对，但没有可展开的成功账户。";
+  }
+}
+
+function researchAccountEventOffset(offsets) {
+  return Object.values(offsets ?? {}).reduce((total, value) => total + Number(value ?? 0), 0);
+}
+
+function renderResearchAccountEventPage(view) {
+  const events = view.events ?? {};
+  const rows = researchTimelineRows(events.rows ?? []);
+  const batch = researchReportState.accountBatch;
+  const eventInstrument = view.event_instrument ?? "";
+  if (batch?.view?.run_id === view.run_id) batch.eventInstrument = eventInstrument;
+  const offset = Number(events.offset ?? 0);
+  const total = Number(events.total ?? 0);
+  const end = offset + (events.rows?.length ?? 0);
+  const first = events.rows?.length ? offset + 1 : 0;
+  $("research-account-event-status").textContent = total
+    ? "各账户事件先独立重放校验，再按时间、事件优先级、账户和序号稳定合并"
+      + (eventInstrument ? "；当前只显示 " + eventInstrument : "")
+      + "；订单、账户和资金事实仍保留各自账户身份。"
+    : "所选批次没有可展示的事件记录。";
+  $("research-account-event-page-status").textContent = total
+    ? `合并事件 ${first}–${end} / ${total}；翻页会重新校验各账户完整事件日志。`
+    : "没有事件记录";
+  $("research-account-event-prev").disabled = offset <= 0;
+  $("research-account-event-next").disabled = !events.truncated;
+  renderResearchTimeline(rows, {
+    tableId: "research-account-event-table",
+    filterId: "research-account-event-filter",
+    countId: "research-account-event-count",
+  });
+}
+
+function resetResearchAccountEventInstrument() {
+  const batch = researchReportState.accountBatch;
+  const instrumentFilter = $("research-account-event-instrument");
+  if (!batch || instrumentFilter.value === (batch.view.event_instrument ?? "")) return;
+  const offsets = Object.fromEntries(
+    Object.keys(batch.view.account_event_offsets ?? {}).map((accountId) => [accountId, 0]),
+  );
+  void loadResearchAccountEventPage("reset", offsets);
+}
+
+async function loadResearchAccountEventPage(direction, resetOffsets = null) {
+  const batch = researchReportState.accountBatch;
+  if (!batch) return;
+  const currentEvents = batch.view.events ?? {};
+  const currentIndex = batch.eventCursorIndex;
+  let targetIndex = currentIndex;
+  let offsets;
+  if (direction === "reset") {
+    targetIndex = 0;
+    offsets = resetOffsets;
+  } else if (direction === "next") {
+    if (!currentEvents.truncated) return;
+    targetIndex = currentIndex + 1;
+    offsets = batch.eventCursorHistory[targetIndex] ?? batch.view.account_event_offsets;
+    if (!offsets || researchAccountEventOffset(offsets) <= Number(currentEvents.offset ?? 0)) return;
+  } else {
+    if (currentIndex <= 0) return;
+    targetIndex = currentIndex - 1;
+    offsets = batch.eventCursorHistory[targetIndex];
+  }
+  if (!offsets) return;
+  const requestId = ++batch.eventPageRequest;
+  const offset = researchAccountEventOffset(offsets);
+  $("research-account-event-page-status").textContent = "正在重放并合并校验各账户事件日志…";
+  $("research-account-event-prev").disabled = true;
+  $("research-account-event-next").disabled = true;
+  try {
+    const request = {
+      outcome: batch.outcome,
+      event_page: { offset, limit: 300 },
+      account_event_offsets: offsets,
+    };
+    if (batch.diagnosticAttachments) {
+      request.account_strategy_diagnostics = batch.diagnosticAttachments;
+    }
+    const eventInstrument = $("research-account-event-instrument").value.trim();
+    if (eventInstrument) request.event_instrument = eventInstrument;
+    const response = await postJson(API_PATHS.appResearchArtifacts, request);
+    if (researchReportState.accountBatch !== batch || requestId !== batch.eventPageRequest) return;
+    const next = response.body;
+    if (!response.ok || !next?.verification?.verified || next.run_id !== batch.view.run_id
+      || next.run_kind !== "multi_account") {
+      $("research-account-event-page-status").textContent = "跨账户事件页复核失败："
+        + (next?.message ?? next?.error ?? response.status ?? "响应结构无效");
+      $("research-account-event-instrument").value = batch.view.event_instrument ?? "";
+      $("research-account-event-prev").disabled = currentIndex <= 0;
+      $("research-account-event-next").disabled = !currentEvents.truncated;
+      return;
+    }
+    if (direction === "reset") {
+      batch.eventCursorHistory = [{ ...offsets }];
+      batch.eventCursorIndex = 0;
+    } else {
+      batch.eventCursorHistory[targetIndex] = { ...offsets };
+      batch.eventCursorIndex = targetIndex;
+    }
+    batch.view = next;
+    $("research-account-event-instrument").value = next.event_instrument ?? "";
+    renderResearchAccountEventPage(next);
+  } catch (error) {
+    if (researchReportState.accountBatch === batch && requestId === batch.eventPageRequest) {
+      $("research-account-event-instrument").value = batch.view.event_instrument ?? "";
+      $("research-account-event-page-status").textContent = "跨账户事件页读取失败：" + error;
+      $("research-account-event-prev").disabled = currentIndex <= 0;
+      $("research-account-event-next").disabled = !currentEvents.truncated;
+    }
+  }
+}
+
+function selectResearchAccount(index) {
+  const batch = researchReportState.accountBatch;
+  const account = batch?.view.accounts?.[index];
+  if (!batch || !account?.report?.verification?.verified) return;
+  const member = batch.outcome.runs?.find((run) => run.account_id === account.account_id);
+  if (!member?.outcome) return;
+  batch.selectedAccountId = account.account_id;
+  for (const row of $("research-account-table").tBodies[0].rows) row.removeAttribute("aria-current");
+  const selectedRow = $("research-account-table").tBodies[0].rows[index];
+  selectedRow?.setAttribute("aria-current", "true");
+  renderResearchArtifactDetailView(account.report, member.outcome, null, account.account_id);
+}
+
+function renderResearchArtifactDetailView(view, outcome, strategyDiagnostics = null, accountId = null) {
+  const status = $("research-artifact-status");
+  const equityRows = view.equity?.rows ?? [];
+  const fillRows = view.fills?.rows ?? [];
+  const eventRows = view.events?.rows ?? [];
+  const barRows = view.bars?.rows ?? [];
+  const depthRows = view.depth?.rows ?? [];
+  const isDepth = view.run_kind === "depth" || view.run_kind === "provider_depth";
+  const isMultiMarket = view.run_kind === "multi_market" || view.run_kind === "multi_market_depth" || view.run_kind === "multi_leg" || view.run_kind === "multi_account_joint_member";
+  const isMultiMarketDepth = view.run_kind === "multi_market_depth";
+  const eventTraceAvailable = view.event_trace_available !== false;
+  const totalReturn = equityReturnBps(equityRows);
+  const provider = view.summary?.provider ?? null;
+  const providerId = provider?.provider_id ?? provider?.dataset?.provider_id ?? null;
+  const providerVersion = provider?.provider_version ?? provider?.dataset?.provider_version ?? null;
+  researchReportState.latestArtifactView = view;
+  researchReportState.outcome = outcome;
+  researchReportState.strategyDiagnostics = strategyDiagnostics;
+  renderVerifiedArtifactMetrics(view);
+  status.textContent = (accountId ? `账户 ${accountId} · ` : "") + "产物复核通过 · " + view.instrument + " · " + view.run_id
+    + " · 净值 " + (view.equity?.total ?? 0) + " 点" + (view.equity?.truncated ? "（图表有界采样）" : "")
+    + " · 成交 " + (view.fills?.total ?? 0) + " 笔（展示 " + fillRows.length + "）"
+    + (eventTraceAvailable ? " · 事件 " + (view.events?.total ?? 0) + " 条（当前页 " + eventRows.length + " 条）" : view.run_kind === "multi_account_joint_member" ? " · 账户内事件样本见上方账户面板" : " · 此运行未持久化事件轨迹")
+     + " · 采样净值变化 " + (totalReturn === null ? "—" : researchBps(totalReturn))
+     + (providerId ? ` · 数据源 ${providerId}${providerVersion ? `@${providerVersion}` : ""}` : "");
+  $("research-diagnostic-import").hidden = isDepth || Boolean(accountId);
+  $("research-bars-heading").hidden = isDepth || isMultiMarket;
+  $("research-bars-status").hidden = isDepth || isMultiMarket;
+  $("research-bars-detail").hidden = isDepth || isMultiMarket;
+  $("research-position-heading").hidden = isMultiMarket;
+  $("research-position-status").hidden = isMultiMarket;
+  $("research-position-plot").hidden = isMultiMarket;
+  renderMultiMarketResearch(isMultiMarket ? view.markets : null);
+  $("research-depth-detail").hidden = !isDepth;
+  $("research-events-detail").hidden = !eventTraceAvailable;
+  $("research-timeline-detail").hidden = !eventTraceAvailable || isDepth || view.run_kind === "multi_market_depth";
+  const diagnosticBatch = view.market_strategy_diagnostics;
+  if (Array.isArray(diagnosticBatch) && diagnosticBatch.length) {
+    const selectorRow = $("research-diagnostic-select-row");
+    const selector = $("research-diagnostic-select");
+    selector.replaceChildren();
+    for (const [index, attachment] of diagnosticBatch.entries()) {
+      const report = attachment.report ?? {};
+      const option = el("option", `${report.instrument ?? "标的"} · ${report.strategy_id ?? "策略"}`);
+      option.value = String(index);
+      selector.append(option);
+    }
+    selectorRow.hidden = false;
+    selector.value = "0";
+    selector.onchange = () => {
+      const selected = diagnosticBatch[Number(selector.value)];
+      if (selected) renderBoundStrategyDiagnostics(selected);
+    };
+    renderBoundStrategyDiagnostics(diagnosticBatch[0]);
+  } else {
+    $("research-diagnostic-select-row").hidden = true;
+    $("research-diagnostic-select").replaceChildren();
+    if (view.strategy_diagnostics) renderBoundStrategyDiagnostics(view.strategy_diagnostics);
+  }
+  const barStatus = view.bars?.source_status ?? "not_returned";
+  $("research-bars-status").textContent = barStatus === "verified"
+    ? `${providerId ? "Provider 冻结行情输入身份复核通过" : "输入身份复核通过"} · ${view.bars.total} 根 Bar · 展示 ${barRows.length}${view.bars.truncated ? "（等距采样）" : ""}；定点价格和成交量按原始整数展示。`
+    : `未返回原始 Bar（${barStatus}）。只有位于 API 配置数据目录内并通过数据指纹复核的单 BarFrame 输入会展示。`;
+  const depthStatus = view.depth?.source_status ?? "not_returned";
+  $("research-depth-status").textContent = depthStatus === "verified"
+    ? `${providerId ? "Provider 冻结盘口输入身份复核通过" : "输入身份复核通过"} · ${view.depth.total} 份快照 · 展示 ${depthRows.length}${view.depth.truncated ? "（快照等距采样或盘口档位截断）" : ""}；每侧最多展示 20 档，价格和数量保留原始定点整数。`
+    : `未返回原始盘口（${depthStatus}）。只有位于 API 配置数据目录内并通过输入指纹、清单和运行记录复核的深度帧会展示。`;
+  if (researchReportState.comparisonCurves.length) {
+    renderEquityComparisonPlot();
+  } else {
+    renderEquityDetailPlot(equityRows);
+  }
+  renderPositionDetailPlot(equityRows);
+  renderResearchObjectTable("research-equity-table", equityRows, ["ts", "equity_raw", "equity_exact", "position_raw"]);
+  renderResearchObjectTable("research-bar-table", barRows, ["ts", "open_raw", "high_raw", "low_raw", "close_raw", "volume_raw"]);
+  renderResearchObjectTable("research-depth-table", depthRows, ["ts", "sequence", "bids", "asks", "levels_truncated"]);
+  renderResearchObjectTable("research-fill-table", fillRows);
+  renderResearchEventPage(view);
+}
+
+function researchTimelineRows(eventRows) {
+  return eventRows.map((event) => {
+    const kind = event.kind;
+    const eventKind = typeof kind === "string" ? kind : kind && typeof kind === "object" ? Object.keys(kind)[0] : "unknown";
+    const eventPayload = typeof kind === "string" ? null : kind && typeof kind === "object" ? kind[eventKind] : null;
+    const context = event.metadata?.context ?? {};
+    const barContext = event.bar_context?.bar ?? null;
+    const marketContext = event.market_context ?? null;
+    const fact = event.research_fact ?? {};
+    const cashflow = eventPayload?.cashflow ?? null;
+    return {
+      account_id: event.account_id ?? "—",
+      seq: event.seq,
+      ts: event.ts,
+      priority: event.prio,
+      event: eventKind,
+      market_instrument: event.instrument ?? marketContext?.instrument ?? "—",
+      linked_markets: Array.isArray(event.market_contexts)
+        ? event.market_contexts.map((item) => item.instrument).join(", ")
+        : "—",
+      linked_market_bars: Array.isArray(event.market_contexts)
+        ? event.market_contexts.map((item) => {
+          const bar = item.bar_context?.bar;
+          return `${item.instrument}: ${bar ? `${bar.ts} close=${bar.close_raw}` : item.bar_context_status}`;
+        }).join("; ")
+        : "—",
+      bar_context_status: event.bar_context_status ?? "—",
+      strategy_id: context.strategy_id || fact.strategy_id || "—",
+      signal_id: context.signal_id || fact.signal_id || "—",
+      order_id: eventPayload?.client_order_id ?? eventPayload?.order?.client_id ?? eventPayload?.fill?.order_id ?? fact.client_order_id ?? "—",
+      signal_confidence: fact.confidence ?? "—",
+      intent_count: fact.intent_count ?? "—",
+      expires_at: fact.expires_at ?? "—",
+      risk_instrument: fact.kind === "risk_decision" ? `${fact.instrument?.symbol ?? ""}.${fact.instrument?.venue ?? ""}` : "—",
+      risk_outcome: fact.kind === "risk_decision" ? (fact.allowed ? "通过" : "拒绝") : "—",
+      risk_rule_version: fact.rule_set_version ?? "—",
+      risk_violations: fact.violations?.join("；") || "—",
+      projected_position_raw: fact.projected_position_raw ?? "—",
+      projected_margin_raw: fact.projected_margin_raw ?? "—",
+      reference_price_raw: fact.reference_price_raw ?? "—",
+      visible_bar_ts: barContext?.ts ?? "—",
+      close_raw: barContext?.close_raw ?? "—",
+      bar_relation: event.bar_context?.relation ?? "—",
+      cashflow_kind: cashflow?.kind ?? "—",
+      cashflow_currency: cashflow?.currency ?? "—",
+      cashflow_amount_raw: cashflow?.amount?.raw ?? cashflow?.amount ?? "—",
+    };
+  });
+}
+
+function renderResearchEventPage(view) {
+  const events = view.events ?? {};
+  const eventRows = events.rows ?? [];
+  const offset = Number(events.offset ?? 0);
+  const total = Number(events.total ?? 0);
+  const end = offset + eventRows.length;
+  const first = eventRows.length ? offset + 1 : 0;
+  $("research-event-page-status").textContent = total
+    ? `事件 ${first}–${end} / ${total}；切页会重新校验完整事件日志。`
+    : "没有事件记录";
+  $("research-event-prev").disabled = offset <= 0;
+  $("research-event-next").disabled = end >= total;
+  renderResearchObjectTable("research-event-table", eventRows, ["seq", "ts", "prio", "kind", "metadata", "research_fact"]);
+  if (view.run_kind === "depth" || view.run_kind === "provider_depth" || view.run_kind === "multi_market_depth") {
+    $("research-timeline-status").textContent = "深度事件按引擎顺序展示；Bar 行情因果关联不适用于盘口快照运行。";
+  } else if (view.run_kind === "multi_market") {
+    $("research-timeline-status").textContent = "组合事件按 strategy_id / instrument 关联到对应标的；Bar 上下文使用该标的已复核输入，并遵守事件优先级和策略决策严格前序 Bar 可见规则。无法唯一关联的账户级事件会明确标记 input_unavailable。";
+    renderResearchTimeline(researchTimelineRows(eventRows));
+  } else if (view.run_kind === "multi_leg") {
+    $("research-timeline-status").textContent = "多腿事件关联到对应标的和已复核 Bar；双腿策略决策会同时展示两条腿的可见行情上下文，成交沿订单 ID 回溯到具体腿。";
+    renderResearchTimeline(researchTimelineRows(eventRows));
+  } else {
+    $("research-timeline-status").textContent = "Bar 关联按事件优先级与时间限制在当时可见行情；原生 Bar 策略的决策意图和统一风控裁决作为独立事实显示，价格与仓位投影保留原始定点字符串。当前范围为这一页，旧版订单适配器可能没有策略决策事实。";
+    renderResearchTimeline(researchTimelineRows(eventRows));
+  }
+}
+
+async function loadResearchEventPage(offset) {
+  const outcome = researchReportState.outcome;
+  const current = researchReportState.latestArtifactView;
+  if (!outcome || !current?.verification?.verified || !current.event_trace_available) return;
+  const detailRequest = researchReportState.detailRequest;
+  const pageRequest = ++researchReportState.eventPageRequest;
+  $("research-event-page-status").textContent = "正在重放并校验完整事件日志…";
+  $("research-event-prev").disabled = true;
+  $("research-event-next").disabled = true;
+  const request = { outcome, event_page: { offset, limit: 300 } };
+  if (Array.isArray(researchReportState.strategyDiagnostics)) {
+    request.market_strategy_diagnostics = researchReportState.strategyDiagnostics;
+  } else if (researchReportState.strategyDiagnostics) {
+    request.strategy_diagnostics = researchReportState.strategyDiagnostics;
+  }
+  try {
+    const response = await postJson(API_PATHS.appResearchArtifacts, request);
+    if (detailRequest !== researchReportState.detailRequest
+      || pageRequest !== researchReportState.eventPageRequest) return;
+    if (!response.ok) {
+      $("research-event-page-status").textContent = "事件页读取失败："
+        + (response.body?.message ?? response.body?.error ?? response.status);
+      $("research-event-prev").disabled = Number(current.events?.offset ?? 0) <= 0;
+      $("research-event-next").disabled = Number(current.events?.offset ?? 0)
+        + (current.events?.rows?.length ?? 0) >= Number(current.events?.total ?? 0);
+      return;
+    }
+    const next = response.body;
+    if (!next?.verification?.verified || next.run_id !== current.run_id) {
+      $("research-event-page-status").textContent = "事件页未通过产物身份或重放校验。";
+      $("research-event-prev").disabled = Number(current.events?.offset ?? 0) <= 0;
+      $("research-event-next").disabled = Number(current.events?.offset ?? 0)
+        + (current.events?.rows?.length ?? 0) >= Number(current.events?.total ?? 0);
+      return;
+    }
+    current.events = next.events;
+    renderResearchEventPage(current);
+  } catch (error) {
+    if (detailRequest === researchReportState.detailRequest
+      && pageRequest === researchReportState.eventPageRequest) {
+      $("research-event-page-status").textContent = "事件页读取失败：" + error;
+      $("research-event-prev").disabled = Number(current.events?.offset ?? 0) <= 0;
+      $("research-event-next").disabled = Number(current.events?.offset ?? 0)
+        + (current.events?.rows?.length ?? 0) >= Number(current.events?.total ?? 0);
+    }
+  }
+}
+
+function renderResearchTimeline(rows, { tableId = "research-timeline-table", filterId = "research-timeline-filter", countId = "research-timeline-count" } = {}) {
+  const id = tableId;
+  const filter = $(filterId);
+  const count = $(countId);
+  renderResearchObjectTable(id, rows, ["account_id", "seq", "ts", "priority", "event", "market_instrument", "linked_markets", "linked_market_bars", "strategy_id", "signal_id", "order_id", "cashflow_kind", "cashflow_currency", "cashflow_amount_raw", "signal_confidence", "intent_count", "expires_at", "risk_instrument", "risk_outcome", "risk_rule_version", "risk_violations", "projected_position_raw", "projected_margin_raw", "reference_price_raw", "visible_bar_ts", "close_raw", "bar_relation", "bar_context_status"]);
+  const rendered = [...$(id).tBodies[0].rows];
+  for (const row of rendered) row.dataset.search = row.textContent.toLocaleLowerCase();
+  const applyFilter = () => {
+    const query = filter.value.trim().toLocaleLowerCase();
+    let visible = 0;
+    for (const row of rendered) {
+      row.hidden = !row.dataset.search.includes(query);
+      if (!row.hidden) visible++;
+    }
+    count.textContent = `显示 ${visible} / ${rendered.length} 条事件`;
+  };
+  filter.oninput = applyFilter;
+  applyFilter();
+}
+
+function stableResearchJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableResearchJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableResearchJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function unifiedReportInput(view) {
+  const markets = Array.isArray(view.markets) && view.markets.length
+    ? view.markets.map((market) => ({
+      instrument: market.instrument ?? null,
+      data_fingerprint: market.data_fingerprint ?? null,
+    })).sort((left, right) => String(left.instrument).localeCompare(String(right.instrument)))
+    : [{
+      instrument: view.instrument ?? null,
+      data_fingerprint: view.verification?.data_fingerprint ?? null,
+    }];
+  if (markets.some((market) => !market.instrument || !market.data_fingerprint)) return null;
+  return stableResearchJson(markets);
+}
+
+function unifiedReportRange(view) {
+  const rows = view.equity?.rows ?? [];
+  if (rows.length < 2) return null;
+  const timestamp = (row) => row.ts ?? row.timestamp_ms ?? row.timestamp ?? null;
+  const first = timestamp(rows[0]);
+  const last = timestamp(rows[rows.length - 1]);
+  if (first == null || last == null) return null;
+  return stableResearchJson([first, last]);
+}
+
+function unifiedExecutionSignature(view) {
+  const summary = view.summary ?? {};
+  if (summary.execution_assumptions && typeof summary.execution_assumptions === "object") {
+    if (Object.keys(summary.execution_assumptions).length) {
+      return stableResearchJson(summary.execution_assumptions);
+    }
+  }
+  const keys = [
+    "fee_model", "fee_schedule", "fee_descriptor", "execution_cost_rules", "fill_model",
+    "risk_rules", "margin_model", "market_specs", "market_spec", "execution_models",
+    "execution_model", "execution_model_details", "order_policy",
+  ];
+  const assumptions = Object.fromEntries(keys
+    .filter((key) => Object.prototype.hasOwnProperty.call(summary, key))
+    .map((key) => [key, summary[key]]));
+  return Object.keys(assumptions).length ? stableResearchJson(assumptions) : null;
+}
+
+function unifiedReportMetrics(view) {
+  const summary = view.summary ?? {};
+  const metrics = summary.metrics ?? summary;
+  const exactMetrics = summary.metrics_exact ?? metrics.metrics_exact ?? {};
+  const exactFees = exactMetrics.fees_by_currency && typeof exactMetrics.fees_by_currency === "object"
+    ? Object.entries(exactMetrics.fees_by_currency).map(([currency, amount]) => `${currency} ${amount}`).join(" · ")
+    : null;
+  const exactTurnover = exactMetrics.turnover?.amount == null
+    ? null
+    : `${exactMetrics.turnover.amount} ${exactMetrics.turnover.currency ?? ""}`.trim();
+  return {
+    settlementCurrency: summary.settlement_currency ?? summary.account?.settlement_currency ?? summary.account?.currency ?? "未提供",
+    returnBps: metrics.return_bps ?? metrics.weighted_return_bps ?? null,
+    drawdownBps: metrics.max_drawdown_bps ?? null,
+    feesRaw: metrics.fees_raw ?? null,
+    feesExact: exactFees,
+    turnoverExact: exactTurnover,
+    costBps: metrics.cost_bps ?? null,
+    finalEquityRaw: metrics.final_equity_raw ?? null,
+    fills: view.fills?.total ?? metrics.fills ?? metrics.successful_fills ?? null,
+  };
+}
+
+function researchTopologyLabel(runKind) {
+  return ({
+    depth: "单标的深度",
+    provider_bar: "Provider Bar",
+    provider_depth: "Provider 深度",
+    multi_account: "多账户批次",
+    multi_account_joint: "多交易所联合账户",
+    multi_account_joint_member: "联合账户成员",
+    multi_market: "共享账户多市场 Bar",
+    multi_market_depth: "共享账户多市场深度",
+    multi_leg: "共享账户多腿",
+  })[runKind] ?? "单标的 Bar";
+}
+
+function addCurrentUnifiedResearchReport() {
+  const row = researchReportState.selectedRow;
+  const view = researchReportState.latestArtifactView;
+  let outcome = row ? researchOutcomeForRow(row) : null;
+  let accountId = null;
+  const batch = researchReportState.accountBatch;
+  if (batch?.selectedAccountId) {
+    const account = batch.view.accounts?.find((item) => item.account_id === batch.selectedAccountId);
+    const member = batch.outcome.runs?.find((item) => item.account_id === batch.selectedAccountId);
+    if (account?.report?.verification?.verified && member?.outcome) {
+      outcome = member.outcome;
+      accountId = batch.selectedAccountId;
+    }
+  }
+  if (!row || !view?.verification?.verified || view.run_id !== outcome?.run_id) {
+    $("research-unified-status").textContent = "请先选中一条已完成产物复核的运行或账户。";
+    return;
+  }
+  const key = `${view.run_id}\0${accountId ?? ""}`;
+  if (researchReportState.unifiedReports.some((item) => item.key === key)) {
+    $("research-unified-status").textContent = `${accountId ? `账户 ${accountId} · ` : ""}${view.run_id} 已在对照表中。`;
+    return;
+  }
+  if (researchReportState.unifiedReports.length >= 8) {
+    $("research-unified-status").textContent = "最多加入 8 条已复核结果。";
+    return;
+  }
+  const inputMarkets = Array.isArray(view.markets) && view.markets.length
+    ? view.markets.map((market) => ({
+      instrument: market.instrument ?? null,
+      data_fingerprint: market.data_fingerprint ?? null,
+    })).sort((left, right) => String(left.instrument).localeCompare(String(right.instrument)))
+    : [{
+      instrument: view.instrument ?? null,
+      data_fingerprint: view.verification.data_fingerprint ?? null,
+    }];
+  const executionSignature = unifiedExecutionSignature(view);
+  researchReportState.unifiedReports.push({
+    key,
+    runId: view.run_id,
+    accountId,
+    topology: researchTopologyLabel(view.run_kind),
+    rawTopology: view.run_kind ?? "single",
+    instruments: inputMarkets.map((market) => market.instrument ?? "未提供").join(", "),
+    inputDisplay: inputMarkets.map((market) => market.data_fingerprint ?? "未提供").join(", "),
+    inputSignature: unifiedReportInput(view),
+    rangeSignature: unifiedReportRange(view),
+    rangeDisplay: unifiedReportRange(view) ?? "未提供",
+    executionSignature,
+    executionDisplay: executionSignature ? executionSignature.slice(0, 180) : "报告未提供完整假设",
+    metrics: unifiedReportMetrics(view),
+    verified: view.verification.verified,
+    summary: view.summary ?? {},
+    outcome,
+    eventTraceAvailable: view.event_trace_available !== false,
+  });
+  researchReportState.unifiedEventRows = null;
+  researchReportState.unifiedEventVerifiedCount = 0;
+  $("research-unified-events-all").disabled = false;
+  renderUnifiedResearchReports();
+  renderUnifiedResearchEvents();
+}
+
+function renderUnifiedResearchReports() {
+  const reports = researchReportState.unifiedReports;
+  const baseline = reports[0] ?? null;
+  const filter = $("research-unified-filter").value;
+  const rows = reports.map((report, index) => {
+    const sameInput = Boolean(baseline?.inputSignature && report.inputSignature
+      && baseline.inputSignature === report.inputSignature);
+    const sameRange = Boolean(baseline?.rangeSignature && report.rangeSignature
+      && baseline.rangeSignature === report.rangeSignature);
+    const sameExecution = Boolean(baseline?.executionSignature && report.executionSignature
+      && baseline.executionSignature === report.executionSignature);
+    const sameInputRange = sameInput && sameRange;
+    const crossTopology = Boolean(baseline && report.rawTopology !== baseline.rawTopology);
+    return {
+      "报告 ID": report.runId,
+      "回测拓扑": report.topology,
+      "账户": report.accountId ?? "—",
+      "结算币种": report.metrics.settlementCurrency,
+      "标的": report.instruments,
+      "数据指纹": report.inputDisplay,
+      "样本区间": report.rangeDisplay,
+      "收益": report.metrics.returnBps == null ? "未提供" : researchBps(report.metrics.returnBps),
+      "最大回撤": report.metrics.drawdownBps == null ? "未提供" : researchBps(report.metrics.drawdownBps),
+      "手续费 raw": report.metrics.feesRaw ?? "未提供",
+      "手续费（分币种精确）": report.metrics.feesExact ?? "未提供",
+      "成交额（精确）": report.metrics.turnoverExact ?? "未提供",
+      "单位成本": report.metrics.costBps == null ? "未提供" : researchBps(report.metrics.costBps),
+      "成交数": report.metrics.fills ?? "未提供",
+      "期末权益 raw": report.metrics.finalEquityRaw ?? "未提供",
+      "执行假设": report.executionDisplay,
+      "输入与区间匹配": index === 0 ? "基准" : sameInputRange ? "相同" : "不同或缺字段",
+      "执行假设匹配": index === 0 ? "基准" : sameExecution ? "相同" : "不同或缺字段",
+      "拓扑匹配": index === 0 ? "基准" : crossTopology ? "不同拓扑" : "相同拓扑",
+      _baseline: index === 0,
+      _sameInputRange: sameInputRange,
+      _sameExecution: sameExecution,
+      _crossTopology: crossTopology,
+    };
+  }).filter((row) => {
+    if (filter === "same_input_range") return row._baseline || row._sameInputRange;
+    if (filter === "same_execution") return row._baseline || row._sameExecution;
+    if (filter === "same_input_range_execution") return row._baseline || (row._sameInputRange && row._sameExecution);
+    if (filter === "cross_topology") return row._baseline || row._crossTopology;
+    return true;
+  }).map(({ _baseline, _sameInputRange, _sameExecution, _crossTopology, ...row }) => row);
+  renderResearchObjectTable("research-unified-table", rows, [
+    "报告 ID", "回测拓扑", "账户", "结算币种", "标的", "数据指纹", "样本区间",
+    "收益", "最大回撤", "手续费 raw", "单位成本", "成交数", "期末权益 raw",
+    "执行假设", "输入与区间匹配", "执行假设匹配", "拓扑匹配",
+  ], 17);
+  $("research-unified-status").textContent = reports.length
+    ? `已复核 ${reports.length}/8 条；所有匹配标记均相对于首条基准。输入指纹、净值时间边界或执行假设缺失时标记为“不同或缺字段”。筛选结果 ${rows.length} 条。`
+    : "尚未加入已复核结果。";
+}
+
+function clearUnifiedResearchReports() {
+  researchReportState.unifiedEventGeneration += 1;
+  researchReportState.unifiedEventLoading = false;
+  researchReportState.unifiedEventPage = 0;
+  researchReportState.unifiedEventRows = null;
+  researchReportState.unifiedEventVerifiedCount = 0;
+  $("research-unified-events-load").disabled = false;
+  $("research-unified-events-all").disabled = false;
+  $("research-unified-events-next").disabled = true;
+  $("research-unified-events-page-prev").disabled = true;
+  $("research-unified-events-page-next").disabled = true;
+  researchReportState.unifiedReports = [];
+  $("research-unified-filter").value = "all";
+  renderUnifiedResearchReports();
+  renderUnifiedResearchEvents();
+}
+
+async function loadUnifiedResearchEvents(initial = false, loadAll = false) {
+  const reports = researchReportState.unifiedReports;
+  const status = $("research-unified-events-status");
+  if (!reports.length) {
+    status.textContent = "先加入至少一条已复核报告。";
+    return;
+  }
+  if (researchReportState.unifiedEventLoading) return;
+  if (initial) {
+    researchReportState.unifiedEventPage = 0;
+    researchReportState.unifiedEventRows = null;
+    researchReportState.unifiedEventVerifiedCount = 0;
+    for (const report of reports) {
+      report.unifiedEvents = report.eventTraceAvailable
+        ? { rows: [], total: 0, nextOffset: 0, complete: false }
+        : null;
+    }
+  }
+  const cachedEvents = () => reports.reduce((sum, report) => sum + (report.unifiedEvents?.rows.length ?? 0), 0);
+  const eventStreams = () => reports
+    .filter((report) => report.eventTraceAvailable && report.unifiedEvents)
+    .map((report) => ({
+      key: report.key,
+      runId: report.runId,
+      rows: report.unifiedEvents.rows,
+      complete: report.unifiedEvents.complete,
+    }));
+  const hasPending = reports.some((report) => report.eventTraceAvailable
+    && report.outcome && !report.unifiedEvents?.complete);
+  if (!hasPending) {
+    const prefix = QxResearchComparison.verifiedUnifiedEventPrefix(eventStreams(), cachedEvents());
+    if (prefix.valid) researchReportState.unifiedEventVerifiedCount = prefix.safeCount;
+    status.textContent = reports.some((report) => !report.eventTraceAvailable)
+      ? "所选报告均无可验证事件轨迹。"
+      : "已加载所有所选报告的事件。";
+    renderUnifiedResearchEvents();
+    return;
+  }
+  researchReportState.unifiedEventLoading = true;
+  const generation = ++researchReportState.unifiedEventGeneration;
+  $("research-unified-events-load").disabled = true;
+  $("research-unified-events-all").disabled = true;
+  $("research-unified-events-next").disabled = true;
+  const failedReports = new Set();
+  const errors = [];
+  let succeeded = 0;
+  let requests = 0;
+  const desiredCount = loadAll
+    ? UNIFIED_EVENT_CACHE_LIMIT
+    : Math.min(UNIFIED_EVENT_CACHE_LIMIT, researchReportState.unifiedEventVerifiedCount + UNIFIED_EVENT_PAGE_SIZE);
+  const queryReport = async (report, limit) => {
+    const current = report.unifiedEvents;
+    const offset = Number(current?.nextOffset ?? 0);
+    const reportError = (message) => Object.assign(new Error(`${report.runId}: ${message}`), { reportKey: report.key });
+    const response = await postJson(API_PATHS.appResearchArtifacts, {
+      outcome: report.outcome,
+      event_page: { offset, limit },
+    });
+    if (!response.ok) {
+      throw reportError(response.body?.message ?? response.body?.error ?? response.status);
+    }
+    const view = response.body;
+    if (!view?.verification?.verified || view.run_id !== report.runId) {
+      throw reportError("事件页未通过产物身份或重放校验");
+    }
+    const page = view.events;
+    const pageOffset = Number(page?.offset);
+    const pageTotal = Number(page?.total);
+    if (!Array.isArray(page?.rows)
+      || !Number.isSafeInteger(pageOffset)
+      || !Number.isSafeInteger(pageTotal)
+      || pageOffset !== offset
+      || (offset > 0 && Number(current?.total) !== pageTotal)
+      || page.rows.length > limit
+      || pageOffset + page.rows.length > pageTotal
+      || (page.rows.length === 0 && pageOffset < pageTotal)) {
+      throw reportError("事件页游标、总量或返回行数不符合请求边界");
+    }
+    return { report, view };
+  };
+  let capped = false;
+  while (true) {
+    const loaded = cachedEvents();
+    const prefix = QxResearchComparison.verifiedUnifiedEventPrefix(eventStreams(), desiredCount);
+    if (!prefix.valid) {
+      errors.push("事件源排序键无效或源内顺序不一致；拒绝生成全局分页视图");
+      break;
+    }
+    researchReportState.unifiedEventVerifiedCount = prefix.safeCount;
+    if (prefix.safe) break;
+    if (loaded >= UNIFIED_EVENT_CACHE_LIMIT) {
+      capped = reports.some((report) => report.eventTraceAvailable && !report.unifiedEvents?.complete);
+      break;
+    }
+    const pendingKeys = new Set(prefix.needsMore);
+    const pending = reports.filter((report) => pendingKeys.has(report.key)
+      && report.eventTraceAvailable && report.outcome && !report.unifiedEvents?.complete
+      && !failedReports.has(report.key));
+    if (!pending.length) break;
+    let passRemaining = UNIFIED_EVENT_CACHE_LIMIT - loaded;
+    for (let index = 0; index < pending.length; index += 2) {
+      if (passRemaining <= 0) break;
+      const batchReports = pending.slice(index, index + 2);
+      const limits = [];
+      for (const report of batchReports) {
+        if (passRemaining <= 0) break;
+        const limit = Math.max(1, Math.min(UNIFIED_EVENT_PAGE_SIZE, passRemaining));
+        limits.push({ report, limit });
+        passRemaining -= limit;
+      }
+      if (!limits.length) break;
+      const batch = await Promise.allSettled(limits.map(({ report, limit }) => queryReport(report, limit)));
+      if (generation !== researchReportState.unifiedEventGeneration) return;
+      requests += batch.length;
+      for (const result of batch) {
+        if (result.status === "rejected") {
+          const message = String(result.reason?.message ?? result.reason);
+          const failed = reports.find((report) => report.key === result.reason?.reportKey);
+          if (failed) failedReports.add(failed.key);
+          errors.push(message);
+          continue;
+        }
+        const { report, view } = result.value;
+        const page = view.events ?? { rows: [], total: 0 };
+        const prior = report.unifiedEvents?.rows ?? [];
+        const rows = [...prior, ...(page.rows ?? [])];
+        const nextOffset = Number(report.unifiedEvents?.nextOffset ?? 0) + (page.rows?.length ?? 0);
+        const total = Number(page.total ?? 0);
+        report.unifiedEvents = {
+          rows,
+          total,
+          nextOffset,
+          complete: nextOffset >= total || (page.rows?.length ?? 0) === 0,
+        };
+        researchReportState.unifiedEventRows = null;
+        succeeded += 1;
+      }
+      status.textContent = loadAll
+        ? `正在复核并加载事件：${cachedEvents().toLocaleString()} / 最多 ${UNIFIED_EVENT_CACHE_LIMIT.toLocaleString()} 条…`
+        : `已复核 ${succeeded} 份报告的事件页…`;
+    }
+    if (errors.length) break;
+  }
+  researchReportState.unifiedEventLoading = false;
+  const finalPrefix = QxResearchComparison.verifiedUnifiedEventPrefix(eventStreams(), desiredCount);
+  if (finalPrefix.valid) researchReportState.unifiedEventVerifiedCount = finalPrefix.safeCount;
+  renderUnifiedResearchEvents();
+  const loaded = cachedEvents();
+  const total = reports.reduce((sum, report) => sum + (report.unifiedEvents?.total ?? 0), 0);
+  const untracked = reports.filter((report) => !report.eventTraceAvailable).length;
+  const hasMore = reports.some((report) => report.eventTraceAvailable
+    && report.outcome && !report.unifiedEvents?.complete);
+  status.textContent = errors.length
+    ? `已复核 ${succeeded} 个事件页；缓存 ${loaded.toLocaleString()} / ${total.toLocaleString()} 条，仅显示可证明顺序的前 ${researchReportState.unifiedEventVerifiedCount.toLocaleString()} 条。失败：${errors.join("；")}`
+    : capped
+      ? `已达到浏览器缓存上限 ${loaded.toLocaleString()} 条；还有 ${Math.max(0, total - loaded).toLocaleString()} 条未加载。当前严格全局顺序已证明至 ${researchReportState.unifiedEventVerifiedCount.toLocaleString()} 条；请减少报告数量后继续${untracked ? `；${untracked} 份报告没有事件轨迹` : ""}。`
+      : `已复核 ${requests} 个事件页；缓存 ${loaded.toLocaleString()} / ${total.toLocaleString()} 条，严格全局顺序已证明至 ${researchReportState.unifiedEventVerifiedCount.toLocaleString()} 条${untracked ? `；${untracked} 份报告没有事件轨迹` : ""}。`;
+  $("research-unified-events-load").disabled = false;
+  $("research-unified-events-all").disabled = !hasMore || loaded >= UNIFIED_EVENT_CACHE_LIMIT;
+  $("research-unified-events-next").disabled = !reports.some((report) => report.eventTraceAvailable
+    && report.unifiedEvents && !report.unifiedEvents.complete) || loaded >= UNIFIED_EVENT_CACHE_LIMIT;
+}
+
+function setUnifiedResearchEventFilterOptions(elementId, values) {
+  const select = $(elementId);
+  const selected = select.value;
+  const unique = [...new Set(values
+    .map((value) => String(value ?? ""))
+    .filter((value) => value.length > 0))]
+    .sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+  const options = [new Option("全部", "")];
+  for (const value of unique) options.push(new Option(value, value));
+  select.replaceChildren(...options);
+  if (unique.includes(selected)) select.value = selected;
+}
+
+function filterUnifiedResearchEvents(rows) {
+  const selected = {
+    report_id: $("research-unified-events-report").value,
+    topology: $("research-unified-events-topology").value,
+    account_id: $("research-unified-events-account").value,
+    market_instrument: $("research-unified-events-instrument").value,
+    event: $("research-unified-events-kind").value,
+  };
+  return QxResearchComparison.filterUnifiedEventRows(
+    rows, selected, $("research-unified-events-filter").value,
+  );
+}
+
+function exportUnifiedResearchEvents() {
+  const rows = researchReportState.unifiedEventRows ?? [];
+  const filtered = filterUnifiedResearchEvents(rows);
+  if (!filtered.length) {
+    $("research-unified-events-status").textContent = "当前筛选没有已复核、顺序可证明的事件可导出。";
+    return;
+  }
+  const columns = [
+    "report_id", "topology", "account_id", "seq", "ts", "priority", "event",
+    "market_instrument", "linked_markets", "strategy_id", "signal_id", "order_id",
+    "risk_outcome", "risk_violations", "cashflow_kind", "cashflow_currency",
+    "cashflow_amount_raw", "bar_context_status", "visible_bar_ts", "close_raw",
+  ];
+  const csv = QxResearchComparison.unifiedEventCsv(filtered, columns);
+  const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `qianxing-research-events-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  $("research-unified-events-status").textContent = `已导出 ${filtered.length.toLocaleString()} 条已复核且顺序可证明的事件。`;
+}
+
+function renderUnifiedResearchEvents() {
+  const reports = researchReportState.unifiedReports;
+  let rows = researchReportState.unifiedEventRows;
+  if (!rows) {
+    const allReportsTracked = reports.every((report) => report.eventTraceAvailable);
+    const streams = reports
+      .filter((report) => report.eventTraceAvailable && report.unifiedEvents)
+      .map((report) => ({
+        key: report.key,
+        runId: report.runId,
+        rows: report.unifiedEvents.rows,
+        complete: report.unifiedEvents.complete,
+      }));
+    const loaded = streams.reduce((sum, stream) => sum + stream.rows.length, 0);
+    const prefix = allReportsTracked
+      ? QxResearchComparison.verifiedUnifiedEventPrefix(streams, loaded)
+      : { valid: false, rows: [] };
+    const reportById = new Map(reports.map((report) => [report.runId, report]));
+    const verifiedCount = prefix.valid
+      ? Math.min(prefix.safeCount, researchReportState.unifiedEventVerifiedCount)
+      : 0;
+    rows = prefix.valid
+      ? prefix.rows.slice(0, verifiedCount).flatMap((event) => {
+        const report = reportById.get(event.report_id);
+        if (!report) return [];
+        const projected = researchTimelineRows([event])[0] ?? {};
+        return [{
+          ...projected,
+          report_id: report.runId,
+          topology: report.topology,
+          account_id: report.accountId ?? projected.account_id,
+        }];
+      })
+      : [];
+    researchReportState.unifiedEventRows = rows;
+  }
+  setUnifiedResearchEventFilterOptions("research-unified-events-report", rows.map((row) => row.report_id));
+  setUnifiedResearchEventFilterOptions("research-unified-events-topology", rows.map((row) => row.topology));
+  setUnifiedResearchEventFilterOptions("research-unified-events-account", rows.map((row) => row.account_id));
+  setUnifiedResearchEventFilterOptions("research-unified-events-instrument", rows.map((row) => row.market_instrument));
+  setUnifiedResearchEventFilterOptions("research-unified-events-kind", rows.map((row) => row.event));
+  const filtered = filterUnifiedResearchEvents(rows);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / UNIFIED_EVENT_PAGE_SIZE));
+  researchReportState.unifiedEventPage = Math.min(researchReportState.unifiedEventPage, pageCount - 1);
+  const pageStart = researchReportState.unifiedEventPage * UNIFIED_EVENT_PAGE_SIZE;
+  const pageRows = filtered.slice(pageStart, pageStart + UNIFIED_EVENT_PAGE_SIZE);
+  renderResearchObjectTable("research-unified-events-table", pageRows, [
+    "report_id", "topology", "account_id", "seq", "ts", "priority", "event",
+    "market_instrument", "linked_markets", "strategy_id", "signal_id", "order_id",
+    "risk_outcome", "risk_violations", "cashflow_kind", "cashflow_currency",
+    "cashflow_amount_raw", "bar_context_status", "visible_bar_ts", "close_raw",
+  ], 21);
+  const loaded = reports.reduce((sum, report) => sum + (report.unifiedEvents?.rows.length ?? 0), 0);
+  const hasMore = reports.some((report) => report.eventTraceAvailable
+    && report.outcome && !report.unifiedEvents?.complete);
+  $("research-unified-events-page-status").textContent = filtered.length
+    ? `筛选命中 ${filtered.length.toLocaleString()} / 已加载 ${loaded.toLocaleString()} 条 · 第 ${researchReportState.unifiedEventPage + 1}/${pageCount} 页`
+    : `筛选命中 0 / 已加载 ${loaded.toLocaleString()} 条`;
+  $("research-unified-events-page-prev").disabled = researchReportState.unifiedEventPage === 0;
+  $("research-unified-events-page-next").disabled = researchReportState.unifiedEventPage + 1 >= pageCount;
+  const untracked = reports.filter((report) => !report.eventTraceAvailable).length;
+  $("research-unified-events-status").textContent = untracked
+    ? `${untracked} 份所选报告没有事件轨迹，无法证明跨报告全局顺序；当前不显示合并时间线。`
+    : `${pageRows.length} 条事件显示在当前页；仅展示所有事件源游标均已证明顺序的前缀，各报告序号相互独立。`;
+  const canLoadMore = hasMore && loaded < UNIFIED_EVENT_CACHE_LIMIT;
+  $("research-unified-events-all").disabled = researchReportState.unifiedEventLoading || !canLoadMore;
+  const canContinue = reports.some((report) => report.eventTraceAvailable
+    && report.unifiedEvents && !report.unifiedEvents.complete);
+  $("research-unified-events-next").disabled = researchReportState.unifiedEventLoading
+    || !canContinue || loaded >= UNIFIED_EVENT_CACHE_LIMIT;
+}
+
+function exportUnifiedResearchReports() {
+  const table = $("research-unified-table");
+  const rows = [...table.rows].map((row) => [...row.cells].map((cell) => cell.textContent ?? ""));
+  if (rows.length <= 1) {
+    $("research-unified-status").textContent = "当前筛选没有可导出的对照结果。";
+    return;
+  }
+  const csv = rows.map((row) => row.map((value) => {
+    const negativeNumeric = /^-\d+(?:\.\d+)?$/.test(value);
+    const safe = /^[=+@\t\r]/.test(value) || (value.startsWith("-") && !negativeNumeric)
+      ? `'${value}`
+      : value;
+    return `"${safe.replaceAll('"', '""')}"`;
+  }).join(",")).join("\r\n");
+  const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `qianxing-research-comparison-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  $("research-unified-status").textContent = `已导出当前筛选的 ${rows.length - 1} 条结果。`;
+}
+
+function addCurrentResearchCurve() {
+  const row = researchReportState.selectedRow;
+  const view = researchReportState.latestArtifactView;
+  let expectedOutcome = row ? researchOutcomeForRow(row) : null;
+  let accountLabel = "";
+  const batch = researchReportState.accountBatch;
+  if (batch?.selectedAccountId) {
+    const account = batch.view.accounts?.find((item) => item.account_id === batch.selectedAccountId);
+    const member = batch.outcome.runs?.find((item) => item.account_id === batch.selectedAccountId);
+    if (account?.report?.verification?.verified && member?.outcome) {
+      expectedOutcome = member.outcome;
+      accountLabel = `账户 ${batch.selectedAccountId} · `;
+    }
+  }
+  if (!row || !view?.verification?.verified || view.run_id !== expectedOutcome?.run_id) {
+    $("research-artifact-status").textContent = "请先选中并完成一条回测产物复核。";
+    return;
+  }
+  const identity = view.verification.data_fingerprint;
+  if (typeof identity !== "string" || !identity || typeof view.instrument !== "string" || !view.instrument) {
+    $("research-equity-comparison-status").textContent = "无法加入对比：复核响应缺少标的或数据指纹。";
+    return;
+  }
+  const first = researchReportState.comparisonCurves[0];
+  const utcTimeAlignment = $("research-utc-time-alignment").checked;
+  const comparisonMode = utcTimeAlignment
+    ? "cross_input_utc"
+    : $("research-cross-input-comparison").checked
+      ? "cross_input_normalized"
+      : "same_input";
+  if (first && first.comparisonMode !== comparisonMode) {
+    $("research-equity-comparison-status").textContent = "当前对比曲线使用另一种模式。请先清空，再按同输入或跨输入模式重新加入。";
+    return;
+  }
+  if (first && comparisonMode === "same_input"
+    && (first.instrument !== view.instrument || first.dataFingerprint !== identity)) {
+    $("research-equity-comparison-status").textContent = "无法叠加：标的或输入数据指纹不同。请先清空对比，再选择相同输入的运行。";
+    return;
+  }
+  if (researchReportState.comparisonCurves.some((curve) => curve.runId === view.run_id)) {
+    $("research-equity-comparison-status").textContent = `${view.run_id} 已在对比图中。`;
+    return;
+  }
+  if (researchReportState.comparisonCurves.length >= 8) {
+    $("research-equity-comparison-status").textContent = "最多叠加 8 条曲线。";
+    return;
+  }
+  const equityRows = view.equity?.rows ?? [];
+  if (utcTimeAlignment && !QxResearchComparison.validateUtcEquityRows(equityRows).valid) {
+    $("research-equity-comparison-status").textContent = "UTC 对齐需要至少两个严格递增的 Unix 毫秒权益时点；当前报告的时间列不满足条件。";
+    return;
+  }
+  researchReportState.comparisonCurves.push({
+    runId: view.run_id,
+    label: accountLabel + (row.label || view.run_id),
+    instrument: view.instrument,
+    dataFingerprint: identity,
+    settlementCurrency: view.summary?.settlement_currency ?? "",
+    comparisonMode,
+    visible: true,
+    rows: equityRows,
+  });
+  renderEquityComparisonPlot();
+}
+
+function clearResearchComparison() {
+  researchReportState.comparisonCurves = [];
+  $("research-equity-legend").replaceChildren();
+  $("research-equity-comparison-status").textContent = "对比曲线已清空。";
+  const view = researchReportState.latestArtifactView;
+  if (view?.verification?.verified) renderEquityDetailPlot(view.equity?.rows ?? []);
+}
+
+function renderEquityComparisonPlot() {
+  const host = $("research-equity-plot");
+  const legend = $("research-equity-legend");
+  host.replaceChildren();
+  legend.replaceChildren();
+  const curves = researchReportState.comparisonCurves;
+  if (!curves.length) return;
+  const palette = ["var(--accent)", "var(--up)", "var(--down)", "#8b5cf6", "#0ea5e9", "#d97706", "#14b8a6", "#e11d48"];
+  const normalized = [];
+  for (const [index, curve] of curves.entries()) {
+    const label = el("button", `${curve.label} · ${curve.settlementCurrency || "币种未知"} · ${curve.runId} · ${researchBps(equityReturnBps(curve.rows))}`, "research-curve-toggle");
+    label.type = "button";
+    label.dataset.runId = curve.runId;
+    label.setAttribute("aria-pressed", String(curve.visible !== false));
+    label.style.setProperty("--curve-color", palette[index % palette.length]);
+    label.addEventListener("click", () => {
+      curve.visible = curve.visible === false;
+      renderEquityComparisonPlot();
+    });
+    legend.append(label);
+    if (curve.rows.length < 2) continue;
+    try {
+      const start = BigInt(curve.rows[0].equity_raw);
+      if (start === 0n) continue;
+      const denominator = start < 0n ? -start : start;
+      normalized.push({
+        ...curve,
+        paletteIndex: index,
+        values: curve.rows.map((point) => Number((BigInt(point.equity_raw) - start) * 10000n / denominator)),
+      });
+    } catch {
+      // One malformed curve must not corrupt the other replay-verified series.
+    }
+  }
+  const visible = normalized.filter((curve) => curve.visible !== false);
+  if (!visible.length) {
+    host.textContent = normalized.length
+      ? "所有曲线已隐藏，请点击图例恢复显示。"
+      : "可对比净值点不足或无法转换。";
+    return;
+  }
+  const comparisonMode = visible[0].comparisonMode;
+  const utcAligned = comparisonMode === "cross_input_utc";
+  let plotCurves = visible;
+  let alignedTimestamps = null;
+  let alignedStart = null;
+  let alignedEnd = null;
+  if (utcAligned) {
+    const alignment = QxResearchComparison.alignUtcEquityCurves(visible);
+    if (!alignment.ok) {
+      const explanation = alignment.reason === "no-common-time-range"
+        ? "所选曲线没有重叠的 UTC 时间区间。"
+        : alignment.reason === "zero-or-missing-overlap-baseline"
+          ? "共同区间起点的权益缺失或为零，无法计算归一化收益。"
+          : alignment.reason === "need-more-curves"
+            ? "UTC 对齐至少需要两条可见曲线。"
+            : "权益点的时间戳或定点数值无效，无法进行 UTC 对齐。";
+      host.textContent = explanation;
+      $("research-equity-comparison-status").textContent = explanation;
+      return;
+    }
+    const byRun = new Map(alignment.curves.map((curve) => [curve.runId, curve.values]));
+    plotCurves = visible.map((curve) => ({ ...curve, values: byRun.get(curve.runId) ?? [] }));
+    alignedTimestamps = alignment.timestamps.map((timestamp) => BigInt(timestamp));
+    alignedStart = BigInt(alignment.startTimestamp);
+    alignedEnd = BigInt(alignment.endTimestamp);
+  }
+  for (const curve of plotCurves) {
+    const label = [...legend.querySelectorAll(".research-curve-toggle")]
+      .find((item) => item.dataset.runId === curve.runId);
+    if (label && utcAligned) {
+      label.textContent = `${curve.label} · ${curve.settlementCurrency || "币种未知"} · ${curve.runId} · 共同区间 ${curve.values.at(-1)} bp`;
+    }
+  }
+  const allValues = plotCurves.flatMap((curve) => curve.values);
+  const minimum = Math.min(...allValues);
+  const maximum = Math.max(...allValues);
+  const span = Math.max(1, maximum - minimum);
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 800 220");
+  svg.setAttribute("role", "img");
+  const crossInput = comparisonMode !== "same_input";
+  svg.setAttribute("aria-label", utcAligned
+    ? "不同标的或输入的经复核权益收益对比，横轴为共同 UTC 时间区间，曲线按最近已观测权益前值保持"
+    : crossInput
+      ? "不同标的或输入的经复核归一化净值对比，横轴为各自样本进度，纵轴为相对首点收益基点"
+      : "同一输入数据下经复核运行的归一化净值对比，纵轴为相对首点收益基点");
+  for (const curve of plotCurves) {
+    const points = curve.values.map((value, pointIndex) => {
+      const x = utcAligned
+        ? 28 + Number(alignedTimestamps[pointIndex] - alignedStart) / Number(alignedEnd - alignedStart) * 752
+        : 28 + pointIndex / Math.max(1, curve.values.length - 1) * 752;
+      return `${x},${185 - (value - minimum) / span * 145}`;
+    }
+    ).join(" ");
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    line.setAttribute("points", points);
+    line.setAttribute("fill", "none");
+    line.setAttribute("stroke", palette[curve.paletteIndex % palette.length]);
+    line.setAttribute("stroke-width", "2");
+    const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+    title.textContent = `${curve.label} · ${curve.settlementCurrency || "结算币种未知"} · ${curve.runId} · ${researchBps(equityReturnBps(curve.rows))}`;
+    line.append(title);
+    svg.append(line);
+  }
+  for (const [y, label] of [[30, maximum + " bp"], [185, minimum + " bp"]]) {
+    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    text.setAttribute("x", "6");
+    text.setAttribute("y", String(y));
+    text.setAttribute("fill", "currentColor");
+    text.setAttribute("font-size", "11");
+    text.textContent = label;
+    svg.append(text);
+  }
+  if (utcAligned) {
+    for (const [x, timestamp, anchor] of [
+      [28, alignedStart, "start"],
+      [780, alignedEnd, "end"],
+    ]) {
+      const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      label.setAttribute("x", String(x));
+      label.setAttribute("y", "211");
+      label.setAttribute("text-anchor", anchor === "start" ? "start" : "end");
+      label.setAttribute("fill", "currentColor");
+      label.setAttribute("font-size", "9");
+      label.textContent = new Date(Number(timestamp)).toISOString().replace("T", " ").slice(0, 16) + "Z";
+      svg.append(label);
+    }
+  }
+  host.append(svg);
+  const first = plotCurves[0];
+  if (utcAligned) {
+    const currencies = [...new Set(plotCurves.map((curve) => curve.settlementCurrency || "未知"))].join(" / ");
+    $("research-equity-comparison-status").textContent = `${plotCurves.length}/${curves.length} 条跨输入曲线可见 · 按共同 UTC 区间归一化，未更新时保持该曲线最近权益 · 结算币种：${currencies} · 未做汇率换算或组合净值合并。`;
+  } else {
+    $("research-equity-comparison-status").textContent = crossInput
+      ? `${plotCurves.length}/${curves.length} 条跨输入曲线可见 · 按各自样本进度对齐并以首点归一化；未做自然时间或币种换算。`
+      : `${plotCurves.length}/${curves.length} 条曲线可见 · ${first.instrument} · 相同数据指纹 ${first.dataFingerprint} · 每条曲线均按首个净值点归一化；纵轴范围随可见曲线调整。`;
+  }
+}
+
+function renderBoundStrategyDiagnostics(attachment) {
+  const report = attachment?.report;
+  if (!attachment?.identity_bound || !report) return;
+  $("research-diagnostic-result").hidden = false;
+  const coverage = report.input_events !== undefined
+    ? `${report.input_kind ?? "事件"} · ${report.input_events} 个输入事件`
+    : `Bar · ${report.input_bars ?? "未知"} 根`;
+  $("research-diagnostic-status").textContent = `身份与输入覆盖匹配（策略/标的/数据指纹 · ${coverage}）。诊断由本地工具计算，API 未执行策略或重算诊断。`;
+  const lookahead = report.lookahead ?? {};
+  const startup = report.startup ?? {};
+  const startupTrajectory = startup.trajectory ?? {};
+  const fieldList = (value) => Array.isArray(value) ? value.join(", ") || "—" : "—";
+  const diagnosticEvents = report.input_events !== undefined;
+  const inputUnit = diagnosticEvents ? "事件" : "Bar";
+  const valueOf = (object, eventKey, barKey) => object?.[eventKey] ?? object?.[barKey] ?? "—";
+  const pit = report.data_visibility;
+  const pitFacts = pit?.affected_fact_counts ?? {};
+  const pitChecks = pit?.affected_fact_decision_counts ?? {};
+  const rows = [
+    { 检查: "输入覆盖", 结果: coverage },
+    { 检查: "未来数据敏感性", 结果: lookahead.status ?? "缺失", 检查点: lookahead.checks_run ?? 0, 抽样决策点: lookahead.decision_points_checked ?? "—", 决策变化: lookahead.flagged_checks ?? 0, 中间态变化: lookahead.intermediate_state_flagged_checks ?? 0, 已抽样: lookahead.checks_sampled ?? "—" },
+    ...(lookahead.reason || lookahead.interpretation ? [{ 检查: "未来数据诊断边界", 结果: lookahead.reason ?? lookahead.interpretation }] : []),
+    { 检查: "预热窗口敏感性", 结果: startup.status ?? "缺失", [`可见_${inputUnit}`]: startup.visible_events ?? startup.visible_bars ?? report.visible_events_at_as_of ?? report.visible_bars_at_as_of ?? "—", [`排除未来_${inputUnit}`]: startup.excluded_future_events ?? startup.excluded_future_bars ?? "—", 参考窗口完整: startup.reference_history_complete ?? "—", 决策变化窗口: fieldList(startup.changed_windows_events ?? startup.changed_windows_bars), 中间态变化窗口: fieldList(startup.intermediate_state_changed_windows_events ?? startup.intermediate_state_changed_windows_bars) },
+    ...(startup.context_assumption ? [{ 检查: "预热诊断上下文", 结果: startup.context_assumption }] : []),
+    { 检查: "预热历史轨迹", 结果: startupTrajectory.status ?? "未计算", 可比决策点: `${startupTrajectory.decision_points_checked ?? 0} / ${startupTrajectory.decision_points_eligible ?? startupTrajectory.decision_points_available ?? 0}`, 参考历史不足排除: startupTrajectory.decision_points_excluded_insufficient_reference_history ?? "—", 历史决策点: startupTrajectory.decision_points_available ?? 0, 已抽样: startupTrajectory.decision_points_sampled ?? "—", 决策变化窗口: fieldList(startupTrajectory.changed_windows_events ?? startupTrajectory.changed_windows_bars), 中间态变化窗口: fieldList(startupTrajectory.intermediate_state_changed_windows_events ?? startupTrajectory.intermediate_state_changed_windows_bars), 首次分歧时点: startupTrajectory.first_divergence?.decision_at ?? startupTrajectory.first_divergence?.decision_timestamp ?? "—" },
+  ];
+  if (pit) rows.push({
+    检查: "PIT 可见性",
+    结果: pit.status ?? "已检查",
+    "晚可见事实/时点": `${pitFacts.future_value_unavailable ?? 0} / ${pitChecks.future_value_unavailable ?? 0}`,
+    "事后修订事实/时点": `${pitFacts.revised_value_after_decision ?? 0} / ${pitChecks.revised_value_after_decision ?? 0}`,
+    "发布时间未知事实/时点": `${pitFacts.availability_unknown ?? 0} / ${pitChecks.availability_unknown ?? 0}`,
+    账本来源: pit.ledger_source ?? "—",
+    账本指纹: pit.ledger_fingerprint ?? "—",
+    "覆盖决策点": `${pit.decision_points_checked ?? 0} / ${pit.decision_points_available ?? 0}`,
+  });
+  const adjustmentChain = pit?.adjustment_chain;
+  if (adjustmentChain) rows.push({
+    检查: "公司行为与价格修订关联",
+    结果: `${adjustmentChain.status ?? "未计算"} · 口径 ${adjustmentChain.price_adjustment_basis ?? "unknown"} · 修订 ${adjustmentChain.price_revision_count ?? 0} · 关联 ${adjustmentChain.candidate_count ?? 0} · 可能后复权前视 ${adjustmentChain.potential_back_adjustment_lookahead_count ?? 0} · 仅时间关联`,
+  });
+  renderResearchObjectTable("research-diagnostic-table", rows, ["检查", "结果"]);
+
+  const trajectoryDivergences = Array.isArray(startupTrajectory.divergences)
+    ? startupTrajectory.divergences
+    : startupTrajectory.first_divergence ? [startupTrajectory.first_divergence] : [];
+  const trajectoryLimit = 1000;
+  const trajectorySamples = trajectoryDivergences.slice(0, trajectoryLimit).map((divergence, index) => {
+    const decisionFields = divergence.changed_decision_fields ?? divergence.changed_fields;
+    const stateFields = divergence.intermediate_state_changed_fields ?? divergence.changed_intermediate_fields;
+    return {
+      divergence,
+      view: {
+        轨迹检查点: index + 1,
+        决策时点: divergence.decision_at ?? divergence.decision_timestamp ?? "—",
+        对比窗口: `${valueOf(divergence, "requested_events", "requested_bars")} ${inputUnit} / ${valueOf(divergence, "reference_window_events", "reference_window_bars")} ${inputUnit}`,
+        决策变化字段: fieldList(decisionFields),
+        中间态变化字段: fieldList(stateFields),
+      },
+    };
+  });
+  const trajectoryStatus = $("research-diagnostic-trajectory-status");
+  trajectoryStatus.textContent = trajectoryDivergences.length
+    ? `记录 ${trajectoryDivergences.length} 个有分歧的检查点；${trajectoryDivergences.length > trajectorySamples.length ? `当前显示前 ${trajectorySamples.length} 个，完整记录仍在诊断 JSON 中。` : "时间点均来自本次有界轨迹抽样。"}`
+    : Array.isArray(startupTrajectory.divergences)
+      ? "本次轨迹没有观察到决策或已导出中间态分歧。"
+      : "该诊断产物未包含逐时点分歧记录。";
+  renderResearchObjectTable("research-diagnostic-trajectory-table", trajectorySamples.map((sample) => sample.view), [
+    "轨迹检查点", "决策时点", "对比窗口", "决策变化字段", "中间态变化字段",
+  ], 8, trajectoryLimit);
+  const trajectoryFilter = $("research-diagnostic-trajectory-filter");
+  const trajectoryCount = $("research-diagnostic-trajectory-count");
+  const trajectoryDetail = $("research-diagnostic-trajectory-detail");
+  trajectoryDetail.textContent = "选择一条轨迹分歧查看详情";
+  trajectoryFilter.value = "";
+  const trajectoryRendered = [...$("research-diagnostic-trajectory-table").tBodies[0].rows];
+  for (const [index, row] of trajectoryRendered.entries()) {
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+    row.setAttribute("aria-label", `查看预热轨迹分歧 ${index + 1}`);
+    row.dataset.search = row.textContent.toLocaleLowerCase();
+    const showDetail = () => { trajectoryDetail.textContent = JSON.stringify(trajectorySamples[index].divergence, null, 2); };
+    row.addEventListener("click", showDetail);
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        showDetail();
+      }
+    });
+  }
+  const applyTrajectoryFilter = () => {
+    const query = trajectoryFilter.value.trim().toLocaleLowerCase();
+    let visible = 0;
+    for (const row of trajectoryRendered) {
+      row.hidden = !row.dataset.search.includes(query);
+      if (!row.hidden) visible++;
+    }
+    trajectoryCount.textContent = `显示 ${visible} / ${trajectoryRendered.length} 个分歧检查点`;
+  };
+  trajectoryFilter.oninput = applyTrajectoryFilter;
+  applyTrajectoryFilter();
+
+  const evidence = [];
+  for (const check of Array.isArray(lookahead.checks) ? lookahead.checks : []) {
+    evidence.push({
+      view: {
+        类型: "未来扰动",
+        决策时点: check.decision_as_of ?? "—",
+        扰动: check.perturbation_profile ?? "—",
+        决策变化: check.future_perturbation_changed_decision ?? "—",
+        决策变化字段: fieldList(check.changed_decision_fields),
+        中间态变化: check.intermediate_state_changed ?? "—",
+        中间态变化字段: Array.isArray(check.intermediate_state_changed_fields) ? check.intermediate_state_changed_fields.join(", ") || "—" : "不可用",
+      },
+      detail: check,
+    });
+  }
+  for (const window of Array.isArray(startup.windows) ? startup.windows : []) {
+    evidence.push({
+      view: {
+        类型: "预热窗口",
+        决策时点: startup.decision_as_of ?? "—",
+        扰动: `${valueOf(window, "requested_events", "requested_bars")} ${inputUnit}（可见 ${valueOf(window, "available_events", "available_bars")}）`,
+        决策变化: Array.isArray(window.changed_decision_fields) && window.changed_decision_fields.length > 0,
+        决策变化字段: fieldList(window.changed_decision_fields),
+        中间态变化: Array.isArray(window.intermediate_state_changed_fields) && window.intermediate_state_changed_fields.length > 0,
+        中间态变化字段: Array.isArray(window.intermediate_state_changed_fields) ? fieldList(window.intermediate_state_changed_fields) : "不可用",
+      },
+      detail: window,
+    });
+  }
+  const pitLabels = {
+    future_value_unavailable: "决策时尚未发布",
+    revised_value_after_decision: "决策后实值修订",
+    availability_unknown: "发布时间未知",
+  };
+  const pitEvidence = Object.entries(pit?.examples ?? {}).flatMap(([status, examples]) =>
+    (Array.isArray(examples) ? examples : []).map((sample) => {
+      const availableAt = Array.isArray(sample.available_at)
+        ? sample.available_at.map((value) => value == null ? "未知" : value).join(", ")
+        : "—";
+      return {
+        status,
+        sample,
+        view: {
+          风险: pitLabels[status] ?? status,
+          事实ID: sample.fact_id ?? "—",
+          实体: sample.entity_id ?? "—",
+          字段: sample.field ?? "—",
+          决策时点: sample.decision_at ?? "—",
+          生效时点: sample.effective_at ?? "—",
+          版本数: sample.version_count ?? "—",
+          各版本发布时间: availableAt,
+        },
+      };
+    })
+  );
+  for (const candidate of Array.isArray(adjustmentChain?.examples) ? adjustmentChain.examples : []) {
+    pitEvidence.push({
+      status: "adjustment_chain_correlation",
+      sample: candidate,
+      adjustment: true,
+      view: {
+        风险: candidate.potential_back_adjustment_lookahead
+          ? "可能存在后复权前视（待核验）"
+          : "价格修订与公司行为时间相关",
+        事实ID: `${candidate.price_fact_id ?? "—"} ↔ ${candidate.action_fact_id ?? "—"}`,
+        实体: candidate.price_entity_id ?? "—",
+        字段: `${candidate.price_field ?? "—"} ↔ ${candidate.action_field ?? "—"}`,
+        决策时点: `影响 ${candidate.affected_decision_points ?? 0} 点；复权前 ${candidate.pre_action_decision_points ?? 0} 点`,
+        生效时点: candidate.action_effective_at ?? "—",
+        版本数: candidate.price_revision ?? "—",
+        各版本发布时间: candidate.action_availability_unknown
+          ? "公司行为发布时间未知"
+          : candidate.action_available_by_price_revision ? "修订时已知" : "修订时未知",
+      },
+    });
+  }
+  const pitSamples = pitEvidence.slice(0, 75);
+  $("research-diagnostic-pit-status").textContent = pit
+    ? `${pitEvidence.length} 条 PIT/复权链样本来自账本 ${pit.ledger_source ?? "（未命名）"}；指纹 ${pit.ledger_fingerprint ?? "缺失"}。复权口径 ${adjustmentChain?.price_adjustment_basis ?? "unknown"}；关联结果仅表示时间相关性，不证明因果。${pitEvidence.length > pitSamples.length ? `当前展示前 ${pitSamples.length} 条，机器报告保留完整结果。` : ""}`
+    : "未附带 PIT 事实账本。";
+  renderResearchObjectTable("research-diagnostic-pit-table", pitSamples.map((item) => item.view), ["风险", "事实ID", "实体", "字段", "决策时点", "生效时点", "版本数", "各版本发布时间"]);
+  const pitFilter = $("research-diagnostic-pit-filter");
+  const pitCount = $("research-diagnostic-pit-count");
+  const pitDetail = $("research-diagnostic-pit-detail");
+  pitDetail.textContent = "选择一条 PIT 样本查看账本版本";
+  pitFilter.value = "";
+  const pitRendered = [...$("research-diagnostic-pit-table").tBodies[0].rows];
+  for (const [index, row] of pitRendered.entries()) {
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+    row.setAttribute("aria-label", `查看 PIT 事实样本 ${index + 1}`);
+    row.dataset.search = row.textContent.toLocaleLowerCase();
+    const showDetail = () => {
+      pitDetail.textContent = JSON.stringify({
+        visibility_status: pitSamples[index].status,
+        ledger_source: pit?.ledger_source,
+        ledger_fingerprint: pit?.ledger_fingerprint,
+        ...(pitSamples[index].adjustment
+          ? { adjustment_chain: pitSamples[index].sample, interpretation: adjustmentChain?.interpretation }
+          : { fact: pitSamples[index].sample }),
+      }, null, 2);
+    };
+    row.addEventListener("click", showDetail);
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        showDetail();
+      }
+    });
+  }
+  const applyPitFilter = () => {
+    const query = pitFilter.value.trim().toLocaleLowerCase();
+    let visible = 0;
+    for (const row of pitRendered) {
+      row.hidden = !row.dataset.search.includes(query);
+      if (!row.hidden) visible++;
+    }
+    pitCount.textContent = `显示 ${visible} / ${pitRendered.length} 条 PIT 样本`;
+  };
+  pitFilter.oninput = applyPitFilter;
+  applyPitFilter();
+  const sampleLimit = 200;
+  const samples = evidence.slice(0, sampleLimit);
+  $("research-diagnostic-evidence-status").textContent = evidence.length > sampleLimit
+    ? `共 ${evidence.length} 个诊断样本，当前按输入顺序展示前 ${sampleLimit} 个；报告仍保留完整机器可读证据。`
+    : `共 ${evidence.length} 个诊断样本。`;
+  renderResearchObjectTable("research-diagnostic-evidence-table", samples.map((item) => item.view), ["类型", "决策时点", "扰动", "决策变化", "决策变化字段", "中间态变化", "中间态变化字段"]);
+  const filter = $("research-diagnostic-evidence-filter");
+  const count = $("research-diagnostic-evidence-count");
+  const detail = $("research-diagnostic-evidence-detail");
+  detail.textContent = "选择一条诊断样本查看详情";
+  filter.value = "";
+  const rendered = [...$("research-diagnostic-evidence-table").tBodies[0].rows];
+  for (const [index, row] of rendered.entries()) {
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+    row.setAttribute("aria-label", `查看诊断样本 ${index + 1}`);
+    row.dataset.search = row.textContent.toLocaleLowerCase();
+    const showDetail = () => { detail.textContent = JSON.stringify(samples[index].detail, null, 2); };
+    row.addEventListener("click", showDetail);
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        showDetail();
+      }
+    });
+  }
+  const applyFilter = () => {
+    const query = filter.value.trim().toLocaleLowerCase();
+    let visible = 0;
+    for (const row of rendered) {
+      row.hidden = !row.dataset.search.includes(query);
+      if (!row.hidden) visible++;
+    }
+    count.textContent = `显示 ${visible} / ${rendered.length} 条样本`;
+  };
+  filter.oninput = applyFilter;
+  applyFilter();
+}
+
+async function attachStrategyDiagnostics() {
+  const row = researchReportState.selectedRow;
+  const file = $("research-diagnostic-file").files?.[0];
+  const status = $("research-artifact-status");
+  if (!row) {
+    status.textContent = "请先选择一条可钻取的 Bar 或多市场 Bar 回测结果。";
+    return;
+  }
+  if (!file) {
+    status.textContent = "请选择本地策略偏差诊断 JSON 文件。";
+    return;
+  }
+  if (file.size > 1024 * 1024) {
+    status.textContent = "诊断 JSON 超过 1 MiB 上限。";
+    return;
+  }
+  try {
+    const diagnostic = JSON.parse(await file.text());
+    const accountBatch = researchReportState.accountBatch;
+    if (accountBatch) {
+      if (!Array.isArray(diagnostic) || diagnostic.length === 0 || diagnostic.some((entry) =>
+        !entry || typeof entry !== "object" || Array.isArray(entry)
+        || typeof entry.account_id !== "string"
+        || Boolean(entry.strategy_diagnostics) === Boolean(entry.market_strategy_diagnostics))) {
+        throw new Error("多账户诊断文件须是 [{account_id, strategy_diagnostics}] 或 [{account_id, market_strategy_diagnostics}] 数组");
+      }
+      await loadResearchArtifactDetail(row, { account_strategy_diagnostics: diagnostic }, accountBatch.outcome);
+      return;
+    }
+    await loadResearchArtifactDetail(row, diagnostic);
+  } catch (error) {
+    status.textContent = "诊断文件读取失败：" + error;
+  }
+}
+
+function equityReturnBps(rows) {
+  if (rows.length < 2) return null;
+  try {
+    const start = BigInt(rows[0].equity_raw);
+    const end = BigInt(rows[rows.length - 1].equity_raw);
+    if (start === 0n) return null;
+    return Number((end - start) * 10000n / (start < 0n ? -start : start));
+  } catch {
+    return null;
+  }
+}
+
+function renderResearchObjectTable(id, rows, preferred = [], maxColumns = 10, maxRows = 300) {
+  const table = $(id);
+  const head = table.tHead.rows[0];
+  const body = table.tBodies[0];
+  head.replaceChildren();
+  body.replaceChildren();
+  if (!rows.length) return;
+  const keys = [...new Set([...preferred.filter((key) => rows.some((row) => key in row)), ...Object.keys(rows[0])])].slice(0, maxColumns);
+  for (const key of keys) head.append(el("th", key));
+  for (const row of rows.slice(0, maxRows)) {
+    const tr = el("tr");
+    for (const key of keys) tr.append(el("td", row[key] === undefined ? "—" : typeof row[key] === "object" ? JSON.stringify(row[key]) : row[key]));
+    body.append(tr);
+  }
+}
+
+function renderEquityDetailPlot(rows) {
+  const host = $("research-equity-plot");
+  host.replaceChildren();
+  if (rows.length < 2) {
+    host.textContent = "净值点不足，无法绘制曲线。";
+    return;
+  }
+  let returns;
+  try {
+    const start = BigInt(rows[0].equity_raw);
+    if (start === 0n) throw new Error("zero base");
+    const denominator = start < 0n ? -start : start;
+    returns = rows.map((row) => Number((BigInt(row.equity_raw) - start) * 10000n / denominator));
+  } catch {
+    host.textContent = "净值数据无法转换为精确整数。";
+    return;
+  }
+  const minimum = Math.min(...returns);
+  const maximum = Math.max(...returns);
+  const span = Math.max(1, maximum - minimum);
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 800 220");
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", "经复核的净值变化曲线，纵轴为相对首点收益基点");
+  const points = returns.map((value, index) => (28 + index / (returns.length - 1) * 752) + "," + (185 - (value - minimum) / span * 145)).join(" ");
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+  line.setAttribute("points", points);
+  line.setAttribute("fill", "none");
+  line.setAttribute("stroke", "var(--accent)");
+  line.setAttribute("stroke-width", "2");
+  svg.append(line);
+  for (const [y, label] of [[30, maximum + " bp"], [185, minimum + " bp"]]) {
+    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    text.setAttribute("x", "6");
+    text.setAttribute("y", String(y));
+    text.setAttribute("fill", "currentColor");
+    text.setAttribute("font-size", "11");
+    text.textContent = label;
+    svg.append(text);
+  }
+  host.append(svg);
+}
+
+function renderMarketContributionPlot(market) {
+  const host = $("research-market-pnl-plot");
+  host.replaceChildren();
+  const rows = market.pnl_contribution?.rows ?? [];
+  if (rows.length < 2) {
+    host.textContent = "归因采样点不足，无法绘制曲线。";
+    return;
+  }
+  let values;
+  try {
+    values = rows.map((row) => BigInt(row.pnl_contribution_raw));
+  } catch {
+    host.textContent = "盈亏贡献 raw 值无法解析为整数。";
+    return;
+  }
+  let minimum = values[0];
+  let maximum = values[0];
+  for (const value of values) {
+    if (value < minimum) minimum = value;
+    if (value > maximum) maximum = value;
+  }
+  const span = maximum - minimum;
+  const plotted = values.map((value) => span === 0n ? 0.5 : Number((value - minimum) * 1_000_000n / span) / 1_000_000);
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 800 220");
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", `${market.instrument} 盈亏贡献曲线，纵轴为 ${market.pnl_contribution.currency} raw`);
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+  line.setAttribute("points", plotted.map((value, index) => `${28 + index / (plotted.length - 1) * 752},${185 - value * 145}`).join(" "));
+  line.setAttribute("fill", "none");
+  line.setAttribute("stroke", "var(--accent)");
+  line.setAttribute("stroke-width", "2");
+  svg.append(line);
+  const stride = Math.max(1, Math.ceil(rows.length / 200));
+  for (let index = 0; index < rows.length; index += stride) {
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("cx", String(28 + index / (rows.length - 1) * 752));
+    circle.setAttribute("cy", String(185 - plotted[index] * 145));
+    circle.setAttribute("r", "3");
+    const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+    title.textContent = `${rows[index].ts} · pnl_contribution_raw=${values[index]}`;
+    circle.append(title);
+    svg.append(circle);
+  }
+  for (const [y, label] of [[30, maximum.toString()], [185, minimum.toString()]]) {
+    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    text.setAttribute("x", "6");
+    text.setAttribute("y", String(y));
+    text.setAttribute("fill", "currentColor");
+    text.setAttribute("font-size", "11");
+    text.textContent = label;
+    svg.append(text);
+  }
+  host.append(svg);
+}
+
+function renderPositionDetailPlot(rows) {
+  const host = $("research-position-plot");
+  const status = $("research-position-status");
+  host.replaceChildren();
+  const points = rows.filter((row) => row.position_raw !== undefined && row.position_raw !== null);
+  if (points.length < 2) {
+    status.textContent = "此运行没有足够的逐 Bar 持仓数据；若产物来自旧格式，该字段可能不存在。";
+    host.textContent = "没有可绘制的持仓曲线";
+    return;
+  }
+  let values;
+  try {
+    values = points.map((row) => BigInt(row.position_raw));
+  } catch {
+    status.textContent = "持仓 raw 值无法解析为整数。";
+    host.textContent = "持仓数据格式无效";
+    return;
+  }
+  let minimum = values[0];
+  let maximum = values[0];
+  for (const value of values) {
+    if (value < minimum) minimum = value;
+    if (value > maximum) maximum = value;
+  }
+  const span = maximum - minimum;
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 800 220");
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", "经复核持仓变化曲线，明细保留原始定点整数");
+  const plotted = values.map((value) => span === 0n ? 0.5 : Number((value - minimum) * 1_000_000n / span) / 1_000_000);
+  const coordinates = plotted.map((value, index) => `${28 + index / (plotted.length - 1) * 752},${185 - value * 145}`);
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+  line.setAttribute("points", coordinates.join(" "));
+  line.setAttribute("fill", "none");
+  line.setAttribute("stroke", "var(--up)");
+  line.setAttribute("stroke-width", "2");
+  svg.append(line);
+  const stride = Math.max(1, Math.ceil(points.length / 200));
+  for (let index = 0; index < points.length; index += stride) {
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("cx", String(28 + index / (points.length - 1) * 752));
+    circle.setAttribute("cy", String(185 - plotted[index] * 145));
+    circle.setAttribute("r", "3");
+    const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+    title.textContent = `${points[index].ts} · position_raw=${values[index]}`;
+    circle.append(title);
+    svg.append(circle);
+  }
+  for (const [y, label] of [[30, maximum.toString()], [185, minimum.toString()]]) {
+    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    text.setAttribute("x", "6");
+    text.setAttribute("y", String(y));
+    text.setAttribute("fill", "currentColor");
+    text.setAttribute("font-size", "11");
+    text.textContent = label;
+    svg.append(text);
+  }
+  host.append(svg);
+  status.textContent = `范围 ${minimum} 至 ${maximum} raw · ${points.length} 个已复核采样点；悬停显示时间与精确持仓，表格保留完整 raw 字符串。`;
+}
+
+function reportRow(label, parameters, outcome, training, status, order, source) {
+  return {
+    label, parameters, outcome, training, status, order, source,
+    returnBps: asNumber(outcome?.return_bps),
+    drawdownBps: asNumber(outcome?.max_drawdown_bps),
+    trainingBps: asNumber(training?.training_score_bps),
+    robustnessBps: asNumber(training?.training_robustness_score_bps),
+  };
+}
+
+function renderResearchReport(result, verification = null) {
+  clearResearchReport();
+  if (!result || typeof result !== "object") return;
+  const metrics = $("research-report-metrics");
+  const foldsBody = $("research-report-fold-table").tBodies[0];
+  const costsBody = $("research-report-cost-table").tBodies[0];
+  metrics.replaceChildren();
+  foldsBody.replaceChildren();
+  costsBody.replaceChildren();
+  $("research-report-folds").hidden = true;
+  $("research-report-costs").hidden = true;
+  const identity = $("research-report-identity");
+  const controls = $("research-report-controls");
+  let rows = [];
+
+  if (Array.isArray(result.candidates) && typeof result.experiment_id === "string") {
+    researchReportState.kind = "experiment";
+    identity.textContent = `实验 ${result.experiment_id} · 输入 ${result.input_data_fingerprint ?? "未提供"} · 规格 ${result.spec_fingerprint ?? "未提供"}。候选全样本收益仅供查看；选参应看训练窗与样本外。`;
+    metrics.append(
+      researchMetric("已完成候选", `${result.completed_candidates ?? "—"}/${result.total_candidates ?? "—"}`),
+      researchMetric("成功 / 失败 / 剪枝", `${result.succeeded_candidates ?? "—"} / ${result.failed_candidates ?? "—"} / ${result.pruned_candidates ?? 0}`),
+      researchMetric("样本外平均收益", researchBps(result.out_of_sample?.out_of_sample_return_bps)),
+      researchMetric("训练到样本外衰减", researchBps(result.out_of_sample?.degradation_bps)),
+    );
+    if (result.search?.robustness_subwindows != null) {
+      metrics.append(researchMetric(
+        "训练稳健目标",
+        `${result.search.robustness_subwindows} 个子窗的最差收益`,
+      ));
+    }
+    if (result.search?.minimum_training_robustness_score_bps != null) {
+      metrics.append(researchMetric(
+        "训练稳健收益下限",
+        researchBps(result.search.minimum_training_robustness_score_bps),
+      ));
+      const robustnessTrials = Array.isArray(result.search.fold_searches)
+        ? result.search.fold_searches.flatMap((fold) => fold.trials ?? [])
+        : result.search.trials ?? [];
+      const eligibleRobustnessTrials = robustnessTrials.filter((trial) => (
+        Number.isFinite(trial.training_robustness_score_bps)
+        && trial.training_robustness_score_bps >= result.search.minimum_training_robustness_score_bps
+      ));
+      metrics.append(researchMetric(
+        "训练稳健门达标轨迹",
+        `${eligibleRobustnessTrials.length}/${robustnessTrials.length}`,
+      ));
+      if (robustnessTrials.length > 0 && eligibleRobustnessTrials.length === 0) {
+        metrics.append(researchMetric("选参门状态", "没有候选达到训练稳健收益下限"));
+      }
+    }
+    const crossFold = result.out_of_sample?.cross_fold_robustness;
+    if (crossFold) {
+      metrics.append(
+        researchMetric("训练正收益折数", `${crossFold.positive_training_folds}/${crossFold.folds_evaluated}`),
+        researchMetric("最差训练折", researchBps(crossFold.minimum_training_return_bps)),
+        researchMetric("最差 OOS 折", researchBps(crossFold.minimum_out_of_sample_return_bps)),
+        researchMetric("训练最差回撤", researchBps(crossFold.worst_training_drawdown_bps)),
+      );
+    }
+    const trials = new Map((result.search?.trials ?? []).map((item) => [item.ordinal, item]));
+    rows = result.candidates.map((candidate, index) => reportRow(
+      `#${candidate.ordinal} ${candidate.outcome?.run_id ?? candidate.strategy_kind ?? "候选"}`,
+      candidate.parameters ?? {}, candidate.outcome, trials.get(candidate.ordinal) ?? null,
+      candidate.pruning ? `剪枝 · ${candidate.pruning.processed_bars} 根 Bar` : candidate.outcome ? "成功" : candidate.error ? "失败" : "未运行",
+      index, candidate,
+    ));
+    const folds = result.out_of_sample?.folds ?? (result.search?.fold_searches ?? []).map((fold) => ({
+      ...fold,
+      in_sample_return_bps: null,
+      out_of_sample_return_bps: null,
+    }));
+    const foldSearches = new Map((result.search?.fold_searches ?? []).map((item) => [item.fold, item]));
+    if (folds.length) {
+      $("research-report-folds").hidden = false;
+      for (const fold of folds) {
+        const foldNeighborhood = foldSearches.get(fold.fold)?.neighborhood;
+        const neighborhoodText = foldNeighborhood
+          ? `半径 ${foldNeighborhood.radius ?? 1} · ${foldNeighborhood.evaluated_neighbors}/${foldNeighborhood.possible_neighbors} · ${foldNeighborhood.assessment ?? "未评级"}`
+          : "未计算";
+        const tr = el("tr");
+        tr.tabIndex = 0;
+        for (const value of [
+          fold.fold, (fold.train_range ?? []).join("–"), (fold.test_range ?? []).join("–"),
+          fold.selected_ordinal == null ? "无合格候选" : `#${fold.selected_ordinal}`,
+          researchBps(fold.in_sample_return_bps),
+          researchBps(fold.selected_training_robustness_score_bps),
+          researchBps(fold.out_of_sample_return_bps), neighborhoodText,
+        ]) tr.append(el("td", value));
+        const showDetail = () => showResearchDetail(fold);
+        tr.addEventListener("click", showDetail);
+        tr.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); showDetail(); } });
+        foldsBody.append(tr);
+      }
+    }
+    for (const baseline of result.baselines ?? []) {
+      metrics.append(researchMetric(`基准 ${baseline.name}`, researchBps(baseline.return_bps)));
+    }
+    const neighborhood = result.search?.neighborhood;
+    if (neighborhood) {
+      metrics.append(researchMetric("参数邻域覆盖", `半径 ${neighborhood.radius ?? 1} · ${neighborhood.evaluated_neighbors ?? 0}/${neighborhood.possible_neighbors ?? 0}`));
+      metrics.append(researchMetric("邻域判定（训练窗）", neighborhood.assessment ?? "未评估"));
+    }
+    if (result.search?.cost_robustness_passed != null) {
+      metrics.append(researchMetric("成本稳健门（训练窗）", result.search.cost_robustness_passed ? "全部通过" : "存在未通过情景"));
+    }
+    if (result.search?.neighborhood_cost_robustness_passed != null) {
+      metrics.append(researchMetric("邻域成本稳健门（训练窗）", result.search.neighborhood_cost_robustness_passed ? "全部通过" : "未通过或邻域覆盖不完整"));
+    }
+    const scenarios = result.cost_sensitivity ?? [];
+    if (scenarios.length) {
+      $("research-report-costs").hidden = false;
+      for (const scenario of scenarios) {
+        const tr = el("tr");
+        tr.tabIndex = 0;
+        const foldDeltas = Array.isArray(scenario.fold_deltas) ? scenario.fold_deltas : [];
+        const splitDelta = (returnKey, drawdownKey) => {
+          if (!foldDeltas.length) return "未提供";
+          const average = (key) => Math.trunc(foldDeltas.reduce((sum, fold) => sum + Number(fold[key] ?? 0), 0) / foldDeltas.length);
+          const prefix = foldDeltas.length > 1 ? `${foldDeltas.length} 折均值 · ` : "";
+          return `${prefix}收益 ${researchBps(average(returnKey))} · 回撤 ${researchBps(average(drawdownKey))}`;
+        };
+        const costGate = scenario.max_training_return_degradation_bps == null
+          ? "未设"
+          : `${scenario.cost_robustness_passed ? "通过" : "未通过"}（≤ ${scenario.max_training_return_degradation_bps} bp）`;
+        const neighbor = scenario.neighborhood_cost_robustness;
+        const neighborhoodGate = scenario.max_neighborhood_training_return_degradation_bps == null
+          ? "未设"
+          : neighbor == null
+            ? "证据缺失"
+            : (neighbor.passed ? "通过" : "未通过") + "（覆盖 " + neighbor.evaluated_neighbors + "/" + neighbor.possible_neighbors + "，半径 " + neighbor.radius + "）";
+        for (const value of [scenario.name, `#${scenario.selected_ordinal}`,
+          splitDelta("training_return_delta_bps", "training_drawdown_delta_bps"),
+          splitDelta("out_of_sample_return_delta_bps", "out_of_sample_drawdown_delta_bps"),
+          `${researchBps(scenario.return_delta_bps)} / ${researchBps(scenario.drawdown_delta_bps)}`,
+          costGate,
+          neighborhoodGate,
+          scenario.outcome ? "成功" : "失败"]) tr.append(el("td", value));
+        const showDetail = () => showResearchDetail(scenario);
+        tr.addEventListener("click", showDetail);
+        tr.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); showDetail(); } });
+        costsBody.append(tr);
+      }
+    }
+  } else if (Array.isArray(result.runs) && typeof result.data_fingerprint === "string") {
+    researchReportState.kind = "comparison";
+    identity.textContent = `对比 ${result.instrument} · 数据 ${result.data_fingerprint}。排名来自 Rust 对比用例；该入口按调用方提交的指标排序，不复核回测产物。`;
+    metrics.append(researchMetric("参与对比", result.runs.length));
+    rows = result.runs.map((item, index) => reportRow(
+      `#${item.rank} ${item.run?.run_id ?? "运行"}`, {}, item.run, null,
+      "调用方指标", index, item,
+    ));
+  } else if (Array.isArray(result.runs) && typeof result.batch_id === "string" && result.summary) {
+    researchReportState.kind = "multi_account";
+    const summary = result.summary;
+    identity.textContent = `多账户批次 ${result.batch_id} · ${result.settlement_currency ?? "结算币种未知"} · ${summary.complete ? "完整" : "部分结果"}。每个账户的回测产物会独立复核。`;
+    metrics.append(
+      researchMetric("账户成功 / 总数", `${summary.accounts_succeeded ?? 0} / ${summary.accounts_total ?? result.runs.length}`),
+      researchMetric("失败账户", summary.accounts_failed ?? 0),
+      researchMetric("加权收益", summary.weighted_return_bps == null ? "未计算" : researchBps(summary.weighted_return_bps)),
+      researchMetric("成功成交", summary.successful_fills ?? 0),
+    );
+    rows = result.runs.map((item, index) => {
+      const outcome = item.outcome ?? null;
+      return reportRow(
+        `${item.account_id ?? "账户未知"} · ${outcome?.run_id ?? "回测失败"}`,
+        { account_id: item.account_id },
+        outcome,
+        null,
+        outcome ? "等待产物复核" : "账户运行失败",
+        index,
+        result,
+      );
+    });
+  } else if (typeof result.run_id === "string" && result.return_bps !== undefined) {
+    researchReportState.kind = "backtest";
+    identity.textContent = `运行 ${result.run_id} · ${result.instrument ?? "标的未知"} · 数据 ${result.data_fingerprint ?? "未提供"} · 结果 ${result.result_hash ?? "未提供"}`;
+    metrics.append(
+      researchMetric("全样本收益", researchBps(result.return_bps)),
+      researchMetric("最大回撤", researchBps(result.max_drawdown_bps)),
+      researchMetric("成交笔数", result.fills),
+      researchMetric("产物复核", verification?.verified === true ? "已通过" : "未在此验证"),
+    );
+    rows = [reportRow(result.run_id, {}, result, null, verification?.verified === true ? "已复核" : "未复核", 0, result)];
+  } else {
+    return;
+  }
+  researchReportState.rows = rows;
+  $("card-research-report").hidden = false;
+  controls.hidden = rows.length <= 1;
+  $("research-report-filter").value = "";
+  $("research-report-sort").value = "server";
+  renderResearchReportRows();
+}
+
+function renderResearchReportPlot(rows) {
+  const host = $("research-report-plot");
+  host.replaceChildren();
+  const sort = $("research-report-sort").value;
+  const useRobustness = researchReportState.kind === "experiment" && sort === "robustness";
+  const useTraining = researchReportState.kind === "experiment" && !useRobustness && rows.some((row) => row.trainingBps !== null);
+  const scored = rows.map((row) => ({ row, value: useRobustness ? row.robustnessBps : useTraining ? row.trainingBps : row.returnBps }))
+    .filter((item) => item.value !== null);
+  if (!scored.length) {
+    $("research-report-plot-label").textContent = useRobustness
+      ? "当前结果未配置训练子窗稳健性目标。"
+      : "当前筛选没有可绘制的收益或训练分数。";
+    host.textContent = "无可绘制的数值指标";
+    return;
+  }
+  const stride = Math.max(1, Math.ceil(scored.length / 200));
+  const points = scored.filter((_, index) => index % stride === 0);
+  const values = points.map((point) => point.value);
+  const minimum = Math.min(0, ...values);
+  const maximum = Math.max(0, ...values);
+  const span = Math.max(1, maximum - minimum);
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  const axisLabel = useRobustness ? "训练子窗最差收益" : useTraining ? "首训练窗收益" : "全样本收益";
+  $("research-report-plot-label").textContent = `纵轴：${axisLabel}（基点），横轴按当前表格顺序；${scored.length} 个结果最多等距显示 200 个点。`;
+  svg.setAttribute("viewBox", "0 0 800 180");
+  svg.setAttribute("aria-label", `${axisLabel}，按当前筛选和排序显示 ${points.length} 个点`);
+  const axis = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  const zeroY = 155 - ((0 - minimum) / span) * 130;
+  for (const [name, value] of Object.entries({ x1: 28, x2: 780, y1: zeroY, y2: zeroY, stroke: "currentColor", "stroke-opacity": 0.4 })) axis.setAttribute(name, String(value));
+  svg.append(axis);
+  points.forEach(({ row, value }, index) => {
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("cx", String(28 + (index / Math.max(1, points.length - 1)) * 752));
+    circle.setAttribute("cy", String(155 - ((value - minimum) / span) * 130));
+    circle.setAttribute("r", "4");
+    circle.setAttribute("fill", value < 0 ? "var(--down)" : "var(--up)");
+    const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+    title.textContent = `${row.label}: ${researchBps(value)}`;
+    circle.append(title);
+    svg.append(circle);
+  });
+  host.append(svg);
+}
+
+function renderResearchReportRows() {
+  const filter = $("research-report-filter").value.trim().toLocaleLowerCase();
+  const sort = $("research-report-sort").value;
+  const rows = researchReportState.rows.filter((row) =>
+    `${row.label} ${JSON.stringify(row.parameters)} ${row.status}`.toLocaleLowerCase().includes(filter));
+  const metric = sort === "return" ? "returnBps" : sort === "drawdown" ? "drawdownBps" : sort === "training" ? "trainingBps" : sort === "robustness" ? "robustnessBps" : null;
+  if (metric) rows.sort((left, right) => {
+    const a = left[metric];
+    const b = right[metric];
+    if (a === null) return b === null ? left.order - right.order : 1;
+    if (b === null) return -1;
+    return (sort === "drawdown" ? a - b : b - a) || left.order - right.order;
+  });
+  const body = $("research-report-table").tBodies[0];
+  body.replaceChildren();
+  for (const row of rows.slice(0, 500)) {
+    const tr = el("tr");
+    tr.tabIndex = 0;
+    for (const value of [row.order + 1, row.label, JSON.stringify(row.parameters),
+      researchBps(row.returnBps), researchBps(row.drawdownBps), researchBps(row.trainingBps),
+      researchBps(row.robustnessBps), row.status]) {
+      tr.append(el("td", value));
+    }
+    const showDetail = () => {
+      researchReportState.selectedRow = row;
+      showResearchDetail(row.source);
+      void loadResearchArtifactDetail(row);
+    };
+    tr.addEventListener("click", showDetail);
+    tr.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); showDetail(); } });
+    body.append(tr);
+  }
+  $("research-report-count").textContent = `显示 ${Math.min(rows.length, 500)} / ${rows.length} 条匹配结果；图中最多采样 200 个点。筛选和排序只改变页面显示，不改变服务端结论。`;
+  renderResearchReportPlot(rows);
+}
+
 // 其余研究工作流通过版本化 JSON 直接调用 qx-app 既有用例；浏览器不重算指标、撮合或排名。
 async function runExtendedResearch() {
   const output = $("extended-research-output");
   const button = $("extended-research-run");
   if (!state.base || state.activeResearchRunId) return;
+  clearResearchReport();
   button.disabled = true;
   output.textContent = "正在提交共享 Rust 研究用例…";
   try {
@@ -683,9 +3639,13 @@ async function runExtendedResearch() {
     const runId = result.body?.run_id;
     if (typeof runId !== "string" || !runId) {
       output.textContent = JSON.stringify({ route, ...result }, null, 2);
+      renderResearchReport(result.body);
       return;
     }
     state.activeResearchRunId = runId;
+    state.activeResearchRunEventSeq = 0;
+    state.activeResearchRunEvents = [];
+    renderExtendedResearchEvents(true, runId, null);
     $("extended-research-query").disabled = false;
     $("extended-research-cancel").disabled = false;
     await pollExtendedResearchRun(runId, output);
@@ -708,18 +3668,116 @@ async function pollExtendedResearchRun(runId, output) {
       return;
     }
     const document = response.body || {};
-    output.textContent = JSON.stringify({ run_id: runId, ...document }, null, 2);
+    const eventsPath = API_PATHS.appRunEvents.replace("{run_id}", encodeURIComponent(runId))
+      + `?after_seq=${state.activeResearchRunEventSeq}`;
+    const eventsResponse = await getJson(eventsPath);
+    let eventsError = null;
+    if (eventsResponse.ok) {
+      try {
+        const page = mergeRunEventPage(
+          runId,
+          state.activeResearchRunEventSeq,
+          state.activeResearchRunEvents,
+          eventsResponse.body,
+        );
+        state.activeResearchRunEventSeq = page.cursor;
+        state.activeResearchRunEvents = page.events;
+        eventsError = terminalRunEventError(document.status, page.events);
+      } catch (error) {
+        eventsError = error.message;
+      }
+    } else {
+      eventsError = `HTTP ${eventsResponse.status}: ${JSON.stringify(eventsResponse.body)}`;
+    }
+    renderExtendedResearchEvents(
+      !["succeeded", "failed", "cancelled"].includes(document.status),
+      runId,
+      eventsError,
+    );
+    output.textContent = JSON.stringify({
+      run_id: runId,
+      ...document,
+      event_cursor: state.activeResearchRunEventSeq,
+      events: state.activeResearchRunEvents,
+      events_error: eventsError,
+    }, null, 2);
     if (["succeeded", "failed", "cancelled"].includes(document.status)) {
-      state.activeResearchRunId = null;
-      $("extended-research-run").disabled = false;
-      $("extended-research-query").disabled = true;
+      if (document.status === "succeeded") renderResearchReport(document.result);
+      else clearResearchReport();
+      $("extended-research-run").disabled = Boolean(eventsError);
       $("extended-research-cancel").disabled = true;
+      if (eventsError) {
+        // A terminal result is final, but an event read can fail transiently. Keep the
+        // run identity available so the operator can retry the cursor without rerunning.
+        $("extended-research-query").disabled = false;
+      } else {
+        state.activeResearchRunId = null;
+        $("extended-research-query").disabled = true;
+      }
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, EXTENDED_RESEARCH_POLL_MS));
   }
   if (state.activeResearchRunId === runId) {
     output.textContent = `任务 ${runId} 仍在运行；轮询已到 30 分钟上限，可继续查询或取消。`;
+  }
+}
+
+function mergeRunEventPage(runId, cursor, existing, page) {
+  if (!Array.isArray(page)) throw new Error("运行事件响应必须是数组");
+  const events = existing.slice();
+  let nextCursor = cursor;
+  for (const event of page) {
+    const expectedSeq = nextCursor + 1;
+    if (event?.run_id !== runId) {
+      throw new Error(`运行事件 run_id 不匹配：期望 ${runId}，收到 ${event?.run_id}`);
+    }
+    if (event.seq !== expectedSeq) {
+      throw new Error(`运行事件序号断档：期望 ${expectedSeq}，收到 ${event?.seq}`);
+    }
+    const expectedId = `${runId}:${expectedSeq}`;
+    if (event.event_id !== expectedId) {
+      throw new Error(`运行事件身份不匹配：期望 ${expectedId}`);
+    }
+    events.push(event);
+    nextCursor = expectedSeq;
+  }
+  return { cursor: nextCursor, events };
+}
+
+function terminalRunEventError(status, events) {
+  const terminalKinds = {
+    succeeded: "succeeded",
+    failed: "failed",
+    cancelled: "cancelled",
+  };
+  const expectedKind = terminalKinds[status];
+  if (!expectedKind) return null;
+  const terminal = events.at(-1);
+  if (!terminal || terminal.kind !== expectedKind || terminal.status !== status) {
+    return `运行状态为 ${status}，但事件流没有对应的终态事件`;
+  }
+  return null;
+}
+
+function renderExtendedResearchEvents(active, runId, error) {
+  const meta = $("extended-research-events-meta");
+  if (!meta) return;
+  const events = state.activeResearchRunEvents;
+  meta.textContent = error
+    ? `${runId} · 事件流暂不可用：${error}`
+    : `${runId} · 已读取 ${events.length} 条 · 游标 ${state.activeResearchRunEventSeq}${active ? " · 运行中" : ""}`;
+  const body = $("extended-research-events-table")?.querySelector("tbody");
+  if (!body) return;
+  body.replaceChildren();
+  for (const event of events) {
+    const row = document.createElement("tr");
+    for (const value of [event.seq, event.kind, event.status, event.event_id]) {
+      const cell = document.createElement("td");
+      cell.textContent = String(value ?? "");
+      row.appendChild(cell);
+    }
+    body.appendChild(row);
   }
 }
 
@@ -766,7 +3824,7 @@ function describeAccepted(result) {
   if (result.status === 401 && refusal === "console_session_required") {
     return { phase: PHASES[0], state: "refused", detail: "401 console_session_required：这一层要先用带 ?token= 的引导入口换取会话 cookie（令牌不进 URL 之外的任何地方）" };
   }
-  if (result.status === 400) return { phase: PHASES[0], state: "refused", detail: "400 载荷非法（审计字段缺失，或该命令类型在本构建里没有派发者）" };
+  if (result.status === 400) return { phase: PHASES[0], state: "refused", detail: "400 命令载荷、执行器类型或账户/交易所路由未通过受理校验" };
   if (result.status === 409) return { phase: PHASES[0], state: "refused", detail: "409 控制面拒绝（重复 request_id / 未知命令 / 已终态）" };
   if (result.status === 503) return { phase: PHASES[0], state: "refused", detail: `503 队列不可用（${refusal || "control_state_unavailable"}）` };
   return { phase: PHASES[0], state: "refused", detail: `HTTP ${result.status}${refusal ? " " + refusal : ""}` };
@@ -806,7 +3864,7 @@ function advancePhases(audit) {
 function renderControl() {
   const container = $("control-rows");
   if (!state.lastCommand) {
-    rows(container, [["状态", "未提交（写面只有 POST /control/commands）"]]);
+    rows(container, [["状态", "未提交（需要受认证的 API 操作权限）"]]);
     return;
   }
   const pairs = state.lastCommand.phases.map((entry) => [entry.phase, entry.detail]);
@@ -915,6 +3973,7 @@ async function refreshAll() {
   try {
     await refreshHealth();
     await refreshSnapshot();
+    await refreshAccountActivity();
     await refreshBalances();
     await refreshTables();
     await refreshReadModels();
@@ -1119,15 +4178,32 @@ function connect() {
 
 function disconnect() {
   state.connected = false;
+  state.activityRequestSeq += 1;
   state.base = "";
   state.viaBff = false;
   state.cursor = null;
   state.baselineSeq = null;
+  state.activityAccountId = null;
+  state.activityVenueId = null;
+  state.activityClientOrderId = null;
+  state.activityExchangeOrderId = null;
+  state.activityRunId = null;
+  state.activityStrategyId = null;
+  state.activitySignalId = null;
+  state.activityIntentId = null;
+  state.activityCorrelationId = null;
+  state.defaultAccountId = null;
+  state.defaultVenueId = null;
+  state.activityAfter = null;
+  state.activityBefore = null;
+  state.activityPage = null;
+  state.activitySelectionDirty = false;
   state.events = [];
   state.wsFramesSeen = 0;
   state.wsUnknownFrames = [];
   state.shapeIssues = [];
   state.cycleNon200 = 0;
+  state.activeResearchRunId = null;
   if (state.timer) clearInterval(state.timer);
   state.timer = null;
   closeSocket();
@@ -1135,10 +4211,26 @@ function disconnect() {
   $("disconnect").disabled = true;
   $("ws-state").textContent = "WS 未连接";
   state.lastCommand = null;
+  clearResearchReport();
+  $("extended-research-run").disabled = false;
+  $("extended-research-query").disabled = true;
+  $("extended-research-cancel").disabled = true;
   renderControl();
-  for (const id of ["health-rows", "snapshot-rows", "balances-rows", "readmodels-rows", "events-meta"]) {
+  for (const id of ["health-rows", "snapshot-rows", "account-activity-meta", "balances-rows", "readmodels-rows", "events-meta"]) {
     rows($(id), [["状态", "未连接"]]);
   }
+  fillTable("account-activity-events-table", { ok: true, body: [] });
+  $("account-activity-prev").disabled = true;
+  $("account-activity-next").disabled = true;
+  $("account-activity-account-id").value = "";
+  $("account-activity-venue-id").value = "";
+  $("account-activity-client-order-id").value = "";
+  $("account-activity-exchange-order-id").value = "";
+  $("account-activity-run-id").value = "";
+  $("account-activity-strategy-id").value = "";
+  $("account-activity-signal-id").value = "";
+  $("account-activity-intent-id").value = "";
+  $("account-activity-correlation-id").value = "";
 }
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -1147,9 +4239,40 @@ window.addEventListener("DOMContentLoaded", () => {
   if (seeded) $("api-base").value = seeded;
   $("connect").addEventListener("click", connect);
   $("disconnect").addEventListener("click", disconnect);
+  $("account-activity-prev").addEventListener("click", () => {
+    const cursor = state.activityPage?.previous_before;
+    if (cursor === null || cursor === undefined) return;
+    state.activityAfter = null;
+    state.activityBefore = cursor;
+    void refreshAccountActivity();
+  });
+  $("account-activity-next").addEventListener("click", () => {
+    const cursor = state.activityPage?.next_after;
+    if (cursor === null || cursor === undefined) return;
+    state.activityBefore = null;
+    state.activityAfter = cursor;
+    void refreshAccountActivity();
+  });
+  $("account-activity-load").addEventListener("click", () => {
+    state.activityAfter = null;
+    state.activityBefore = null;
+    state.activitySelectionDirty = false;
+    void refreshAccountActivity();
+  });
+  $("account-activity-account-id").addEventListener("input", () => {
+    state.activitySelectionDirty = true;
+  });
+  $("account-activity-venue-id").addEventListener("input", () => {
+    state.activitySelectionDirty = true;
+  });
   $("control-form").addEventListener("submit", submitCommand);
+  $("strategy-revision-form").addEventListener("submit", submitStrategyRevision);
+  $("strategy-operation-form").addEventListener("submit", submitStrategyDeploymentOperation);
+  $("strategy-operation-refresh").addEventListener("click", () => { void refreshStrategyDeploymentOperation(); });
   $("research-validate").addEventListener("click", () => runResearch(true));
   $("research-run").addEventListener("click", () => runResearch(false));
+  $("product-capability-load").addEventListener("click", loadProductCapabilityCatalog);
+  $("product-capability-query").addEventListener("click", queryProductCapability);
   $("research-strategy").addEventListener("change", (event) => {
     try {
       selectResearchStrategy(event.target.value);
@@ -1162,6 +4285,66 @@ window.addEventListener("DOMContentLoaded", () => {
   $("extended-research-run").addEventListener("click", runExtendedResearch);
   $("extended-research-query").addEventListener("click", queryExtendedResearchRun);
   $("extended-research-cancel").addEventListener("click", cancelExtendedResearchRun);
+  $("research-report-filter").addEventListener("input", renderResearchReportRows);
+  $("research-report-sort").addEventListener("change", renderResearchReportRows);
+  $("research-diagnostic-attach").addEventListener("click", attachStrategyDiagnostics);
+  $("research-add-equity-curve").addEventListener("click", addCurrentResearchCurve);
+  $("research-clear-equity-curves").addEventListener("click", clearResearchComparison);
+  $("research-cross-input-comparison").addEventListener("change", (event) => {
+    if (event.target.checked) $("research-utc-time-alignment").checked = false;
+  });
+  $("research-utc-time-alignment").addEventListener("change", (event) => {
+    if (event.target.checked) $("research-cross-input-comparison").checked = false;
+  });
+  $("research-add-unified-report").addEventListener("click", addCurrentUnifiedResearchReport);
+  $("research-export-unified-reports").addEventListener("click", exportUnifiedResearchReports);
+  $("research-clear-unified-reports").addEventListener("click", clearUnifiedResearchReports);
+  $("research-unified-filter").addEventListener("change", renderUnifiedResearchReports);
+  $("research-unified-events-load").addEventListener("click", () => { void loadUnifiedResearchEvents(true); });
+  $("research-unified-events-all").addEventListener("click", () => { void loadUnifiedResearchEvents(false, true); });
+  $("research-unified-events-next").addEventListener("click", () => { void loadUnifiedResearchEvents(false); });
+  $("research-unified-events-export").addEventListener("click", exportUnifiedResearchEvents);
+  $("research-unified-events-filter").addEventListener("input", () => {
+    researchReportState.unifiedEventPage = 0;
+    renderUnifiedResearchEvents();
+  });
+  for (const id of [
+    "research-unified-events-report",
+    "research-unified-events-topology",
+    "research-unified-events-account",
+    "research-unified-events-instrument",
+    "research-unified-events-kind",
+  ]) {
+    $(id).addEventListener("change", () => {
+      researchReportState.unifiedEventPage = 0;
+      renderUnifiedResearchEvents();
+    });
+  }
+  $("research-unified-events-page-prev").addEventListener("click", () => {
+    researchReportState.unifiedEventPage = Math.max(0, researchReportState.unifiedEventPage - 1);
+    renderUnifiedResearchEvents();
+  });
+  $("research-unified-events-page-next").addEventListener("click", () => {
+    researchReportState.unifiedEventPage += 1;
+    renderUnifiedResearchEvents();
+  });
+  $("research-event-prev").addEventListener("click", () => {
+    const events = researchReportState.latestArtifactView?.events;
+    if (events) loadResearchEventPage(Math.max(0, Number(events.offset ?? 0) - 300));
+  });
+  $("research-event-next").addEventListener("click", () => {
+    const events = researchReportState.latestArtifactView?.events;
+    if (events) loadResearchEventPage(Number(events.offset ?? 0) + (events.rows?.length ?? 0));
+  });
+  $("research-account-event-prev").addEventListener("click", () => {
+    if (researchReportState.jointAccountReport) void loadResearchJointAccountEventPage("previous");
+    else void loadResearchAccountEventPage("previous");
+  });
+  $("research-account-event-next").addEventListener("click", () => {
+    if (researchReportState.jointAccountReport) void loadResearchJointAccountEventPage("next");
+    else void loadResearchAccountEventPage("next");
+  });
+  $("research-account-event-instrument").addEventListener("change", resetResearchAccountEventInstrument);
   $("api-base").addEventListener("keydown", (event) => {
     if (event.key === "Enter") connect();
   });

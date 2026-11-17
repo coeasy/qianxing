@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>沪深300 2010年至今双均线回测报告</title>
+<style>body{font:16px/1.7 system-ui,"Microsoft YaHei",sans-serif;margin:24px auto;padding:0 18px;max-width:980px;color:#202938}section{border:1px solid #ccd5e0;border-radius:10px;padding:18px;margin:18px 0}.blocked{background:#fff3e0;border-color:#de8b12}code,pre{overflow-wrap:anywhere;white-space:pre-wrap}</style>
+<h1>沪深300 2010年至今双均线回测</h1><p>报告生成日期：2026-10-28。请求区间：2010-01-01 至 2026-10-28。策略：日线 SMA(20,60)，初始资金 CNY 1,000,000，最高目标敞口 95%，次日开盘撮合，双边恒定费用假设 3bp。</p>
+<section class="blocked"><h2>状态：未能执行真实历史回测</h2><p>本次执行环境没有可核验的2010年至今沪深300完整历史日线与独立交易日历；尝试读取外部行情时，网络访问被执行环境拒绝。项目现有 A 股 Bar 示例只有6根日内 Bar，不足以用于本报告请求区间。本报告不展示任何收益、回撤、交易数或图表绩效数字。</p></section>
+<section><h2>回测口径</h2><p>这是只做多指数研究模型：金叉建立仓位，死叉清仓，不加杠杆。引擎以合成指数研究单位和显式恒定费用假设回测；指数不是可交易证券，此结果不能表述为实际买卖沪深300股票或ETF的收益。ETF回测需另建可交易标的价格、上市日起点、交易单位、涨跌停、停牌、分红、滑点和逐期费率模型。</p><p>快线 SMA20，慢线 SMA60；现金 CNY 1,000,000；目标敞口最多为可用资金95%；次 Bar 开盘成交；恒定单边费用3bp；额外滑点和延迟为0。信号用当日收盘形成，最早次日开盘执行。期末不强制平仓。</p></section>
+<section><h2>数据准入</h2><ul><li>日线CSV：date,open,high,low,close,volume；价格不可超过引擎1e-9精度。</li><li>独立交易日历JSON：schema_version=1、source、coverage.start/end 和升序 trading_days；行情须逐日匹配。</li><li>至少提供60个慢均线预热交易日。缺日、重复/倒序日期、OHLC异常、超期末日、日历覆盖不足都会阻断回测。</li><li>记录行情、日历 SHA-256；来源标签由数据提供者填写，本地不假装已审计外部来源。</li></ul></section>
+<section><h2>程序验证状态</h2><p>已加入只做多策略和长区间执行入口。使用标记为合成的测试序列，通过引擎执行、重复运行一致性、报告和重放检查；这些数值只说明软件链路可工作，不属于市场证据。查看<a href="../backtest-report-layout.md">报告修复说明</a>和<a href="../../tools/hs300_backtest.py">执行器源码</a>。</p></section><p>取得并校验实际历史CSV与日历之前，本请求保持阻断。</p></html>

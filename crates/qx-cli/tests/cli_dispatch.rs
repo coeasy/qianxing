@@ -2,12 +2,23 @@
 //! 未知命令必须 fail-closed 退出 2 而不是静默落到默认演示。
 
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static NEXT_CASE: AtomicUsize = AtomicUsize::new(0);
 
 fn run(args: &[&str]) -> (i32, String, String) {
+    let cwd = std::env::temp_dir().join(format!(
+        "qianxing-cli-dispatch-{}-{}",
+        std::process::id(),
+        NEXT_CASE.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&cwd).expect("创建隔离命令目录");
     let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .current_dir(&cwd)
         .args(args)
         .output()
         .expect("启动 qx-cli 失败");
+    let _ = std::fs::remove_dir_all(cwd);
     (
         output.status.code().unwrap_or(-1),
         String::from_utf8_lossy(&output.stdout).to_string(),

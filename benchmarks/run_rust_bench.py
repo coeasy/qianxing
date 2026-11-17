@@ -69,6 +69,14 @@ CRITERION_REQUIRED = {
     "scheduler_active_run_selection/clone_and_scan_4097_runs",
     "scheduler_active_run_selection/indexed_active_ids",
 }
+PR_CRITERION_FILTERS = {
+    "qx-core": (
+        "qx_core_event_log_validate/cached",
+        "qx_core_ledger_entry_lookup/indexed",
+        "qx_core_event_log_prefix_digest/cached_after_append",
+    ),
+    "qx-zhenlu": ("qx_zhenlu_crypto_paper_lifecycle_v2",),
+}
 MARGINAL_KNEE_THRESHOLD_PCT = 20.0
 
 
@@ -93,9 +101,41 @@ def criterion_estimate_path(benchmark: str, criterion_root: Path | None = None) 
     return nested
 
 
-def criterion_estimates() -> list[dict]:
+def criterion_plan(cargo: str, profile: str) -> tuple[set[str], list[list[str]]]:
+    if profile not in {"full", "pr"}:
+        raise ValueError(f"unsupported Criterion profile: {profile}")
+    required = (
+        CRITERION_REQUIRED
+        if profile == "full"
+        else {
+            benchmark
+            for benchmark in CRITERION_REQUIRED
+            if any(
+                selected in benchmark
+                for filters in PR_CRITERION_FILTERS.values()
+                for selected in filters
+            )
+        }
+    )
+    commands = []
+    for package in ("qx-core", "qx-scheduler", "qx-xingban", "qx-zhenlu", "qx-cli"):
+        selected_filters = (
+            (None,)
+            if profile == "full"
+            else PR_CRITERION_FILTERS.get(package, ())
+        )
+        for selected in selected_filters:
+            command = [cargo, "bench", "-p", package, "--bench", "criterion_performance", "--"]
+            if selected is not None:
+                command.append(selected)
+            command.append("--noplot")
+            commands.append(command)
+    return required, commands
+
+
+def criterion_estimates(required: set[str] = CRITERION_REQUIRED) -> list[dict]:
     records = []
-    for benchmark in sorted(CRITERION_REQUIRED):
+    for benchmark in sorted(required):
         # Workspace Criterion groups share target/criterion; crate-owned groups use
         # distinct benchmark ids so one package cannot overwrite another package's sample.
         path = criterion_estimate_path(benchmark)
@@ -193,20 +233,14 @@ def main() -> int:
         action="store_true",
         help="collect existing Criterion estimates without rerunning timed workloads",
     )
+    parser.add_argument(
+        "--profile",
+        choices=("full", "pr"),
+        default="full",
+        help="full runs the complete benchmark ledger; pr measures the stable core hot-path subset",
+    )
     args = parser.parse_args()
-    criterion_commands = [
-        [
-            args.cargo,
-            "bench",
-            "-p",
-            package,
-            "--bench",
-            "criterion_performance",
-            "--",
-            "--noplot",
-        ]
-        for package in ("qx-core", "qx-scheduler", "qx-xingban", "qx-zhenlu", "qx-cli")
-    ]
+    required_criterion, criterion_commands = criterion_plan(args.cargo, args.profile)
     for criterion_command in (() if args.skip_criterion else criterion_commands):
         criterion_process = subprocess.run(
             criterion_command,
@@ -221,7 +255,7 @@ def main() -> int:
             sys.stderr.write(criterion_process.stderr)
             return criterion_process.returncode
     try:
-        criterion_records = criterion_estimates()
+        criterion_records = criterion_estimates(required_criterion)
     except (OSError, KeyError, json.JSONDecodeError) as error:
         benchmark = str(error).split(":", 1)[0]
         group = benchmark.split("/", 1)[0]
@@ -284,6 +318,8 @@ def main() -> int:
         "measurement_source_fingerprint_schema": MEASUREMENT_SOURCE_FINGERPRINT_SCHEMA,
         "command": command,
         "criterion_commands": criterion_commands,
+        "criterion_profile": args.profile,
+        "criterion_required_count": len(required_criterion),
         "criterion_records": criterion_records,
         "records": records,
         "steady_state_tick_curve": steady_state_tick_curve(records),

@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/multi-leg-research-report-v1.json",
+  "title": "Multi-leg Research Report V1",
+  "description": "Replay-verified bounded multi-leg report. Raw fixed-point values are decimal strings to preserve precision across languages.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "strategy_id", "data_fingerprint", "summary", "execution", "markets", "equity", "fills", "events"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "strategy_id": { "type": "string", "minLength": 1 },
+    "data_fingerprint": { "type": "string", "minLength": 1 },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["account_id", "initial_cash_raw", "account_ledger_summary", "event_count", "event_hash", "primary", "reference", "costs", "equity", "total_fills"],
+      "properties": {
+        "account_id": { "type": "string", "minLength": 1 },
+        "initial_cash_raw": { "type": "string", "pattern": "^-?[0-9]+$" },
+        "initial_cash_exact": { "type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]*[1-9])?$" },
+        "account_ledger_summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["account_id", "allocation_policy", "cross_leg_buying_power", "initial_cash_raw", "initial_cash", "cash_balances_raw", "positions", "realized_pnl_raw", "ledger_entry_count", "replay_verified"],
+          "properties": {
+            "account_id": { "type": "string", "minLength": 1 },
+            "allocation_policy": { "const": "shared_buying_power_deterministic_market_priority" },
+            "cross_leg_buying_power": { "const": true },
+            "initial_cash_raw": { "type": "string", "pattern": "^-?[0-9]+$" },
+            "initial_cash": { "type": "string" },
+            "initial_cash_exact": { "type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]*[1-9])?$" },
+            "cash_balances_raw": { "type": "object", "additionalProperties": { "type": "string", "pattern": "^-?[0-9]+$" } },
+            "positions": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["instrument", "quantity_raw", "average_entry_raw", "realized_pnl_raw"],
+                "properties": {
+                  "instrument": { "type": "string", "minLength": 1 },
+                  "quantity_raw": { "type": "string", "pattern": "^-?[0-9]+$" },
+                  "average_entry_raw": { "type": "string", "pattern": "^-?[0-9]+$" },
+                  "realized_pnl_raw": { "type": "string", "pattern": "^-?[0-9]+$" }
+                }
+              }
+            },
+            "realized_pnl_raw": { "type": "string", "pattern": "^-?[0-9]+$" },
+            "ledger_entry_count": { "type": "integer", "minimum": 0 },
+            "replay_verified": { "const": true }
+          }
+        },
+        "event_count": { "type": "integer", "minimum": 1, "maximum": 5000000 },
+        "event_hash": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+        "primary": { "$ref": "#/$defs/leg" },
+        "reference": { "$ref": "#/$defs/leg" },
+        "costs": { "$ref": "#/$defs/costs" },
+        "equity": { "$ref": "#/$defs/equitySummary" },
+        "total_fills": { "type": "integer", "minimum": 0, "maximum": 5000000 }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["settlement_currency", "fill_model", "primary_maker_fee_bps", "primary_taker_fee_bps", "reference_maker_fee_bps", "reference_taker_fee_bps", "funding_bps", "funding_events_count", "funding_events_sha256", "market_specs_json"],
+      "properties": {
+        "settlement_currency": { "type": "string", "minLength": 1 },
+        "fill_model": { "enum": ["next_bar_open", "best_price", "one_tick_slippage"] },
+        "primary_maker_fee_bps": { "type": "integer" },
+        "primary_taker_fee_bps": { "type": "integer" },
+        "reference_maker_fee_bps": { "type": "integer" },
+        "reference_taker_fee_bps": { "type": "integer" },
+        "funding_bps": { "type": "integer" },
+        "funding_events_count": { "type": "integer", "minimum": 0 },
+        "funding_events_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "market_specs_json": { "type": "string", "minLength": 2 }
+      }
+    },
+    "markets": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": { "$ref": "#/$defs/market" }
+    },
+    "equity": { "$ref": "#/$defs/equityRows" },
+    "fills": { "$ref": "#/$defs/fillRows" },
+    "events": { "$ref": "https://qianxing.local/schemas/multi-leg-event-report-page-v1.json" }
+  },
+  "$defs": {
+    "leg": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["instrument", "fills", "result_hash", "return_bps", "funding_cost_raw"],
+      "properties": {
+        "instrument": { "type": "string", "minLength": 1 },
+        "fills": { "type": "integer", "minimum": 0 },
+        "result_hash": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+        "return_bps": { "type": "integer" },
+        "funding_cost_raw": { "type": "string", "pattern": "^-?[0-9]+$" }
+      }
+    },
+    "costs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total_fees_raw", "total_funding_raw", "total_turnover_raw", "cost_bps"],
+      "properties": {
+        "total_fees_raw": { "type": "string", "pattern": "^-?[0-9]+$" },
+        "total_funding_raw": { "type": "string", "pattern": "^-?[0-9]+$" },
+        "total_turnover_raw": { "type": "string", "pattern": "^-?[0-9]+$" },
+        "cost_bps": { "type": ["integer", "null"] }
+      }
+    },
+    "equitySummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["points", "initial_equity_raw", "final_equity_raw", "return_bps", "max_drawdown_bps"],
+      "properties": {
+        "points": { "type": "integer", "minimum": 1, "maximum": 5000000 },
+        "initial_equity_raw": { "type": "string", "pattern": "^-?[0-9]+$" },
+        "final_equity_raw": { "type": "string", "pattern": "^-?[0-9]+$" },
+        "return_bps": { "type": "integer" },
+        "max_drawdown_bps": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "market": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["instrument", "data_fingerprint", "quality_fingerprint", "bar_count", "start_ts_ms", "end_ts_ms", "fills"],
+      "properties": {
+        "instrument": { "type": "string", "minLength": 1 },
+        "data_fingerprint": { "type": "string", "minLength": 1 },
+        "quality_fingerprint": { "type": ["string", "null"] },
+        "bar_count": { "type": "integer", "minimum": 0, "maximum": 5000000 },
+        "start_ts_ms": { "type": ["integer", "null"], "minimum": 0 },
+        "end_ts_ms": { "type": ["integer", "null"], "minimum": 0 },
+        "fills": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "equityRows": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "truncated", "rows"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0, "maximum": 5000000 },
+        "truncated": { "type": "boolean" },
+        "rows": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["ts", "equity_raw"],
+            "properties": {
+              "ts": { "type": "string", "pattern": "^-?[0-9]+$" },
+              "equity_raw": { "type": "string", "pattern": "^-?[0-9]+$" },
+              "equity_exact": { "type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]*[1-9])?$" }
+            }
+          }
+        }
+      }
+    },
+    "fillRows": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "truncated", "rows"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0, "maximum": 5000000 },
+        "truncated": { "type": "boolean" },
+        "rows": {
+          "type": "array",
+          "maxItems": 200,
+          "items": { "type": "object", "required": ["order_id", "instrument"], "properties": { "order_id": { "type": "integer", "minimum": 0 }, "instrument": { "type": "string", "minLength": 1 } }, "additionalProperties": true }
+        }
+      }
+    }
+  }
+}

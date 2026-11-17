@@ -1,0 +1,49 @@
+{
+  "schema_version": 2,
+  "source": "example-exchange-depth-feed@2026-10-26",
+  "instrument": {"symbol": "BTCUSDT", "venue": "BINANCE"},
+  "snapshots": [
+    {
+      "instrument": {"symbol": "BTCUSDT", "venue": "BINANCE"},
+      "ts": 1792980000000,
+      "sequence": 1,
+      "bids": [
+        {
+          "price": 99999999999,
+          "qty": 0,
+          "price_exact": {"coefficient": "999999999991", "scale": 10},
+          "qty_exact": {"coefficient": "1", "scale": 10}
+        }
+      ],
+      "asks": [
+        {
+          "price": 99999999999,
+          "qty": 0,
+          "price_exact": {"coefficient": "999999999992", "scale": 10},
+          "qty_exact": {"coefficient": "2", "scale": 10}
+        }
+      ]
+    },
+    {
+      "instrument": {"symbol": "BTCUSDT", "venue": "BINANCE"},
+      "ts": 1792980001000,
+      "sequence": 2,
+      "bids": [
+        {
+          "price": 99999999999,
+          "qty": 0,
+          "price_exact": {"coefficient": "999999999993", "scale": 10},
+          "qty_exact": {"coefficient": "3", "scale": 10}
+        }
+      ],
+      "asks": [
+        {
+          "price": 99999999999,
+          "qty": 0,
+          "price_exact": {"coefficient": "999999999994", "scale": 10},
+          "qty_exact": {"coefficient": "4", "scale": 10}
+        }
+      ]
+    }
+  ]
+}

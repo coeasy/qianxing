@@ -1,0 +1,2 @@
+LEG s5_mdlinks rc=0 seconds=1.74 bytes=115
+GATE_FAIL mdlinks examined 4617 citation rows, floor is 4618 (the citation scanner went blind or the docs shrank; neither is a green)

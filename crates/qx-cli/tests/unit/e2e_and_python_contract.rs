@@ -19,6 +19,13 @@ fn api_snapshot_is_rebuilt_from_persisted_account_eventlog() {
     let mut config = read_runtime_config(&template).unwrap();
     config.storage.data_dir = root.to_string_lossy().into_owned();
     config.storage.event_log_segment_events = Some(2);
+    let trading_days = root.join("account-trading-days.json");
+    std::fs::write(
+        &trading_days,
+        r#"{"schema_version":1,"account_trading_days":{"main":{"paper":"20260911"}}}"#,
+    )
+    .unwrap();
+    config.api.account_trading_days_path = Some(trading_days.to_string_lossy().into_owned());
     let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
     let order = mk_order(9401, &instrument, Side::Buy, 1);
     let mut pipeline = LiveEventPipeline::open_configured(
@@ -59,7 +66,14 @@ fn api_snapshot_is_rebuilt_from_persisted_account_eventlog() {
             "api-read-model:fill",
         ))
         .unwrap();
-    let snapshot = load_api_account_snapshot(&config).unwrap().unwrap();
+    let snapshot = qx_service::api_read_model::load_api_account_snapshots_with_market_specs(
+        &config,
+        &std::collections::BTreeMap::new(),
+    )
+    .unwrap()
+    .into_iter()
+    .find(|snapshot| snapshot.header.account_id == "main")
+    .unwrap();
     assert_eq!(snapshot.header.account_id, "main");
     assert_eq!(snapshot.orders.len(), 1);
     assert_eq!(snapshot.fills.len(), 1);
@@ -396,10 +410,20 @@ fn rust_invokes_python_strategy_jsonl_worker_through_versioned_contract() {
         as_of: 1_700_000_000,
         instrument: "BTC/USDT.OKX".into(),
         positions: BTreeMap::new(),
+        positions_exact: BTreeMap::new(),
         cash: BTreeMap::from([("USDT".into(), 100_000_000_i128)]),
+        cash_exact: std::collections::BTreeMap::new(),
+        available_margin_exact: None,
         available_margin_raw: Some(100_000_000),
         risk_state: "ready".into(),
         research_targets: BTreeMap::from([("BTC/USDT.OKX".into(), 3_i128)]),
+        market_bars: BTreeMap::new(),
+        execution_updates: Vec::new(),
+        fill_updates: Vec::new(),
+        strategy_checkpoint: None,
+        market_ticks: Vec::new(),
+        market_order_books: Vec::new(),
+        account_updates: Vec::new(),
         bars: None,
     };
     let output = invoke_python_strategy(
@@ -429,6 +453,333 @@ fn rust_invokes_python_strategy_jsonl_worker_through_versioned_contract() {
 }
 
 #[test]
+fn rust_invokes_python_basestrategy_class_through_process_contract() {
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+    let module = workspace_root
+        .join("python")
+        .join("tests")
+        .join("fixtures")
+        .join("strategy_base_class.py");
+    let input = StrategyContractInput {
+        schema_version: qx_runtime::STRATEGY_CONTRACT_SCHEMA_VERSION,
+        request_id: "request-python-base-class-1".into(),
+        strategy_id: "strategy-python-base-class".into(),
+        strategy_version: "v1".into(),
+        data_fingerprint: "bars-sha256".into(),
+        as_of: 2,
+        instrument: "BTC/USDT.OKX".into(),
+        positions: BTreeMap::from([("BTC/USDT.OKX".into(), 0)]),
+        positions_exact: BTreeMap::from([("BTC/USDT.OKX".into(), "0".into())]),
+        cash: BTreeMap::from([("USDT".into(), 100_000_000_i128)]),
+        cash_exact: std::collections::BTreeMap::new(),
+        available_margin_exact: None,
+        available_margin_raw: Some(100_000_000),
+        risk_state: "ready".into(),
+        research_targets: BTreeMap::new(),
+        market_bars: BTreeMap::new(),
+        execution_updates: Vec::new(),
+        fill_updates: Vec::new(),
+        strategy_checkpoint: None,
+        market_ticks: Vec::new(),
+        market_order_books: Vec::new(),
+        account_updates: Vec::new(),
+        bars: Some(StrategyContractBars {
+            source: "base-class-fixture".into(),
+            ts: vec![1, 2],
+            open_raw: vec![100, 110],
+            high_raw: vec![102, 112],
+            low_raw: vec![99, 109],
+            close_raw: vec![101, 111],
+            volume_raw: vec![10, 12],
+            exact_ohlcv: None,
+        }),
+    };
+    let spec = serde_json::json!({
+        "strategy": {"kind": "python-class"},
+        "parameters": {
+            "qty_exact": "0.000000000123456789",
+            "limit_price_exact": "0.00000005"
+        }
+    });
+    let ring_directory = workspace_root.join("target").join(format!(
+        "qx-test-base-class-rings-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    for transport in [
+        StrategyTransport::Jsonl,
+        StrategyTransport::FramedJson,
+        StrategyTransport::SharedMemoryJson,
+        StrategyTransport::SharedMemoryColumnar,
+    ] {
+        let mut client = PythonStrategyClient::start_for_runtime_worker(
+            module.to_string_lossy().as_ref(),
+            PYTHON_STRATEGY_TIMEOUT_MS,
+            transport,
+            SharedRingConfig::default(),
+            None,
+            Some(&spec),
+            Some("main"),
+            Some("okx"),
+            None,
+            Some("strategy-base-class-test"),
+        )
+        .unwrap();
+
+        let output = client.request(&input).unwrap();
+        assert_eq!(
+            output.request_id, input.request_id,
+            "transport={transport:?}"
+        );
+        assert_eq!(output.intents.len(), 1, "transport={transport:?}");
+        assert_eq!(output.intents[0].intent_id, 17, "transport={transport:?}");
+        assert_eq!(output.intents[0].instrument, "BTC/USDT.OKX");
+        assert_eq!(output.intents[0].qty_raw, 0);
+        assert_eq!(
+            output.intents[0].qty_exact.as_deref(),
+            Some("0.000000000123456789")
+        );
+        assert_eq!(
+            output.intents[0].limit_price_exact.as_deref(),
+            Some("0.00000005")
+        );
+        assert_eq!(output.intents[0].margin_mode.as_deref(), Some("cross"));
+        assert_eq!(output.intents[0].position_mode.as_deref(), Some("one_way"));
+        assert_eq!(output.intents[0].leverage, Some(3));
+
+        let checkpoint = client
+            .take_strategy_checkpoint()
+            .expect("BaseStrategy process must return a durable checkpoint");
+        assert_eq!(checkpoint.strategy_id, input.strategy_id);
+        assert_eq!(checkpoint.strategy_version, input.strategy_version);
+        let mut resumed_input = input.clone();
+        resumed_input.schema_version = qx_runtime::STRATEGY_CONTRACT_INPUT_V4_SCHEMA_VERSION;
+        resumed_input.request_id = format!("{}-resume", input.request_id);
+        resumed_input.strategy_checkpoint = Some(checkpoint);
+        let resumed_output = client.request(&resumed_input).unwrap();
+        assert!(
+            resumed_output.intents.is_empty(),
+            "restoring the committed checkpoint must not replay already processed bars; transport={transport:?}"
+        );
+        assert!(client.take_strategy_checkpoint().is_some());
+    }
+    // The real Runtime launcher supplies a host-owned catalog to class workers.
+    // A fresh process must accept supported requirements and still checkpoint.
+    std::fs::create_dir_all(&ring_directory).unwrap();
+    let capability_module = ring_directory.join("capability_strategy.py");
+    let source = std::fs::read_to_string(&module).unwrap();
+    let declaration = r#"
+STRATEGY_MANIFEST = {
+    "schema_version": 1, "parameters": {},
+    "instrument_requirements": {"requires_explicit_spec": False},
+    "data_level": "bar", "warmup_bars": 1,
+    "required_capabilities": ["bar", "bar_history", "fill_updates", "order_status_updates", "account_updates", "position_updates", "durable_checkpoint"]
+}
+"#;
+    std::fs::write(&capability_module, format!("{source}\n{declaration}")).unwrap();
+    for transport in [
+        StrategyTransport::Jsonl,
+        StrategyTransport::FramedJson,
+        StrategyTransport::SharedMemoryJson,
+        StrategyTransport::SharedMemoryColumnar,
+    ] {
+        let mut runtime_client = PythonStrategyClient::start_for_runtime_worker(
+            capability_module.to_string_lossy().as_ref(),
+            5000,
+            transport,
+            SharedRingConfig::default(),
+            None,
+            Some(&spec),
+            Some("main"),
+            Some("okx"),
+            None,
+            Some("strategy-capability-test"),
+        )
+        .unwrap();
+        assert_eq!(runtime_client.request(&input).unwrap().intents.len(), 1);
+        assert!(runtime_client.take_strategy_checkpoint().is_some());
+    }
+    // A backtest advertises its local host catalog, never the Runtime catalog.
+    let local_capabilities =
+        qx_strategy::capabilities::StrategyHostCapabilitiesV1::local_python(Some("bar"));
+    let backtest = PythonStrategyClient::start_with_strategy_config_and_audit_path(
+        capability_module.to_string_lossy().as_ref(),
+        5000,
+        StrategyTransport::Jsonl,
+        SharedRingConfig::default(),
+        None,
+        Some(&spec),
+        Some("main"),
+        Some("okx"),
+        None,
+        Some("bar-backtest:capability-test"),
+        Some(&local_capabilities),
+    );
+    assert!(
+        backtest.is_err(),
+        "backtest must not advertise Runtime capabilities"
+    );
+    // Local Python file mode receives the local host catalog and validates the
+    // module-level manifest before exposing the worker for request dispatch.
+    let file_module = ring_directory.join("file_strategy.py");
+    let strategy_target = workspace_root
+        .join("python")
+        .join("tests")
+        .join("fixtures")
+        .join("strategy_target.py");
+    let file_source = std::fs::read_to_string(strategy_target).unwrap();
+    std::fs::write(
+        &file_module,
+        format!("{file_source}\nSTRATEGY_MANIFEST = {{'required_capabilities': ['bar']}}\n"),
+    )
+    .unwrap();
+    let mut file_input = input.clone();
+    file_input.research_targets.insert("BTC/USDT.OKX".into(), 3);
+    let mut file_client = PythonStrategyClient::start_with_strategy_config_and_audit_path(
+        file_module.to_string_lossy().as_ref(),
+        5000,
+        StrategyTransport::Jsonl,
+        SharedRingConfig::default(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some("local-python-file-capability"),
+        Some(&local_capabilities),
+    )
+    .expect("local Python file accepts its delivered Bar capability");
+    file_client
+        .request(&file_input)
+        .expect("local Python file dispatches after capability negotiation");
+    let unsupported_file_module = ring_directory.join("unsupported_file_strategy.py");
+    std::fs::write(
+        &unsupported_file_module,
+        format!("{file_source}\nSTRATEGY_MANIFEST = {{'required_capabilities': ['timer']}}\n"),
+    )
+    .unwrap();
+    let mut rejected_file = PythonStrategyClient::start_with_strategy_config_and_audit_path(
+        unsupported_file_module.to_string_lossy().as_ref(),
+        5000,
+        StrategyTransport::Jsonl,
+        SharedRingConfig::default(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some("local-python-file-unsupported-capability"),
+        Some(&local_capabilities),
+    )
+    .expect("local Python file worker starts before its first request");
+    let rejected_file = rejected_file
+        .request(&file_input)
+        .expect_err("local Python file rejects Timer before calling its handler");
+    assert!(rejected_file.contains("timer"), "{rejected_file}");
+
+    // Runtime module-function mode has a distinct server catalog from class mode.
+    let module_function = ring_directory.join("module_function_strategy.py");
+    std::fs::write(
+        &module_function,
+        format!("{file_source}\nSTRATEGY_STATELESS = True\nSTRATEGY_MANIFEST = {{'required_capabilities': ['bar', 'durable_checkpoint']}}\n"),
+    )
+    .unwrap();
+    let mut module_function_client = PythonStrategyClient::start_for_runtime_worker(
+        module_function.to_string_lossy().as_ref(),
+        5000,
+        StrategyTransport::Jsonl,
+        SharedRingConfig::default(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some("runtime-module-function-capability"),
+    )
+    .expect("Runtime module-function accepts Bar and durable checkpoint requirements");
+    module_function_client
+        .request(&file_input)
+        .expect("Runtime module-function dispatches after capability negotiation");
+    assert!(module_function_client.take_strategy_checkpoint().is_some());
+    std::fs::write(
+        &module_function,
+        format!("{file_source}\nSTRATEGY_STATELESS = True\nSTRATEGY_MANIFEST = {{'required_capabilities': ['timer']}}\n"),
+    )
+    .unwrap();
+    let mut rejected_module_function = PythonStrategyClient::start_for_runtime_worker(
+        module_function.to_string_lossy().as_ref(),
+        5000,
+        StrategyTransport::Jsonl,
+        SharedRingConfig::default(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some("runtime-module-function-unsupported-capability"),
+    )
+    .expect("Runtime module-function host starts before its first request");
+    let rejected_module_function = rejected_module_function
+        .request(&file_input)
+        .expect_err("Runtime module-function rejects Timer before calling its handler");
+    assert!(
+        rejected_module_function.contains("timer"),
+        "{rejected_module_function}"
+    );
+
+    // Missing capability fails at startup, before the factory can write a marker.
+    let marker = ring_directory.join("factory-executed");
+    let rejected_source = format!(
+        "STRATEGY_MANIFEST = {{'required_capabilities': ['timer']}}\ndef create_strategy(spec):\n    open({:?}, 'w').write('bad')\n", marker.to_string_lossy()
+    );
+    std::fs::write(&capability_module, rejected_source).unwrap();
+    let rejected = PythonStrategyClient::start_for_runtime_worker(
+        capability_module.to_string_lossy().as_ref(),
+        5000,
+        StrategyTransport::Jsonl,
+        SharedRingConfig::default(),
+        None,
+        Some(&spec),
+        Some("main"),
+        Some("okx"),
+        None,
+        Some("strategy-capability-test"),
+    );
+    assert!(rejected.is_err());
+    assert!(!marker.exists());
+    // A factory that never finishes cannot publish Runtime readiness.
+    std::fs::write(
+        &capability_module,
+        "import time\ndef create_strategy(spec):\n    time.sleep(30)\n",
+    )
+    .unwrap();
+    let audit_path = ring_directory.join("hung-startup.jsonl");
+    let timed_out = PythonStrategyClient::start_for_runtime_worker(
+        capability_module.to_string_lossy().as_ref(),
+        500,
+        StrategyTransport::Jsonl,
+        SharedRingConfig::default(),
+        None,
+        Some(&spec),
+        Some("main"),
+        Some("okx"),
+        Some(&audit_path),
+        Some("strategy-capability-timeout"),
+    )
+    .err()
+    .expect("hung factory must fail startup");
+    assert!(
+        timed_out.contains("initialization timed out"),
+        "{timed_out}"
+    );
+    assert!(!audit_path.with_extension("ready").exists());
+    let _ = std::fs::remove_dir_all(ring_directory);
+}
+
+#[test]
 fn rust_invokes_python_strategy_framed_json_worker_through_versioned_contract() {
     let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
     let module = workspace_root
@@ -445,10 +796,20 @@ fn rust_invokes_python_strategy_framed_json_worker_through_versioned_contract() 
         as_of: 1_700_000_000,
         instrument: "BTC/USDT.OKX".into(),
         positions: BTreeMap::new(),
+        positions_exact: BTreeMap::new(),
         cash: BTreeMap::from([("USDT".into(), 100_000_000_i128)]),
+        cash_exact: std::collections::BTreeMap::new(),
+        available_margin_exact: None,
         available_margin_raw: Some(100_000_000),
         risk_state: "ready".into(),
         research_targets: BTreeMap::from([("BTC/USDT.OKX".into(), 3_i128)]),
+        market_bars: BTreeMap::new(),
+        execution_updates: Vec::new(),
+        fill_updates: Vec::new(),
+        strategy_checkpoint: None,
+        market_ticks: Vec::new(),
+        market_order_books: Vec::new(),
+        account_updates: Vec::new(),
         bars: None,
     };
     let artifact_sha256 = qx_strategy::sha256_hex(&std::fs::read(&module).unwrap());
@@ -484,10 +845,20 @@ fn rust_stops_python_strategy_workers_when_each_transport_times_out() {
         as_of: 1_700_000_000,
         instrument: "BTC/USDT.OKX".into(),
         positions: BTreeMap::new(),
+        positions_exact: BTreeMap::new(),
         cash: BTreeMap::from([("USDT".into(), 100_000_000_i128)]),
+        cash_exact: std::collections::BTreeMap::new(),
+        available_margin_exact: None,
         available_margin_raw: Some(100_000_000),
         risk_state: "ready".into(),
         research_targets: BTreeMap::from([("BTC/USDT.OKX".into(), 3_i128)]),
+        market_bars: BTreeMap::new(),
+        execution_updates: Vec::new(),
+        fill_updates: Vec::new(),
+        strategy_checkpoint: None,
+        market_ticks: Vec::new(),
+        market_order_books: Vec::new(),
+        account_updates: Vec::new(),
         bars: Some(StrategyContractBars {
             source: "timeout-fixture".into(),
             ts: vec![1_699_999_999],
@@ -496,6 +867,7 @@ fn rust_stops_python_strategy_workers_when_each_transport_times_out() {
             low_raw: vec![99],
             close_raw: vec![101],
             volume_raw: vec![10],
+            exact_ohlcv: None,
         }),
     };
     let ring_directory = workspace_root.join("target").join(format!(
@@ -552,10 +924,20 @@ fn rust_invokes_python_strategy_over_both_shared_memory_transports() {
         as_of: 1_700_000_000,
         instrument: "BTC/USDT.OKX".into(),
         positions: BTreeMap::new(),
+        positions_exact: BTreeMap::new(),
         cash: BTreeMap::from([("USDT".into(), 100_000_000_i128)]),
+        cash_exact: std::collections::BTreeMap::new(),
+        available_margin_exact: None,
         available_margin_raw: Some(100_000_000),
         risk_state: "ready".into(),
         research_targets: BTreeMap::from([("BTC/USDT.OKX".into(), 3_i128)]),
+        market_bars: BTreeMap::new(),
+        execution_updates: Vec::new(),
+        fill_updates: Vec::new(),
+        strategy_checkpoint: None,
+        market_ticks: Vec::new(),
+        market_order_books: Vec::new(),
+        account_updates: Vec::new(),
         bars: Some(StrategyContractBars {
             source: "shared-memory-fixture".into(),
             ts: vec![1_699_999_998, 1_699_999_999],
@@ -564,6 +946,7 @@ fn rust_invokes_python_strategy_over_both_shared_memory_transports() {
             low_raw: vec![99, 100],
             close_raw: vec![101, 102],
             volume_raw: vec![10, 11],
+            exact_ohlcv: None,
         }),
     };
     let artifact_sha256 = qx_strategy::sha256_hex(&std::fs::read(&module).unwrap());
@@ -617,10 +1000,20 @@ fn rust_invokes_python_multi_intent_strategy_contract() {
         as_of: 1_700_000_000,
         instrument: "BTCUSDT.BINANCE".into(),
         positions: BTreeMap::new(),
+        positions_exact: BTreeMap::new(),
         cash: BTreeMap::from([("USDT".into(), 100_000_000_i128)]),
+        cash_exact: std::collections::BTreeMap::new(),
+        available_margin_exact: None,
         available_margin_raw: Some(100_000_000),
         risk_state: "ready".into(),
         research_targets: BTreeMap::new(),
+        market_bars: BTreeMap::new(),
+        execution_updates: Vec::new(),
+        fill_updates: Vec::new(),
+        strategy_checkpoint: None,
+        market_ticks: Vec::new(),
+        market_order_books: Vec::new(),
+        account_updates: Vec::new(),
         bars: None,
     };
     let output = invoke_python_strategy(

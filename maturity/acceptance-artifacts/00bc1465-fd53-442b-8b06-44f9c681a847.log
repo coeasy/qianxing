@@ -1,0 +1,26 @@
+tracked markdown files scanned: 78
+resolvable relative links in them: 522
+links into maturity/acceptance-artifacts/: 121
+tracked files under maturity/acceptance-artifacts/: 0
+links resolving only because the local disk has an untracked file: 146
+links broken on disk too (CI and locally): 0
+  LOCAL-ONLY maturity/acceptance-artifacts/ 121
+  LOCAL-ONLY docs 19
+  LOCAL-ONLY docs/hs300-sma-2010-present 2
+  LOCAL-ONLY maturity 2
+  LOCAL-ONLY schemas 2
+CI-FAITHFUL POINTER AUDIT FAILED: 146 local-only, 0 broken everywhere
+local-only links into maturity/acceptance-artifacts/: 121
+local-only links into anything else: 25
+the same audit against HEAD's committed bytes: 10
+attributable to the uncommitted working tree: 136
+  HEAD-LOCAL-ONLY docs/architecture-local-server-refactor-review-2026-10-28.md:27 docs/hs300-sma-2010-present/status.json
+  HEAD-LOCAL-ONLY docs/architecture-local-server-refactor-review-2026-10-28.md:317 docs/牵星Qianxing-本地与服务端策略运行架构对标及重构实施方案-2026-10-28.md
+  HEAD-LOCAL-ONLY docs/architecture-local-server-refactor-review-2026-10-28.md:317 maturity/strategy-run-refactor-work-packages.json
+  HEAD-LOCAL-ONLY docs/architecture-local-server-refactor-review-2026-10-28.md:319 docs/strategy-host-capabilities.md
+  HEAD-LOCAL-ONLY docs/architecture-local-server-refactor-review-2026-10-28.md:319 docs/strategy-deployment-observations.md
+  HEAD-LOCAL-ONLY docs/architecture-local-server-refactor-review-2026-10-28.md:319 docs/backtest-report-layout.md
+  HEAD-LOCAL-ONLY docs/architecture-local-server-refactor-review-2026-10-28.md:319 docs/local-backtest-validation.md
+  HEAD-LOCAL-ONLY docs/architecture-local-server-refactor-review-2026-10-28.md:319 docs/hs300-sma-2010-present/README.md
+  HEAD-LOCAL-ONLY docs/architecture-local-server-refactor-review-2026-10-28.md:658 maturity/acceptance-artifacts/c0c8ecbf-56d1-43ed-8b02-a622a381f704.log
+  HEAD-LOCAL-ONLY docs/strategy-project-runs.md:211 docs/backtest-report-layout.md

@@ -1,0 +1,53 @@
+$ cargo test -p qx-cli --offline --test app_three_entrypoints
+exit_code=0
+
+[stdout]
+
+running 33 tests
+test multi_leg_experiment_entrypoints::multi_leg_experiment_run_handle_delivers_the_terminal_report_over_http ... ok
+test multi_builtin_parity::multi_builtin_cli_preserves_stdout_and_artifacts_with_fractional_price_sizing ... ok
+test legacy_builtin_parity::configured_builtin_matches_the_qx_app_spec_after_signal_and_fill_binding ... ok
+test algo_execution_entrypoints::twap_plan_is_identical_across_cli_http_and_python_native ... ok
+test market_spec_entrypoints::ashare_rule_snapshot_runs_identically_across_cli_http_and_python ... ok
+test multi_market_experiment_entrypoints::multi_market_experiment_async_route_delivers_terminal_report ... ok
+test market_spec_entrypoints::backtest_refuses_simulated_fills_outside_the_frozen_market_tick ... ok
+test market_spec_entrypoints::frozen_market_spec_is_used_by_cli_http_and_python_bar_runs ... ok
+test multi_leg_experiment_entrypoints::multi_leg_strategy_selection_is_shared_by_cli_http_and_python ... ok
+test multi_leg_experiment_entrypoints::the_same_multi_leg_spec_runs_through_cli_http_and_python_shared_rust_use_cases ... ok
+test multi_account_entrypoints::all_failed_multi_account_package_relocates_and_verifies_without_claiming_recompute ... ok
+test compare_runs_agrees_across_cli_http_and_python_with_stable_ranking ... ok
+test multi_market_experiment_entrypoints::multi_market_parameter_experiment_is_shared_by_cli_http_and_python ... ok
+test multi_account_entrypoints::partial_multi_account_package_recomputes_after_source_removal ... ok
+test multi_leg_report_entrypoints::cli_and_python_read_the_same_complete_bounded_multi_leg_report ... ok
+test parameter_experiment_uses_the_same_rust_use_case_from_cli_http_and_python ... ok
+test multi_leg_experiment_entrypoints::multi_leg_parameter_experiment_is_shared_by_cli_http_and_python ... ok
+test portfolio_entrypoints::same_account_strategy_basket_is_shared_by_cli_http_and_python ... ok
+test multi_leg_report_entrypoints::cli_and_python_read_the_same_replay_verified_multi_leg_facts ... ok
+test multi_leg_report_entrypoints::cli_and_python_read_the_same_replay_verified_multi_leg_event_page ... ok
+test protective_exit_entrypoints::protective_exit_backtest_is_identical_across_cli_http_and_python_native ... ok
+test multi_account_entrypoints::joint_exchange_backtest_command_runs_okx_and_bitget_accounts ... ok
+test risk_parity_entrypoints::risk_parity_plan_is_identical_across_cli_http_and_python_native ... ok
+test the_same_failure_gives_the_same_error_document_from_cli_http_and_python ... ok
+test the_same_backtest_spec_gives_the_same_result_hash_from_cli_http_and_python ... ok
+test sizing_entrypoints::fractional_kelly_sizing_is_shared_by_cli_http_and_python ... ok
+test provider_report_entrypoints::provider_bar_and_depth_report_commands_return_verified_shared_reports ... ok
+test classic_strategy_entrypoints::ten_classic_strategies_backtest_identically_across_entrypoints has been running for over 60 seconds
+test legacy_builtin_parity::legacy_builtin_strategies_match_qx_app_default_engine_results has been running for over 60 seconds
+test multi_account_entrypoints::isolated_multi_account_backtest_is_shared_by_cli_http_and_python has been running for over 60 seconds
+test multi_market_report_entrypoints::cli_and_python_read_the_same_replay_verified_multi_market_event_page ... ok
+test multi_market_report_entrypoints::cli_and_python_read_the_same_replay_verified_multi_market_depth_event_page ... ok
+test the_verify_use_case_also_agrees_across_entrypoints ... ok
+test multi_account_entrypoints::isolated_multi_account_backtest_is_shared_by_cli_http_and_python ... ok
+test classic_strategy_entrypoints::ten_classic_strategies_backtest_identically_across_entrypoints ... ok
+test legacy_builtin_parity::legacy_builtin_strategies_match_qx_app_default_engine_results ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 90.21s
+
+
+[stderr]
+   Compiling qx-cli v0.4.0 (D:\aex_work\qianxing\crates\qx-cli)
+   Compiling qx-app v0.4.0 (D:\aex_work\qianxing\crates\qx-app)
+   Compiling qx-api v0.4.0 (D:\aex_work\qianxing\crates\qx-api)
+   Compiling qx-service v0.4.0 (D:\aex_work\qianxing\crates\qx-service)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 42.13s
+     Running tests\app_three_entrypoints.rs (target\debug\deps\app_three_entrypoints-a5967fbf03bb6cb8.exe)

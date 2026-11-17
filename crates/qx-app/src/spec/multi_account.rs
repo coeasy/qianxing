@@ -8,7 +8,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 pub const MULTI_ACCOUNT_BACKTEST_SCHEMA_VERSION: u32 = 1;
+pub const MULTI_ACCOUNT_BACKTEST_RESULT_SCHEMA_VERSION: u32 = 2;
 pub const MAX_MULTI_ACCOUNT_RUNS: usize = 32;
+
+fn legacy_multi_account_backtest_result_schema_version() -> u32 {
+    1
+}
 
 /// A batch of independent account backtests. Every member retains its own
 /// ledger and run artifacts; this does not net cash, positions, or risk across
@@ -137,11 +142,19 @@ pub struct MultiAccountBacktestSummary {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MultiAccountBacktestResult {
+    /// Embedded response version; historical v1 JSON without this field remains readable.
+    #[serde(default = "legacy_multi_account_backtest_result_schema_version")]
+    pub schema_version: u32,
     pub batch_id: String,
     pub settlement_currency: String,
     pub spec_fingerprint: String,
     pub runs: Vec<MultiAccountRunResult>,
     pub summary: MultiAccountBacktestSummary,
+    /// Parent-level identity binding all successful account runs and the aggregate summary.
+    /// Historical v1 results omit this field; current producers always emit it when at least one
+    /// account succeeds.
+    #[serde(default)]
+    pub run_manifest: Option<qx_core::RunManifest>,
 }
 
 impl MultiAccountBacktestResult {

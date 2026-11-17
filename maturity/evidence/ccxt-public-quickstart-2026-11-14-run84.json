@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "workflow": "Public CCXT quickstart acceptance",
+  "workflow_run_id": 43529237528,
+  "workflow_run_number": 84,
+  "workflow_conclusion": "failure",
+  "head_commit": "3b062cb9e6458f8d4d6a1fe1ff9f22338288b480",
+  "public_data_only": true,
+  "credentials_loaded": false,
+  "orders_submitted": false,
+  "venue_results": {
+    "okx": {
+      "job_id": 132246174073,
+      "status": "success",
+      "instrument": "BTC/USDT:USDT.OKX",
+      "timeframe": "15m",
+      "window_days": 180,
+      "bars": 17280,
+      "missing_intervals": 0,
+      "fills": 954,
+      "rejected_orders": 0,
+      "result_hash": "ada2d2ed8a7a2f4b",
+      "html_report": true,
+      "artifact_id": 14087411106,
+      "artifact_digest": "sha256:8ebac83ee0c7740c56628294cd866f2ae06bae0ec33c0be35665cf17aac426eb"
+    },
+    "bitget": {
+      "job_id": 132246173930,
+      "status": "success",
+      "instrument": "BTC/USDT:USDT.BITGET",
+      "timeframe": "15m",
+      "window_days": 52,
+      "bars": 4992,
+      "missing_intervals": 0,
+      "fills": 261,
+      "rejected_orders": 0,
+      "result_hash": "594e135be9977e78",
+      "html_report": true,
+      "artifact_id": 14087785298,
+      "artifact_digest": "sha256:339a5afcd27cd2e8518f7d58365c6c76cd4a1018fdc2cbb1560aa419354e1f80"
+    },
+    "binance": {
+      "job_id": 132246173901,
+      "status": "failure",
+      "instrument": "BTC/USDT:USDT.BINANCE",
+      "timeframe": "15m",
+      "window_days": 180,
+      "bars": null,
+      "failure_stage": "load_markets",
+      "http_status": 451,
+      "endpoint": "https://api.binance.com/api/v3/exchangeInfo",
+      "reason": "restricted-location eligibility response",
+      "artifact_id": 14087515796,
+      "artifact_digest": "sha256:f022d910519c3337b49a603dc36b09a0278aeb0ad10fb8594bc5e81d7f2f8fa7"
+    }
+  },
+  "limitations": [
+    "The result proves anonymous public-data backtest and HTML report completion for OKX and Bitget only.",
+    "Binance was blocked before market loading completed; this does not establish Binance behavior in other eligible regions.",
+    "Artifact digests are GitHub workflow metadata and were not independently recomputed locally.",
+    "No private API, Testnet/Live order, account-specific fee, or strategy profitability claim is supported."
+  ]
+}

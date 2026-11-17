@@ -1,0 +1,13 @@
+$ python -c import sys,unittest; sys.path.insert(0,'python/tests'); from test_project_runs import ProjectRunTests; names=['test_project_report_refuses_to_overwrite_indexed_summary_or_run_receipt','test_project_report_resolves_symlink_alias_to_protected_input']; suite=unittest.TestSuite(ProjectRunTests(name) for name in names); raise SystemExit(not unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful())
+exit_code=0
+
+[stdout]
+
+[stderr]
+test_project_report_refuses_to_overwrite_indexed_summary_or_run_receipt (test_project_runs.ProjectRunTests.test_project_report_refuses_to_overwrite_indexed_summary_or_run_receipt) ... ok
+test_project_report_resolves_symlink_alias_to_protected_input (test_project_runs.ProjectRunTests.test_project_report_resolves_symlink_alias_to_protected_input) ... ok
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.121s
+
+OK

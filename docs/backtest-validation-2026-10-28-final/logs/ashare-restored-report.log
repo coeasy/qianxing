@@ -1,0 +1,193 @@
+{
+  "fidelity": {
+    "absent": [
+      "/dataset_quality/manifest_fingerprint",
+      "/dataset_quality/quality_report/row_count",
+      "/execution_model",
+      "/metrics/sortino",
+      "/metrics/calmar",
+      "/metrics/profit_factor"
+    ],
+    "computed": [
+      "/metrics/return_bps",
+      "/metrics/max_drawdown_bps",
+      "/metrics/fees_raw",
+      "/metrics/turnover_raw",
+      "/metrics/final_equity_raw",
+      "/metrics/sharpe",
+      "/metrics/win_rate",
+      "/fills",
+      "/rejected_orders"
+    ],
+    "configured": [
+      "/account/initial_cash_raw",
+      "/account/source",
+      "/risk_rules/rule_set_version",
+      "/risk_rules/source",
+      "/execution_costs/source"
+    ],
+    "estimated": [
+      "/matching_kernel",
+      "/fill_model",
+      "/model_descriptors",
+      "/assumptions"
+    ],
+    "observed": [
+      "/input/kind",
+      "/input/dataset_id",
+      "/input/dataset_version",
+      "/input/fingerprint",
+      "/bars",
+      "/replay/events",
+      "/replay/log_digest"
+    ],
+    "source_artifact": "summary"
+  },
+  "input_check": {
+    "dataset_id": "strategy-bars:000001.SZSE",
+    "dataset_version": "barframe-json-v1",
+    "declared_and_recomputed_match": true,
+    "fingerprint": "5e59cfcf3adca434",
+    "kind": "barframe",
+    "path": "D:\\workspace\\qval-1028b\\a1\\qianxing.ashare.bar-frame.example.json",
+    "verdict": "verified"
+  },
+  "runtime_version": "0.3.0",
+  "schema_version": 1,
+  "summary": {
+    "account": {
+      "initial_cash_raw": "100000000000000",
+      "source": "builtin-default"
+    },
+    "artifact_locations": {
+      "equity": "D:\\workspace\\qval-1028b\\a1\\data\\qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE_92452fd39cfcbcac59f5aa9d9399df881f803ea9620c0857371b60cfb6b64bab_134288aa2f947994fc7f6d10-1c3380da7fac8c30.v7.equity.csv",
+      "fills": "D:\\workspace\\qval-1028b\\a1\\data\\qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE_92452fd39cfcbcac59f5aa9d9399df881f803ea9620c0857371b60cfb6b64bab_134288aa2f947994fc7f6d10-1c3380da7fac8c30.v7.fills.csv",
+      "run_manifest": "D:\\workspace\\qval-1028b\\a1\\data\\qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE_92452fd39cfcbcac59f5aa9d9399df881f803ea9620c0857371b60cfb6b64bab_134288aa2f947994fc7f6d10-1c3380da7fac8c30.run.json",
+      "summary": "D:\\workspace\\qval-1028b\\a1\\data\\qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE_92452fd39cfcbcac59f5aa9d9399df881f803ea9620c0857371b60cfb6b64bab_134288aa2f947994fc7f6d10-1c3380da7fac8c30.v7.summary.json"
+    },
+    "assumptions": [
+      "data_tier=Bar",
+      "benchmark=flat-cash",
+      "metrics=scale-aware-exact-with-raw-compatibility-projections",
+      "virtual_trading=funding:0 interest:0 delivery:0 liquidation:false"
+    ],
+    "bars": 6,
+    "clock_end": 1717466400000,
+    "clock_start": 1717378200000,
+    "execution_attempt_count": 1,
+    "execution_attempts": [
+      {
+        "displayed_qty_raw": null,
+        "displayed_reduction_raw": null,
+        "estimated_volume_raw": null,
+        "filled_qty_raw": 100000000000,
+        "instrument": "000001.SZSE",
+        "order_id": 1,
+        "price_exact": {
+          "coefficient": "1045",
+          "scale": 2
+        },
+        "price_raw": 10450000000,
+        "queue_ahead_after_raw": null,
+        "queue_ahead_before_raw": null,
+        "queue_consumed_raw": null,
+        "reason": "filled",
+        "remaining_qty_raw": 0,
+        "requested_qty_raw": 100000000000,
+        "side": "Buy",
+        "ts": 1717466400000
+      }
+    ],
+    "execution_costs": {
+      "source": "ashare-rules:D:\\workspace\\qval-1028b\\a1\\qianxing.ashare.rules.json"
+    },
+    "fill_model": {
+      "assumption": "假设下一根bar开盘可全部成交；不建模排队与容量",
+      "data_tier": "Bar",
+      "descriptor_schema_version": 1,
+      "name": "next_bar_open",
+      "parameters": "",
+      "source": "builtin-default",
+      "version": "v1"
+    },
+    "fills": 1,
+    "input": {
+      "dataset_id": "strategy-bars:000001.SZSE",
+      "dataset_version": "barframe-json-v1",
+      "fingerprint": "5e59cfcf3adca434",
+      "kind": "barframe",
+      "path": "D:\\workspace\\qval-1028b\\a1\\qianxing.ashare.bar-frame.example.json"
+    },
+    "input_data_hash": "982df19cca407443",
+    "instrument": "000001.SZSE",
+    "market_spec": "D:\\workspace\\qval-1028b\\a1\\qianxing.ashare.spot.spec.json",
+    "matching_kernel": "qx-xingban::BacktestEngine(bar)",
+    "metrics": {
+      "calmar": null,
+      "fees_raw": 5104500000,
+      "final_equity_raw": 100019895500000,
+      "max_drawdown_bps": 0,
+      "profit_factor": null,
+      "return_bps": 1,
+      "sharpe": 0.4472135954999579,
+      "sortino": null,
+      "turnover_raw": 1045000000000,
+      "win_rate": 0.2
+    },
+    "metrics_exact": {
+      "equity": {
+        "final": "100019.8955",
+        "initial": "100000",
+        "max_drawdown": "0",
+        "max_drawdown_bps": "0",
+        "return": "19.8955",
+        "return_bps": "1"
+      },
+      "fees_by_currency": {
+        "CNY": "5.1045"
+      },
+      "turnover": {
+        "amount": "1045",
+        "currency": "CNY"
+      }
+    },
+    "model_descriptors": [
+      "NextBarOpen@v1[tier=Bar;params=;assumption=假设下一根bar开盘可全部成交；不建模排队与容量]",
+      "AShareFee@v1[params=commission_bp=3;min_commission=5000000000;stamp_duty_bp=5;transfer_fee_bp=1]",
+      "ZeroLatency@v1[delay_ns=0]",
+      "NoMargin@v1",
+      "AshareRules@v2[board=Main;t_plus_one=true;lot_size=100000000000;limit_up_bp=1000;limit_down_bp=1000;price_tick=10000000;commission_bp=3;min_commission=5000000000;stamp_duty_bp=5;transfer_fee_bp=1;calendar=0;trading_days=2;sessions=4;halted=0;actions=1;actions_hash=3ccac4992760a857]"
+    ],
+    "rejected_orders": 0,
+    "rejection_reasons": [],
+    "replay": {
+      "events": 13,
+      "ledger_entries": 4,
+      "log_digest": "6e120606d81369b5",
+      "run_ledger_entries": 4
+    },
+    "result_hash": "6e120606d81369b5",
+    "risk_rules": {
+      "rule_set_version": "conservative-default-v1+implicit-no-short",
+      "source": "runtime-config"
+    },
+    "run_manifest": "D:\\workspace\\qval-1028b\\a1\\data\\qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE_92452fd39cfcbcac59f5aa9d9399df881f803ea9620c0857371b60cfb6b64bab_134288aa2f947994fc7f6d10-1c3380da7fac8c30.run.json",
+    "run_record": "D:\\workspace\\qval-1028b\\a1\\data\\qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE_92452fd39cfcbcac59f5aa9d9399df881f803ea9620c0857371b60cfb6b64bab_134288aa2f947994fc7f6d10-1c3380da7fac8c30.v7.record.json",
+    "runtime_config": "D:\\workspace\\qval-1028b\\a1\\qianxing.runtime.json",
+    "sample_unit": "bar",
+    "schema_version": 7,
+    "signal": {
+      "declared_unused": "builtin_period,builtin_threshold_bps",
+      "fast_window": 2,
+      "kind": "ema_cross",
+      "knobs": "fast_window,slow_window",
+      "period": 14,
+      "quantity_raw": "100000000000",
+      "slow_window": 3,
+      "source": "config",
+      "threshold_bps": "0"
+    },
+    "strategy_id": "strategy-ashare"
+  },
+  "summary_path": "D:\\workspace\\qval-1028b\\a1\\data\\qianxing-ashare\\runs\\strategy-backtest_strategy-ashare_000001.SZSE_92452fd39cfcbcac59f5aa9d9399df881f803ea9620c0857371b60cfb6b64bab_134288aa2f947994fc7f6d10-1c3380da7fac8c30.v7.summary.json"
+}

@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/strategy-prepared-evaluation-v3.json",
+  "title": "Qianxing Prepared Strategy Evaluation v3",
+  "description": "Durable decision, command outbox, recovery markers and checkpoint for replay-safe strategy worker recovery. payload_sha256 binds every other field and detects valid-JSON mutation or corruption. The persisted journal is limited to 8 MiB; readers and serializers enforce the limit with bounded streaming.",
+  "type": "object",
+  "required": [
+    "schema_version", "worker_id", "job_id", "run_id", "input_sha256",
+    "facts_sha256", "config_sha256", "lease_fencing_token", "ranges",
+    "orders", "commands", "completed_command_ids", "command_results",
+    "payload_sha256"
+  ],
+  "properties": {
+    "schema_version": {"const": 3},
+    "worker_id": {"type": "string", "minLength": 1},
+    "job_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+    "input_sha256": {"$ref": "#/$defs/sha256"},
+    "facts_sha256": {"$ref": "#/$defs/sha256"},
+    "config_sha256": {"$ref": "#/$defs/sha256"},
+    "lease_fencing_token": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+    "ranges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["log_name", "from_seq", "through_seq"],
+        "properties": {
+          "log_name": {"type": "string", "minLength": 1},
+          "from_seq": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+          "through_seq": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615}
+        },
+        "additionalProperties": false
+      }
+    },
+    "orders": {"type": "array", "items": {"type": "object"}},
+    "commands": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["command_id", "request_id", "operator_id", "reason", "kind", "target", "payload", "permission", "dry_run"],
+        "properties": {
+          "command_id": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+          "request_id": {"type": "string", "minLength": 1},
+          "operator_id": {"type": "string", "minLength": 1},
+          "reason": {"type": "string", "minLength": 1},
+          "kind": {"type": "string"},
+          "target": {"type": "string", "minLength": 1},
+          "payload": {"type": "object", "additionalProperties": {"type": "string"}},
+          "permission": {"type": "string"},
+          "dry_run": {"type": "boolean", "const": false}
+        },
+        "additionalProperties": true
+      }
+    },
+    "spread_group_id": {"type": ["string", "null"]},
+    "checkpoint": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": ["schema_version", "strategy_id", "strategy_version", "adapter_state", "strategy_state"],
+          "properties": {
+            "schema_version": {"const": 1},
+            "strategy_id": {"type": "string", "minLength": 1},
+            "strategy_version": {"type": "string", "minLength": 1},
+            "adapter_state": {},
+            "strategy_state": {}
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "completed_command_ids": {
+      "type": "array",
+      "items": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+      "uniqueItems": true
+    },
+    "command_results": {
+      "type": "object",
+      "propertyNames": {"pattern": "^(0|[1-9][0-9]*)$"},
+      "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 4096}
+    },
+    "payload_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[A-Fa-f0-9]{64}$"}
+  }
+}

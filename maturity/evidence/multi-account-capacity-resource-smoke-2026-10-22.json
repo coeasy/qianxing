@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "multi_account_multi_strategy_bar_capacity",
+  "generated_at_utc": "2026-10-22T05:24:32Z",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "binary": "D:\\aex_work\\qianxing\\target\\release\\qx-cli.exe",
+  "binary_sha256": "c61f0999a4b5aa6392e86df427db89d9ae9031504953d752025811b87674bef5",
+  "measurement_source_fingerprint_schema": 3,
+  "measurement_source_fingerprint": "ded9dccfea2583301fbc1cc0122ed5f4d26b26057caef9ae61dd4a664925e6c3",
+  "bars_per_account": 256,
+  "repeats": 2,
+  "configured_workloads": [
+    {
+      "accounts": 2,
+      "strategies_per_account": 1
+    }
+  ],
+  "method": "one qx-cli multi-account-backtest process; every account runs the same synthetic BarFrame through the normal per-account BacktestSpec path and optional same-account strategy portfolio",
+  "profile_coverage_claim": false,
+  "profile_target_statuses_updated": false,
+  "scope_limitations": [
+    "synthetic crypto spot Bars without TradingInstrumentSpec or venue rules",
+    "MultiAccountBacktestSpec accounts execute sequentially; this measures batch memory and wall time, not internal scheduler concurrency",
+    "does not exercise external provider, Paper, network, or multi-venue profile paths",
+    "process-tree RSS is a sampled aggregate and may miss brief spikes"
+  ],
+  "workloads": [
+    {
+      "accounts": 2,
+      "strategies_per_account": 1,
+      "total_strategy_slots": 2,
+      "bars_per_account": 256,
+      "bars_total": 512,
+      "bars_times_strategy_slots": 512,
+      "warmup_wall_ms": 324.002,
+      "p50_wall_ms": 343.912,
+      "p95_wall_ms": 379.348,
+      "peak_rss_bytes_max": 7241728,
+      "aggregate_process_tree_peak_rss_bytes_max": 7241728,
+      "peak_process_count": 1,
+      "process_tree_cpu_seconds_p50": null,
+      "process_tree_io_read_bytes_max": 46117,
+      "process_tree_io_write_bytes_max": 39105,
+      "successful_fills": 2,
+      "result_hashes_by_account": [
+        "89766f6b3f7b4f3e",
+        "64d9d359cc8b1a96"
+      ],
+      "deterministic_across_repeats": true
+    }
+  ]
+}

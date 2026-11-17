@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "control_command_executor_coverage_linux_podman",
+  "generated_at_utc": "2026-11-12T02:21:36Z",
+  "source": {
+    "git_head": "2b029879381bc387098a42c9e249817cc8eb9b5c",
+    "worktree_dirty": true,
+    "dirty_paths_related_to_this_evidence": []
+  },
+  "environment": {
+    "os": "Linux",
+    "container_image": "mirror.gcr.io/library/rust:1.98.1-bookworm",
+    "container_runtime": "Podman",
+    "rustc": "1.98.1",
+    "dependency_resolution": "offline, locked"
+  },
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--locked",
+    "-j",
+    "2",
+    "-p",
+    "qx-cli",
+    "--bin",
+    "qx-cli",
+    "control_",
+    "--",
+    "--test-threads=1"
+  ],
+  "result": {
+    "exit_code": 0,
+    "selected_tests": 10,
+    "passed": 10,
+    "failed": 0,
+    "filtered_out": 496,
+    "runtime_seconds": 5.15,
+    "relevant_tests": [
+      "control_command_executor_coverage::command_kind_all_enumerates_every_variant_in_the_source",
+      "control_command_executor_coverage::control_command_kinds_match_executors",
+      "control_command_executor_coverage::control_plane_acceptance_kinds_are_listed_in_the_ops_doc",
+      "control_command_executor_coverage::control_plane_accepts_only_the_kinds_that_have_an_executor"
+    ]
+  },
+  "scope_limitations": [
+    "This validates control-plane command acceptance, executor-source alignment, and documentation parity only.",
+    "No exchange API request was made; this is not Binance OCO sandbox or production evidence.",
+    "Order-list query, cancellation, private-stream reduction, and restart reconciliation remain incomplete."
+  ]
+}

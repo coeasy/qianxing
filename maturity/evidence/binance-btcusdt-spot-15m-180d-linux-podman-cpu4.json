@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "scenario": "qx-cli app backtest with frozen public 180d BTCUSDT 15m data",
+  "hardware": {
+    "os": "Linux",
+    "arch": "x86_64",
+    "processor": "",
+    "logical_cpu_count": 16,
+    "physical_core_count": null,
+    "total_ram_bytes": 32273678336
+  },
+  "binary": "target/release/qx-cli",
+  "binary_sha256": "0199aafba79efb76931d0545bd3871f2ba424acdba27094c4caf7e8484e82fd9",
+  "measurement_source_fingerprint": "56999eea75afba5a471dd02d009bcdc6ed7d3c739f2a6bfe342ee6769674d767",
+  "measurement_source_fingerprint_schema": 4,
+  "bars_path": "maturity/fixtures/binance-btcusdt-spot-15m-180d-2026-11-11.json",
+  "bars_sha256": "d3032cefeb01493b9e3bbb656bab902feb43f3cce18a7678769b2ff7e54fcc03",
+  "spec_template_path": "benchmarks/fixtures/binance-btcusdt-spot-15m-backtest.json",
+  "spec_template_sha256": "4238ec5b389de00970fda050db6576c48b02a4a30b911f7402d6b308679055b4",
+  "repeats": 7,
+  "bars": 17280,
+  "warmup_result_hash": "ec0156aed78ab9ef",
+  "result_hash": "ec0156aed78ab9ef",
+  "deterministic_across_repeats": true,
+  "bars_per_second_at_p50": 25207.33,
+  "p50_ms": 685.515,
+  "p95_ms": 713.662,
+  "mean_ms": 678.455,
+  "resources": {
+    "peak_process_rss_bytes": 81690624,
+    "peak_process_tree_rss_bytes": null,
+    "peak_process_count": 1,
+    "process_tree_cpu_seconds": null,
+    "process_tree_io_read_bytes": null,
+    "process_tree_io_write_bytes": null,
+    "resource_samples": 7,
+    "peak_rss_samples_available": 7
+  },
+  "runtime_context": {
+    "container_runtime": "podman",
+    "container_image": "mirror.gcr.io/library/rust:1.98.1-bookworm",
+    "benchmark_cpu_affinity": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "benchmark_cpu_affinity_count": 4,
+    "cgroup_version": 2,
+    "cgroup_controllers_visible": [],
+    "cgroup_cpu_quota_micros": null,
+    "cgroup_cpu_period_micros": null,
+    "cgroup_cpu_limit_count": null,
+    "cgroup_cpuset_cpus_effective": null,
+    "cgroup_memory_limit_bytes": null,
+    "cgroup_memory_current_bytes": null,
+    "cgroup_files_visible": true,
+    "cpu_affinity": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15
+    ],
+    "cpu_affinity_count": 16
+  },
+  "samples": [
+    {
+      "elapsed_ms": 652.852,
+      "peak_process_rss_bytes": 81379328,
+      "peak_process_tree_rss_bytes": null,
+      "peak_process_count": 1,
+      "tree_cpu_seconds": null,
+      "tree_io_read_bytes": null,
+      "tree_io_write_bytes": null
+    },
+    {
+      "elapsed_ms": 694.667,
+      "peak_process_rss_bytes": 81670144,
+      "peak_process_tree_rss_bytes": null,
+      "peak_process_count": 1,
+      "tree_cpu_seconds": null,
+      "tree_io_read_bytes": null,
+      "tree_io_write_bytes": null
+    },
+    {
+      "elapsed_ms": 691.695,
+      "peak_process_rss_bytes": 81690624,
+      "peak_process_tree_rss_bytes": null,
+      "peak_process_count": 1,
+      "tree_cpu_seconds": null,
+      "tree_io_read_bytes": null,
+      "tree_io_write_bytes": null
+    },
+    {
+      "elapsed_ms": 651.44,
+      "peak_process_rss_bytes": 81408000,
+      "peak_process_tree_rss_bytes": null,
+      "peak_process_count": 1,
+      "tree_cpu_seconds": null,
+      "tree_io_read_bytes": null,
+      "tree_io_write_bytes": null
+    },
+    {
+      "elapsed_ms": 659.355,
+      "peak_process_rss_bytes": 81281024,
+      "peak_process_tree_rss_bytes": null,
+      "peak_process_count": 1,
+      "tree_cpu_seconds": null,
+      "tree_io_read_bytes": null,
+      "tree_io_write_bytes": null
+    },
+    {
+      "elapsed_ms": 685.515,
+      "peak_process_rss_bytes": 81375232,
+      "peak_process_tree_rss_bytes": null,
+      "peak_process_count": 1,
+      "tree_cpu_seconds": null,
+      "tree_io_read_bytes": null,
+      "tree_io_write_bytes": null
+    },
+    {
+      "elapsed_ms": 713.662,
+      "peak_process_rss_bytes": 81301504,
+      "peak_process_tree_rss_bytes": null,
+      "peak_process_count": 1,
+      "tree_cpu_seconds": null,
+      "tree_io_read_bytes": null,
+      "tree_io_write_bytes": null
+    }
+  ],
+  "limitations": [
+    "This measures qx-cli with this declared BacktestSpec and frozen data only; it is not a same-semantics competitor comparison.",
+    "Fill model, fee schedule, and inline market rules come from the spec template and are not claimed to be a current Binance exchangeInfo snapshot.",
+    "The result hash is deterministic execution evidence, not evidence of strategy profitability.",
+    "No effective cgroup CPU quota was observable; CPU affinity constrains eligible CPUs but does not establish a CPU-time quota.",
+    "No effective cgroup memory limit was observable; host/container RAM totals must not be treated as the benchmark memory budget.",
+    "Process-tree RSS was unavailable in this environment; peak RSS covers the measured CLI process only."
+  ]
+}

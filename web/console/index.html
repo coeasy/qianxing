@@ -27,9 +27,8 @@
     要同源形态（服务端会话 + CSRF 双提交 + 身份注入，浏览器只跟一个源说话）就用
     <code>qx-cli console &lt;runtime.json&gt;</code>——它在回环地址上同时发这一页并代理 API，
     凭据全留在服务端。
-    <strong>写面只有一条</strong>：本页的读面板全部只做查询，唯一的写操作是
-    <code>POST /control/commands</code>（控制面受理入口）。它<strong>不直接下单</strong>——
-    下单要走这条命令，由控制面受理 → 判定执行者 → 走到终态退场。
+    <strong>写操作</strong>仅提交到 API 的受认证入口：控制命令与策略部署修订/操作。
+    控制命令<strong>不直接下单</strong>——下单要走控制面受理 → 判定执行者 → 走到终态退场。
     身份边界：<code>operator_id</code> 是审计字段，启用访问策略的部署里由 mTLS 认证边界覆盖，
     页面<strong>不能自声明</strong>身份（那时会回 <code>403 authenticated_operator_required</code>）。
     跨源读取必须在部署配置的 <code>api.cors_allowed_origins</code> 里逐字符登记本源
@@ -62,20 +61,98 @@
     <section class="card" id="card-orders">
       <h2>订单 <span class="hint">/account/orders</span></h2>
       <div class="tablewrap"><table id="orders-table"><thead>
-        <tr><th>标的</th><th>方向</th><th>状态</th><th>数量</th><th>成交</th></tr>
+        <tr><th>标的</th><th>方向</th><th>状态</th><th>数量</th><th>成交</th><th>客户端订单号 / 事件</th></tr>
+      </thead><tbody></tbody></table></div>
+    </section>
+
+    <section class="card wide" id="card-order-groups">
+      <h2>保护单组 <span class="hint">/account/order-groups · OCO / Bracket</span></h2>
+      <p class="foot">状态来自持久化订单组读模型；展开可查看领域意图、子腿身份与状态快照。该快照不含交易所原始请求/响应；“待对账”表示远端状态尚未确认，请先对账，不要重复提交。</p>
+      <div class="tablewrap"><table id="order-groups-table"><thead>
+        <tr><th>组 / 类型 / 账户</th><th>状态</th><th>交易所组 ID</th><th>子腿状态、成交与事件入口</th></tr>
       </thead><tbody></tbody></table></div>
     </section>
 
     <section class="card" id="card-positions">
       <h2>持仓 <span class="hint">/account/positions</span></h2>
       <div class="tablewrap"><table id="positions-table"><thead>
-        <tr><th>标的</th><th>数量</th><th>当日量</th><th>均价</th><th>标记价</th><th>未实现盈亏</th><th>保证金</th></tr>
+        <tr><th>标的</th><th>结算币种</th><th>数量</th><th>当日量</th><th>均价</th><th>标记价</th><th>未实现盈亏</th><th>保证金</th></tr>
+      </thead><tbody></tbody></table></div>
+    </section>
+
+    <section class="card wide" id="card-account-activity">
+      <h2>账户活动报告 <span class="hint">/account/activity · 按账户与 venue 查询</span></h2>
+      <p class="foot">account_id 和 venue_id 自动填入默认快照值，也可查询其他账户。点击事件行的关联 ID 可查看同 ID 事件。余额保留原币种；事件分页只覆盖该账户当前保留的投影日志，不代表交易所完整历史。跨币种估值请查看组合报告。</p>
+      <div class="actions">
+        <label for="account-activity-account-id">account_id <input id="account-activity-account-id" type="text" autocomplete="off" /></label>
+        <label for="account-activity-venue-id">venue_id <input id="account-activity-venue-id" type="text" autocomplete="off" /></label>
+        <label for="account-activity-client-order-id">客户端订单号 <input id="account-activity-client-order-id" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="可选" /></label>
+        <label for="account-activity-exchange-order-id">交易所订单号 <input id="account-activity-exchange-order-id" type="text" autocomplete="off" placeholder="可选" /></label>
+        <label for="account-activity-run-id">运行 ID <input id="account-activity-run-id" type="text" autocomplete="off" placeholder="可选" /></label>
+        <label for="account-activity-strategy-id">策略 ID <input id="account-activity-strategy-id" type="text" autocomplete="off" placeholder="可选" /></label>
+        <label for="account-activity-signal-id">信号 ID <input id="account-activity-signal-id" type="text" autocomplete="off" placeholder="可选" /></label>
+        <label for="account-activity-intent-id">意图 ID <input id="account-activity-intent-id" type="text" autocomplete="off" placeholder="可选" /></label>
+        <label for="account-activity-correlation-id">关联 ID <input id="account-activity-correlation-id" type="text" autocomplete="off" placeholder="可选" /></label>
+        <button id="account-activity-load" type="button">查询活动</button>
+      </div>
+      <div class="rows" id="account-activity-meta"><span class="muted">未连接</span></div>
+      <div class="actions">
+        <button id="account-activity-prev" type="button" disabled>较早事件</button>
+        <button id="account-activity-next" type="button" disabled>较新事件</button>
+      </div>
+      <div class="tablewrap tall"><table id="account-activity-events-table"><thead>
+        <tr><th>event id</th><th>seq</th><th>kind</th><th>ts</th><th>client order</th><th>exchange order</th><th>run</th><th>strategy</th><th>signal</th><th>intent</th><th>correlation</th></tr>
       </thead><tbody></tbody></table></div>
     </section>
 
     <section class="card" id="card-readmodels">
-      <h2>读模型计数 <span class="hint">/account/ledger · /reconcile/reports · /scheduler/runs · /control/audit</span></h2>
+      <h2>读模型与对账 <span class="hint">/account/ledger · /reconcile/reports · /scheduler/runs · /control/audit</span></h2>
+      <p class="foot">对账行显示 worker、账户、venue、观测时间和差异数量。没有报告表示状态未知，不等同于没有差异。</p>
       <div class="rows" id="readmodels-rows"><span class="muted">未连接</span></div>
+    </section>
+
+    <section class="card wide" id="card-strategy-deployments">
+      <h2>策略部署 <span class="hint">观察 / 修订 / 操作</span></h2>
+      <p class="foot">展示 worker 实际运行状态、观察时间及阻塞原因。进程运行不代表已完成交易所对账和实盘就绪验收。</p>
+      <div class="rows" id="strategy-deployments-rows"><span class="muted">未连接</span></div>
+      <details>
+        <summary>创建部署修订</summary>
+        <p class="foot">需要已认证的操作员身份。冻结配置引用的策略文件必须能被服务端读取；服务端会校验摘要并存入不可变部署仓库。回滚请先创建一个高于当前版本的新修订，并在该修订中放入所选历史配置；checkpoint 身份发生变化时，还需绑定精确的迁移清单。</p>
+        <form id="strategy-revision-form">
+          <div class="actions">
+            <label>Worker ID <input id="deployment-worker-id" required maxlength="256" autocomplete="off" /></label>
+            <label>修订号 <input id="deployment-revision" required type="number" min="1" step="1" /></label>
+            <label>Bundle SHA-256 <input id="deployment-bundle-sha256" required pattern="[0-9a-fA-F]{64}" /></label>
+            <label>Plan SHA-256 <input id="deployment-plan-sha256" required pattern="[0-9a-fA-F]{64}" /></label>
+          </div>
+          <label for="deployment-runtime-config">冻结的 RuntimeConfig JSON</label>
+          <textarea id="deployment-runtime-config" required spellcheck="false" rows="12" placeholder='{"strategy_workers":[]}'></textarea>
+          <label><input id="deployment-desired-running" type="checkbox" checked /> 修订期望运行</label>
+          <div class="actions"><button type="submit">创建不可变修订</button></div>
+        </form>
+        <pre id="strategy-revision-output" class="result" aria-live="polite">尚未提交</pre>
+      </details>
+      <details>
+        <summary>提交部署操作</summary>
+        <form id="strategy-operation-form">
+          <div class="actions">
+            <label>Worker ID <input id="operation-worker-id" required maxlength="256" autocomplete="off" /></label>
+            <label>操作
+              <select id="deployment-action">
+                <option value="deploy">Deploy</option><option value="stop">Stop</option>
+                <option value="rollback">Rollback（新建高版本修订）</option><option value="pause">Pause</option>
+                <option value="resume">Resume</option>
+              </select>
+            </label>
+            <label>目标修订 <input id="operation-target-revision" required type="number" min="1" step="1" /></label>
+          </div>
+          <div class="actions">
+            <button type="submit">提交操作</button>
+            <button id="strategy-operation-refresh" type="button" class="ghost">查询操作状态</button>
+          </div>
+        </form>
+        <pre id="strategy-operation-output" class="result" aria-live="polite">尚未提交</pre>
+      </details>
     </section>
 
     <section class="card wide" id="card-research">
@@ -133,6 +210,7 @@
         <option value="appMultiLegExperiment">多腿参数实验 · /app/run-multi-leg-experiment</option>
         <option value="appMultiAccountBacktest">多账户 Bar 回测 · /app/multi-account-backtest</option>
         <option value="appMultiAccountDepthBacktest">多账户深度回测 · /app/multi-account-depth-backtest</option>
+        <option value="appMultiAccountJointBacktest">OKX/Binance/Bitget 联合账户 Bar 回测 · /app/multi-account-joint-backtest</option>
         <option value="appMultiMarketBacktest">多市场 Bar 回测 · /app/multi-market-backtest</option>
         <option value="appMultiMarketDepthBacktest">多市场深度回测 · /app/multi-market-depth-backtest</option>
         <option value="appMultiMarketExperiment">多市场 Bar 参数实验 · /app/run-multi-market-experiment</option>
@@ -148,17 +226,273 @@
         <button id="extended-research-query" type="button" disabled>继续查询</button>
         <button id="extended-research-cancel" type="button" class="ghost" disabled>取消运行</button>
       </div>
+      <h3>运行事件</h3>
+      <div class="rows" id="extended-research-events-meta"><span class="muted">尚无运行事件</span></div>
+      <div class="tablewrap"><table id="extended-research-events-table"><thead>
+        <tr><th>seq</th><th>事件</th><th>状态</th><th>event_id</th></tr>
+      </thead><tbody></tbody></table></div>
       <pre id="extended-research-output" class="result" aria-live="polite">未运行</pre>
+    </section>
+
+    <section class="card wide" id="card-capability-catalog">
+      <h2>产品能力与验收证据 <span class="hint">按交易所、产品、账户模式、操作或稳定 ID 查询</span></h2>
+      <p class="foot">范围来自仓内代码、配置和离线测试；“实现未验收”不表示已通过真实沙盒。验收证据会随匹配结果一起显示。</p>
+      <div class="form-grid">
+        <label for="product-capability-id">能力 ID（可选）
+          <input id="product-capability-id" list="product-capability-ids" autocomplete="off" placeholder="qx.venue.ccxt_process">
+          <datalist id="product-capability-ids"></datalist>
+        </label>
+        <label for="product-capability-venue">交易所
+          <input id="product-capability-venue" list="product-capability-venues" autocomplete="off" placeholder="BINANCE">
+          <datalist id="product-capability-venues"></datalist>
+        </label>
+        <label for="product-capability-product">产品
+          <input id="product-capability-product" list="product-capability-products" autocomplete="off" placeholder="spot 或 perpetual">
+          <datalist id="product-capability-products"></datalist>
+        </label>
+        <label for="product-capability-account-mode">账户模式
+          <input id="product-capability-account-mode" list="product-capability-account-modes" autocomplete="off" placeholder="cash、one_way 或 hedge">
+          <datalist id="product-capability-account-modes"></datalist>
+        </label>
+        <label for="product-capability-account-model">账户体系（可选）
+          <input id="product-capability-account-model" list="product-capability-account-models" autocomplete="off" placeholder="classic、unified 或 uta">
+          <datalist id="product-capability-account-models"></datalist>
+        </label>
+        <label for="product-capability-margin-mode">保证金模式（可选）
+          <input id="product-capability-margin-mode" list="product-capability-margin-modes" autocomplete="off" placeholder="cash、cross 或 isolated">
+          <datalist id="product-capability-margin-modes"></datalist>
+        </label>
+        <label for="product-capability-operation">操作（可选）
+          <input id="product-capability-operation" list="product-capability-operations" autocomplete="off" placeholder="submit、cancel 或 positions.read">
+          <datalist id="product-capability-operations"></datalist>
+        </label>
+      </div>
+      <div class="actions">
+        <button id="product-capability-load" type="button">加载能力目录</button>
+        <button id="product-capability-query" type="button">查询匹配范围与证据</button>
+      </div>
+      <pre id="product-capability-output" class="result" aria-live="polite">连接服务后可按交易所、产品、账户模式、操作或稳定 ID 查询</pre>
+    </section>
+
+    <section class="card wide" id="card-research-report" hidden>
+      <h2>交互式研究结果 <span class="hint">服务端指标与排名 · 本地筛选和查看</span></h2>
+      <p class="foot" id="research-report-identity"></p>
+      <div id="research-report-metrics" class="research-metrics"></div>
+      <div class="research-controls" id="research-report-controls" hidden>
+        <label>筛选运行、策略或参数
+          <input id="research-report-filter" type="text" autocomplete="off" placeholder="输入关键词">
+        </label>
+        <label>表格排序
+          <select id="research-report-sort">
+            <option value="server">服务端顺序</option>
+            <option value="return">全样本收益</option>
+            <option value="drawdown">最大回撤</option>
+            <option value="training">训练窗分数</option>
+            <option value="robustness">训练子窗稳健分数</option>
+          </select>
+        </label>
+      </div>
+      <p id="research-report-plot-label" class="foot"></p>
+      <div id="research-report-plot" class="research-plot" role="img" aria-label="候选收益或训练分数分布"></div>
+      <p id="research-report-count" class="foot"></p>
+      <div class="tablewrap research-tablewrap"><table id="research-report-table">
+        <thead><tr><th>序号</th><th>运行 / 策略</th><th>参数</th><th>全样本收益</th><th>最大回撤</th><th>训练窗收益</th><th>训练子窗稳健分数</th><th>状态</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+      <div id="research-report-folds" hidden>
+        <h3>逐折样本外结果</h3>
+        <div class="tablewrap"><table id="research-report-fold-table">
+          <thead><tr><th>折</th><th>训练区间</th><th>测试区间</th><th>选中候选</th><th>训练收益</th><th>训练稳健分数</th><th>测试收益</th><th>训练邻域覆盖</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+      <div id="research-report-costs" hidden>
+        <h3>执行成本压力情景</h3>
+        <p class="foot">变化量按压力情景减去基线计算；收益下降或回撤上升表示成本压力变差。训练窗与样本外分列，折数较多时展示逐折算术均值。邻域门逐个复跑半径内已搜索邻居；未搜索邻居会使门控失败，点击情景行可查看各邻居及其回测产物。</p>
+        <div class="tablewrap"><table id="research-report-cost-table">
+          <thead><tr><th>情景</th><th>选中候选</th><th>训练窗变化（收益/回撤）</th><th>样本外变化（收益/回撤）</th><th>整段收益/回撤变化</th><th>选中候选稳健门</th><th>邻域稳健门</th><th>状态</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+      <details><summary>选中项与原始字段</summary><pre id="research-report-detail" class="result">选择表格行查看</pre></details>
+      <section id="research-artifact-drilldown" class="research-drilldown" hidden>
+        <h3>复核后的运行明细</h3>
+        <p id="research-artifact-status" class="foot" aria-live="polite"></p>
+        <div id="research-account-detail" hidden>
+          <h4>多账户批次</h4>
+          <p id="research-account-status" class="foot" aria-live="polite"></p>
+          <div class="tablewrap"><table id="research-account-table">
+            <thead><tr></tr></thead><tbody></tbody>
+          </table></div>
+          <p class="foot">选择账户行可切换到独立复核的净值、成交、事件与行情明细；各账户仍独立核算。</p>
+          <details id="research-account-events">
+            <summary>账户事件时间线</summary>
+            <p id="research-account-event-status" class="foot" aria-live="polite"></p>
+            <div class="row">
+              <button id="research-account-event-prev" type="button" class="ghost" disabled>上一页</button>
+              <span id="research-account-event-page-status" class="foot" aria-live="polite"></span>
+              <button id="research-account-event-next" type="button" class="ghost" disabled>下一页</button>
+            </div>
+            <div class="row"><label>事件标的 <select id="research-account-event-instrument"><option value="">全部标的</option></select></label><label>筛选账户事件 <input id="research-account-event-filter" type="search" autocomplete="off" placeholder="账户、事件、时间、订单"></label><span id="research-account-event-count" class="foot" aria-live="polite"></span></div>
+            <div class="tablewrap"><table id="research-account-event-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+          </details>
+        </div>
+        <div id="research-artifact-metrics" class="research-metrics" aria-label="已复核回测指标"></div>
+        <div id="research-diagnostic-import" class="research-diagnostic-import">
+          <label>附加本地策略偏差诊断 JSON
+            <input id="research-diagnostic-file" type="file" accept="application/json,.json">
+          </label>
+          <button id="research-diagnostic-attach" type="button">校验身份并加入当前报告</button>
+          <p class="foot">多市场 Bar 与深度报告可导入按标的组织的诊断数组；深度诊断还须声明 input_kind 与 input_events，并与 L1/L2 策略输入和完整快照数相符。多账户批次可导入按账户身份组织的 JSON 数组。服务端会复核策略槽、标的、输入类型、数量和数据指纹，不执行策略代码或重算诊断。</p>
+        </div>
+        <div id="research-diagnostic-result" hidden>
+          <h4>策略偏差诊断</h4>
+          <div id="research-diagnostic-select-row" class="row" hidden>
+            <label>当前诊断 <select id="research-diagnostic-select"></select></label>
+          </div>
+          <p id="research-diagnostic-status" class="foot"></p>
+          <div class="tablewrap"><table id="research-diagnostic-table"><thead><tr><th>检查</th><th>结果</th></tr></thead><tbody></tbody></table></div>
+          <details>
+            <summary>诊断证据明细</summary>
+            <h4>预热轨迹逐时点分歧</h4>
+            <p id="research-diagnostic-trajectory-status" class="foot" aria-live="polite"></p>
+            <label>筛选轨迹分歧 <input id="research-diagnostic-trajectory-filter" type="search" autocomplete="off" placeholder="决策时点、窗口或变化字段"></label>
+            <div class="row"><span id="research-diagnostic-trajectory-count" class="foot" aria-live="polite"></span></div>
+            <div class="tablewrap"><table id="research-diagnostic-trajectory-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+            <p class="foot">选择一行查看该时点相对参考预热窗口发生变化的决策字段和中间态字段。</p>
+            <pre id="research-diagnostic-trajectory-detail" class="result">选择一条轨迹分歧查看详情</pre>
+            <p id="research-diagnostic-evidence-status" class="foot" aria-live="polite"></p>
+            <label>筛选诊断样本 <input id="research-diagnostic-evidence-filter" type="search" autocomplete="off" placeholder="扰动类型、预热窗口、变化字段"></label>
+            <div class="row"><span id="research-diagnostic-evidence-count" class="foot" aria-live="polite"></span></div>
+            <div class="tablewrap"><table id="research-diagnostic-evidence-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+            <p class="foot">选择一行查看该样本的完整基线与反事实策略输出。</p>
+            <pre id="research-diagnostic-evidence-detail" class="result">选择一条诊断样本查看详情</pre>
+            <h4>PIT 事实版本与可见时间</h4>
+            <p id="research-diagnostic-pit-status" class="foot" aria-live="polite"></p>
+            <label>筛选 PIT 事实 <input id="research-diagnostic-pit-filter" type="search" autocomplete="off" placeholder="事实、实体、字段、决策或发布时间"></label>
+            <div class="row"><span id="research-diagnostic-pit-count" class="foot" aria-live="polite"></span></div>
+            <div class="tablewrap"><table id="research-diagnostic-pit-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+            <p class="foot">每行展示某个历史决策时点观察到的事实版本；发布时间未知会保留为未知，不视为安全。</p>
+            <pre id="research-diagnostic-pit-detail" class="result">选择一条 PIT 样本查看账本版本</pre>
+          </details>
+        </div>
+        <h4>净值变化曲线</h4>
+        <div class="research-compare-actions">
+          <button id="research-add-equity-curve" type="button">加入曲线对比</button>
+          <button id="research-clear-equity-curves" type="button" class="ghost">清空对比</button>
+          <label class="inline-check"><input id="research-cross-input-comparison" type="checkbox"> 跨标的/输入归一化比较（按样本进度）</label>
+          <label class="inline-check"><input id="research-utc-time-alignment" type="checkbox"> 按重叠 UTC 时间区间对齐</label>
+          <span id="research-equity-comparison-status" class="foot" aria-live="polite"></span>
+        </div>
+        <div id="research-equity-legend" class="research-equity-legend" aria-label="净值曲线图例"></div>
+        <div id="research-equity-plot" class="research-plot" role="img" aria-label="经复核净值变化曲线"></div>
+        <details id="research-unified-compare">
+          <summary>跨拓扑研究对照</summary>
+          <p class="foot">把已复核的单标的、深度、多账户选定账户、多市场或多腿结果加入同一对照表。匹配标记以首条为基准；净值曲线可按各自样本进度或共同 UTC 时间区间归一化，UTC 模式在新样本到来前保持最近观测权益。手续费和期末权益保留 raw 值，不能跨结算币种直接比较；曲线对比也不做 FX 换算或组合净值合并。</p>
+          <div class="research-compare-actions">
+            <button id="research-add-unified-report" type="button">加入当前复核结果</button>
+            <button id="research-export-unified-reports" type="button" class="ghost">导出当前对照 CSV</button>
+            <button id="research-clear-unified-reports" type="button" class="ghost">清空对照表</button>
+            <label>筛选
+              <select id="research-unified-filter">
+                <option value="all">全部结果</option>
+                <option value="same_input_range">相同输入与样本区间</option>
+                <option value="same_execution">相同执行假设</option>
+                <option value="same_input_range_execution">输入、区间与执行假设都相同</option>
+                <option value="cross_topology">不同回测拓扑</option>
+              </select>
+            </label>
+            <span id="research-unified-status" class="foot" aria-live="polite"></span>
+          </div>
+          <div class="tablewrap"><table id="research-unified-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+          <details id="research-unified-events">
+            <summary>跨报告事件时间线</summary>
+              <p class="foot">按报告分别请求并重放校验事件页，再按时间、优先级、报告 ID、账户 ID 和本地序号合并。仅显示所有事件源游标都能证明全局顺序的前缀；缺少事件轨迹的报告会阻止合并时间线显示。可逐批浏览，或显式加载剩余事件（浏览器最多缓存 50,000 条）；支持按报告、拓扑、账户、标的和事件类型筛选、全文搜索、分页，并导出当前筛选的已复核事件 CSV。达到上限后，清空对照并选择较小报告集继续。各报告序号彼此独立，Bar 因果上下文仅在原报告范围内有效。</p>
+            <div class="row">
+              <button id="research-unified-events-load" type="button">加载首批事件</button>
+              <button id="research-unified-events-all" type="button" class="ghost">加载全部事件（最多 50,000 条）</button>
+              <button id="research-unified-events-next" type="button" class="ghost" disabled>继续加载下一批</button>
+              <label>筛选 <input id="research-unified-events-filter" type="search" autocomplete="off" placeholder="报告、标的、策略、事件、订单"></label>
+              <button id="research-unified-events-export" type="button" class="ghost">导出已复核事件 CSV</button>
+              <span id="research-unified-events-status" class="foot" aria-live="polite"></span>
+            </div>
+            <div class="row" aria-label="事件时间线筛选">
+              <label>报告 <select id="research-unified-events-report"><option value="">全部</option></select></label>
+              <label>拓扑 <select id="research-unified-events-topology"><option value="">全部</option></select></label>
+              <label>账户 <select id="research-unified-events-account"><option value="">全部</option></select></label>
+              <label>标的 <select id="research-unified-events-instrument"><option value="">全部</option></select></label>
+              <label>事件类型 <select id="research-unified-events-kind"><option value="">全部</option></select></label>
+            </div>
+            <div class="row">
+              <button id="research-unified-events-page-prev" type="button" class="ghost" disabled>上一页事件</button>
+              <span id="research-unified-events-page-status" class="foot" aria-live="polite"></span>
+              <button id="research-unified-events-page-next" type="button" class="ghost" disabled>下一页事件</button>
+            </div>
+            <div class="tablewrap"><table id="research-unified-events-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+          </details>
+        </details>
+        <h4 id="research-position-heading">持仓变化</h4>
+        <p id="research-position-status" class="foot" aria-live="polite"></p>
+        <div id="research-position-plot" class="research-plot" role="img" aria-label="经复核持仓变化曲线"></div>
+        <div id="research-markets-detail" hidden>
+          <h4>共享账户市场输入与成交</h4>
+          <p id="research-markets-status" class="foot" aria-live="polite"></p>
+          <div class="tablewrap"><table id="research-market-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+          <p id="research-market-pnl-status" class="foot" aria-live="polite" hidden></p>
+          <div id="research-market-pnl-plot" class="research-plot" role="img" aria-label="所选标的盈亏贡献曲线"></div>
+          <div class="tablewrap"><table id="research-market-pnl-table" hidden><thead><tr></tr></thead><tbody></tbody></table></div>
+          <p id="research-market-bars-status" class="foot" aria-live="polite">选择一个市场查看已核验的 Bar 采样。</p>
+          <div class="tablewrap"><table id="research-market-bar-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+          <p id="research-market-depth-status" class="foot" aria-live="polite" hidden></p>
+          <details id="research-market-depth-detail" hidden>
+            <summary>已校验的盘口档位采样</summary>
+            <div class="tablewrap"><table id="research-market-depth-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+          </details>
+        </div>
+        <h4 id="research-bars-heading">原始行情 Bar</h4>
+        <p id="research-bars-status" class="foot" aria-live="polite"></p>
+        <details id="research-bars-detail"><summary>已校验的 Bar 采样</summary>
+          <div class="tablewrap"><table id="research-bar-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+        </details>
+        <div id="research-depth-detail" hidden>
+          <h4>原始盘口快照</h4>
+          <p id="research-depth-status" class="foot" aria-live="polite"></p>
+          <details><summary>已校验的盘口档位采样</summary>
+            <div class="tablewrap"><table id="research-depth-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+          </details>
+        </div>
+        <details><summary>净值采样点</summary>
+          <div class="tablewrap"><table id="research-equity-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+        </details>
+        <details><summary>成交明细</summary>
+          <div class="tablewrap"><table id="research-fill-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+        </details>
+        <details id="research-events-detail"><summary>完整事件轨迹</summary>
+          <div class="row">
+            <button id="research-event-prev" type="button" class="ghost" disabled>较早事件</button>
+            <span id="research-event-page-status" class="foot" aria-live="polite"></span>
+            <button id="research-event-next" type="button" class="ghost" disabled>较新事件</button>
+          </div>
+          <div class="tablewrap"><table id="research-event-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+        </details>
+          <details id="research-timeline-detail"><summary>行情与执行因果时间线</summary>
+            <p id="research-timeline-status" class="foot" aria-live="polite"></p>
+            <div class="row"><label>筛选本页事件或身份 <input id="research-timeline-filter" type="search" autocomplete="off" placeholder="事件、时间、策略、信号、订单"></label><span id="research-timeline-count" class="foot" aria-live="polite"></span></div>
+            <div class="tablewrap"><table id="research-timeline-table"><thead><tr></tr></thead><tbody></tbody></table></div>
+          </details>
+      </section>
     </section>
 
     <section class="card wide" id="card-control">
       <h2>控制命令
-        <span class="hint">POST /control/commands · 受理 → 执行者判定 → 终态退场</span>
+        <span class="hint">POST /control/commands · 部署操作另见上方策略部署面板</span>
       </h2>
       <form id="control-form" class="form" autocomplete="off">
         <label>kind
           <select id="cmd-kind">
             <option value="SubmitOrder">SubmitOrder</option>
+            <option value="SubmitOrderGroup">SubmitOrderGroup</option>
+            <option value="AmendOrder">AmendOrder</option>
             <option value="PauseStrategy">PauseStrategy</option>
             <option value="ResumeStrategy">ResumeStrategy</option>
             <option value="ChangeRiskLimit">ChangeRiskLimit</option>
@@ -166,6 +500,7 @@
             <option value="ReconcileAccount">ReconcileAccount</option>
             <option value="RetryJob">RetryJob</option>
             <option value="SwitchVenue">SwitchVenue</option>
+            <option value="CancelOrderGroup">CancelOrderGroup</option>
           </select>
         </label>
         <label>permission
@@ -176,21 +511,26 @@
             <option value="Admin">Admin</option>
           </select>
         </label>
-        <label>target <input id="cmd-target" type="text" placeholder="BTCUSDT-PERP.BINANCE" /></label>
+        <label>target（订单 ID 或订单组 ID） <input id="cmd-target" type="text" placeholder="client_order_id / group_id" /></label>
+        <label>account_id（撤单路由） <input id="cmd-account" type="text" placeholder="main" /></label>
+        <label>venue_id（执行 worker 路由） <input id="cmd-venue" type="text" placeholder="binance-testnet" /></label>
         <label>operator_id（审计字段）
           <input id="cmd-operator" type="text" placeholder="ops" />
         </label>
         <label>reason（必填） <input id="cmd-reason" type="text" placeholder="为什么下这条命令" /></label>
         <label>request_id <input id="cmd-request" type="text" placeholder="留空则自动生成" /></label>
         <label class="check"><input id="cmd-dry-run" type="checkbox" /> dry_run（只受理不执行）</label>
+        <label for="cmd-payload-json">payload JSON（提交订单/订单组时填写对应 order_json 或 order_group_json）</label>
+        <textarea id="cmd-payload-json" rows="7" spellcheck="false" placeholder='{"order_group_json":"{... 序列化后的 OrderGroupIntent ...}"}'></textarea>
         <button id="cmd-submit" type="submit">提交控制命令</button>
       </form>
       <div class="rows" id="control-rows"><span class="muted">未提交</span></div>
       <p class="foot">
         受理回 <code>202</code> 表示"收下并落了审计"，<strong>不是</strong>"已经执行"；
         执行者判定与终态退场从 <code>/control/audit</code> 回读。
-        本构建里只有 <code>SubmitOrder</code> / <code>PauseStrategy</code> / <code>ResumeStrategy</code>
-        有派发者，其余类型的命令在<strong>受理那一步就被拒</strong>（<code>400</code>，理由点名"没有派发者"），
+        本构建里 <code>SubmitOrder</code> / <code>SubmitOrderGroup</code> / <code>AmendOrder</code> / <code>PauseStrategy</code> / <code>ResumeStrategy</code> / <code>CancelOrder</code> / <code>CancelOrderGroup</code>
+        有派发者；原生组提交/撤销按 Binance、OKX、Bitget UTA Spot OCO 能力路由，改单只路由到匹配账户和交易所的 CCXT 执行 worker，单笔撤单路由到 Binance/CCXT 执行 worker。没有派发者或没有匹配路由的命令在
+        <strong>受理那一步就被拒</strong>（<code>400</code>），
         不会被记成 <code>Accepted</code>。
       </p>
     </section>
@@ -212,6 +552,7 @@
     <span id="last-refresh" class="muted">—</span>
   </footer>
 
+  <script src="research-comparison.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

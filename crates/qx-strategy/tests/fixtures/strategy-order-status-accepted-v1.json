@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "event": "order_status",
+  "event_seq": 23,
+  "ts": 10,
+  "status": "accepted",
+  "order": {
+    "order_id": 7,
+    "account_id": "paper",
+    "instrument": "BTCUSDT.BINANCE",
+    "side": "Buy",
+    "qty_raw": 2000000000,
+    "filled_raw": 0,
+    "strategy_id": "update-test"
+  }
+}

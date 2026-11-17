@@ -9,6 +9,8 @@ from qianxing_strategy import StrategyBars, StrategyInput
 
 MAGIC = b"QXCB"
 VERSION = 1
+EXACT_OHLCV_VERSION = 2
+EXACT_OHLCV_FLAG = 1
 HEADER = struct.Struct("<4sHHII")
 HEADER_SIZE = HEADER.size
 MAX_BYTES = 16 * 1024 * 1024
@@ -25,8 +27,12 @@ def decode_request(payload: bytes) -> StrategyInput:
     if len(payload) > MAX_BYTES or len(payload) < HEADER_SIZE:
         raise ValueError("columnar strategy payload exceeds bounds")
     magic, version, flags, metadata_len, rows = HEADER.unpack_from(payload)
-    if magic != MAGIC or version != VERSION or flags != 0:
+    if magic != MAGIC or version not in (VERSION, EXACT_OHLCV_VERSION):
         raise ValueError("columnar strategy header mismatch")
+    if version == VERSION and flags != 0:
+        raise ValueError("columnar strategy v1 does not support flags")
+    if version == EXACT_OHLCV_VERSION and flags != EXACT_OHLCV_FLAG:
+        raise ValueError("columnar strategy v2 requires the exact OHLCV flag")
     if rows == 0:
         raise ValueError("columnar strategy payload must contain bars")
     metadata_start = HEADER_SIZE
@@ -39,6 +45,13 @@ def decode_request(payload: bytes) -> StrategyInput:
     value = json.loads(payload[metadata_start:metadata_end].decode("utf-8"))
     if value.get("bars") is not None:
         raise ValueError("columnar strategy metadata must not contain bars")
+    exact_ohlcv = value.pop("__qx_bars_exact_ohlcv", None)
+    if version == VERSION and exact_ohlcv is not None:
+        raise ValueError("columnar strategy v1 cannot contain exact OHLCV metadata")
+    if version == EXACT_OHLCV_VERSION and (
+        not isinstance(exact_ohlcv, list) or len(exact_ohlcv) != rows
+    ):
+        raise ValueError("columnar strategy v2 exact OHLCV row count mismatch")
     offset = metadata_end
     timestamps = []
     for _ in range(rows):
@@ -52,7 +65,7 @@ def decode_request(payload: bytes) -> StrategyInput:
             column.append(item)
         columns.append(column)
     source = str(value.pop("__qx_bars_source", "shared-columnar-v1"))
-    value["bars"] = {
+    bars = {
         "source": source,
         "ts": timestamps,
         "open_raw": columns[0],
@@ -61,4 +74,7 @@ def decode_request(payload: bytes) -> StrategyInput:
         "close_raw": columns[3],
         "volume_raw": columns[4],
     }
+    if exact_ohlcv is not None:
+        bars["exact_ohlcv"] = exact_ohlcv
+    value["bars"] = bars
     return StrategyInput.from_json(json.dumps(value, separators=(",", ":")))

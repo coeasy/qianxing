@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "kind": "qianxing_acceptance_human_review",
+  "work_package": "R01",
+  "acceptance_id": "R01-AC01",
+  "reviewed_at": "2026-11-05",
+  "decision": "accepted_for_windows_local_acceptance",
+  "reviewed_run_ids": [
+    "8c9b1b81-3f90-4ddc-9506-538a288e99c2",
+    "61ff5ac3-e64c-4c01-af1b-1f9e3b1d3f5f",
+    "a712ac43-ed15-4cf5-9ec0-9a31a8943bb1"
+  ],
+  "reviewed_artifacts": [
+    "maturity/acceptance-artifacts/8c9b1b81-3f90-4ddc-9506-538a288e99c2.log",
+    "maturity/acceptance-artifacts/61ff5ac3-e64c-4c01-af1b-1f9e3b1d3f5f.log",
+    "tools/accept_clean_install.py",
+    "python/pyproject.toml",
+    "crates/qx-cli/src/main.rs",
+    "maturity/schema-registry.json",
+    "docs/installation.md",
+    "maturity/acceptance-artifacts/a712ac43-ed15-4cf5-9ec0-9a31a8943bb1.log",
+    "maturity/acceptance-artifacts/a712ac43-ed15-4cf5-9ec0-9a31a8943bb1.source-tree.json"
+  ],
+  "findings": [
+    "The final clean Windows CPython 3.13 install built and installed the abi3 native wheel and qx-cli into isolated target directories.",
+    "The acceptance output confirms native/CLI version and schema agreement, Windows target compatibility, quickstart success, 13 compiled Python examples, and invocation of the Python strategy example.",
+    "The Windows Python 3.13 clean-install acceptance also passed: it built and installed the abi3 wheel, installed qx-cli into an isolated target, matched native/CLI schema and platform compatibility, and executed quickstart plus the packaged example."
+  ],
+  "limitations": [
+    "Linux Ubuntu clean-install acceptance remains pending."
+  ]
+}

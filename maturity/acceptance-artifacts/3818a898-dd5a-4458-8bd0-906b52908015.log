@@ -1,0 +1,8 @@
+$ python -c import os,runpy,subprocess,sys; x=runpy.run_path("tools/check_architecture.py",run_name="gate_module"); x["multi_account_joint_evidence_portable_paths_module_check"](); sys.exit(1 if x["failures"] else subprocess.call(["cargo","check","-p","qx-cli","-j","1"],env={**os.environ,"CARGO_PROFILE_DEV_DEBUG":"0"}))
+exit_code=0
+
+[stdout]
+[PASS] 联合账户证据包的市场路径重定位、父子工件绑定与 ArtifactReader 映射由 portable_paths 唯一拥有
+
+[stderr]
+    Finished `dev` profile [unoptimized] target(s) in 0.57s

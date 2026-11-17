@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "binance_oco_cancel_admission_lock_local_validation",
+  "recorded_at_utc": "2026-11-13",
+  "source_revision": "078deb19fd9ad1785c02ed9e10ca385838aeb9dd",
+  "environment": {
+    "os": "Windows 11",
+    "rustc": "1.98.1 (48a229cea 2026-09-01)",
+    "temporary_directory": "target/qianxing-test-temp"
+  },
+  "commands": [
+    {
+      "argv": ["cargo", "test", "--locked", "--quiet", "-p", "qx-service", "--", "--test-threads=1"],
+      "environment": "TEMP and TMP point to target/qianxing-test-temp",
+      "exit_code": 0,
+      "selected_tests": 135,
+      "passed": 135,
+      "failed": 0,
+      "result": "passed"
+    },
+    {
+      "argv": ["cargo", "fmt", "--all", "--", "--check"],
+      "exit_code": 0,
+      "result": "passed"
+    },
+    {
+      "argv": ["git", "diff", "--check"],
+      "exit_code": 0,
+      "result": "passed"
+    }
+  ],
+  "coverage": [
+    "Binance single-child cancellation acquires the account admission lock before reading and validating the current EventLog order, then checks unresolved operations while the lock is held.",
+    "Binance native OCO group cancellation acquires the same account lock before loading the group snapshot and invokes the child cancellation through a lock-held internal entry point without reacquiring the non-reentrant lock.",
+    "The existing OMS cancellation and post-cancel full-list reconciliation path remains the sole order fact writer."
+  ],
+  "scope_limitations": [
+    "This is local Windows service test evidence only; it does not establish Binance API race behavior or Sandbox acceptance.",
+    "No exchange API was called and no order was changed.",
+    "Binance Spot OCO remains implemented-unverified pending authorized Testnet lifecycle acceptance."
+  ]
+}

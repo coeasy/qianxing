@@ -1,0 +1,2 @@
+LEG r16_g6_pointers rc=1 seconds=38.27 bytes=1939
+GATE_FAIL pointers class split 121+24 != local-only 146

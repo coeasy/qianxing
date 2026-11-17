@@ -24,6 +24,7 @@ fn paper_order(instrument: &InstrumentId, client_id: u64, maker: bool) -> Order 
             post_only: maker,
             ..OrderPolicy::default()
         }),
+        exact_amounts: None,
     }
 }
 
@@ -52,10 +53,12 @@ fn paper_venue_order_lifecycle(c: &mut Criterion) {
         price_tick: SCALE,
         qty_step: SCALE,
         min_qty: SCALE,
+        min_notional_raw: 0,
         max_leverage: 20,
         maintenance_margin_bps: 500,
         valid_from: 1,
         valid_to: None,
+        exact_rules: None,
     };
     let mut group = c.benchmark_group("qx_zhenlu_crypto_paper_lifecycle_v2");
     for count in [1_usize, 16, 256] {

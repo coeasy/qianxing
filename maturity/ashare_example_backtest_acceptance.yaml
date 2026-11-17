@@ -8,7 +8,7 @@ kind: backtest-acceptance
 scenario: ashare-example
 outcome: passed
 generated_by: tools/backtest_acceptance.py
-generated_at_unix: 1792564852
+generated_at_unix: 1794094412
 binary: qx-cli.exe
 credentials_required: false
 external_venues: none
@@ -16,13 +16,15 @@ network_accessed: false
 orders_sent: false
 same_dir_rerun: byte_identical
 independent_dirs: result_hash_and_artifact_contents_equal
+evidence_bundle_verified: true
 independent_runs: 2
-result_hash: 6be034a4cb0760fa
-data_fingerprint: dataset-bundle:0796529b56c9ea6b
-config_fingerprint: 8cb64752f7e52549ea893dc075a39ce79c1cf76edd9609427ff22722d1de7069
+result_hash: 6e120606d81369b5
+data_fingerprint: dataset-bundle:b1e0200f8a3aa3da
+config_fingerprint: 162d3081769933f95c4abbf9d6e77c4670f9bde28bbcbc9ce2ac34b4a03bf608
 replay_verdict: verified
 artifact_contents:
-  equity: 998e821ead1a21bbcef6ba1341582ecd1b252d3deb3bfac1c3675c4962dc974a
-  fills: 409a57018185b0b595127bde93d287bb25821ad6883ad57591710f79b5f72a2e
-  run_manifest: 9b11162332cfc28216b4aa50bbbaa52b48db9d665ee721076ee8d6a7e51ae541
-  summary: 8c8aeff6dcd137e2c80a2cf995ee0d6caa48af06e2b0a1cf3783712323febd82
+  equity: 6eca9b1ee01265a7797324734c4c1c903ce21bfd64f4e6cfba1f32a631532bcf
+  evidence: d93d87b9b8e4d43b785c164ad5657e0f4a4462e67e3f26536cb007f2f0e7bc14
+  fills: f9fb8d007287434b82f0059a8af8c0fdfb62fdda88ed7df7c3d1a098f4c131b5
+  run_manifest: 9eee36613dc76736e5941676e7ca77ece3717b18d7121705e48a9b4111c3671e
+  summary: 6d339f8912692fd342a6362c40719f984408a986b5190e9075cc84f6fde639c4

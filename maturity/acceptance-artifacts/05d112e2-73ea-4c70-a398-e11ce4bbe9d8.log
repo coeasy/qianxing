@@ -1,0 +1,28 @@
+test_warmup_suppresses_orders_until_each_instrument_is_ready (python.tests.test_strategy_base.BaseStrategyTests.test_warmup_suppresses_orders_until_each_instrument_is_ready) ... FAIL
+
+======================================================================
+FAIL: test_warmup_suppresses_orders_until_each_instrument_is_ready (python.tests.test_strategy_base.BaseStrategyTests.test_warmup_suppresses_orders_until_each_instrument_is_ready)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "D:\aex_work\qianxing\python\tests\test_strategy_base.py", line 815, in test_warmup_suppresses_orders_until_each_instrument_is_ready
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        classic.calls,
+        ^^^^^^^^^^^^^^
+        [("prenext", 100), ("nextstart", 101), ("next", 102), ("next", 103)],
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: Lists differ: [] != [('prenext', 100), ('nextstart', 101), ('next', 102), ('next', 103)]
+
+Second list contains 4 additional elements.
+First extra element 0:
+('prenext', 100)
+
+- []
++ [('prenext', 100), ('nextstart', 101), ('next', 102), ('next', 103)]
+
+----------------------------------------------------------------------
+Ran 1 test in 0.001s
+
+FAILED (failures=1)

@@ -70,6 +70,8 @@ fn write_run_manifest(path: &Path, log: &qx_core::EventLog, result_hash: u64) {
         input_event_hash: "test-input".into(),
         output_event_hash: format!("{:016x}", log.digest()),
         runtime_version: "test-runtime".into(),
+        canonical_run_spec_json: None,
+        canonical_run_spec_fingerprint: None,
     };
     std::fs::write(path, manifest.to_json().unwrap()).unwrap();
 }
@@ -90,6 +92,7 @@ fn artifact_input<'a>(
         samples: 2,
         sample_ts: qx_app::artifact_store::BacktestSampleTimestamps::Values(&[1, 2]),
         equity: &[100, 150],
+        equity_exact: None,
         positions: &[0, 0],
         fills: &[],
         execution_attempts: &[],
@@ -103,6 +106,7 @@ fn artifact_input<'a>(
         issuer_capital_at_end: None,
         return_bps: 50,
         max_drawdown_bps: 0,
+        max_drawdown_raw: 0,
         fees_raw: 0,
         turnover_raw: 0,
         final_equity_raw: 150,
@@ -144,7 +148,7 @@ fn summary_publishes_the_replay_facts_it_actually_checked() {
     .unwrap();
     let summary: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&summary_path).unwrap()).unwrap();
-    assert_eq!(summary["schema_version"], serde_json::json!(7));
+    assert_eq!(summary["schema_version"], serde_json::json!(8));
     // 摘要必须把期初本金与它的来源一起落盘：只有期末权益的产物算不出收益率的分母。
     assert_eq!(
         summary["account"],

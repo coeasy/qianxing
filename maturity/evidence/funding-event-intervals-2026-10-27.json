@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "kind": "historical-funding-event-intervals-v1",
+  "generated_at_utc": "2026-10-26T21:27:31Z",
+  "environment": {
+    "os": "Windows",
+    "architecture": "x86_64",
+    "rust_mode": "local",
+    "python": "local"
+  },
+  "behavior": {
+    "historical_event_timestamp": "exchange-provided settlement timestamp; not forced onto a UTC 8-hour grid",
+    "explicit_interval_ms": {
+      "minimum": 60000,
+      "maximum": 86400000,
+      "meaning": "maximum accepted mark-price age at this historical settlement",
+      "invalid_types_rejected_by_python_sdk": ["bool", "float", "string"]
+    },
+    "legacy_interval": "omitted interval retains the 8-hour default",
+    "constant_funding": "retains the default UTC 8-hour scheduler",
+    "provider_payloads": {
+      "v1": "backward-compatible rate_bps payload",
+      "v2": "requires funding_interval_ms"
+    },
+    "schema_registry_version": 14
+  },
+  "validation": [
+    {
+      "command": "cargo test -p qx-core historical_funding_interval --lib",
+      "passed": 2,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p qx-xingban funding --lib",
+      "passed": 23,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p qx-app --lib cases::run_multi_leg_backtest_with_funding_provider::tests::provider_historical_rates_flow_through_the_shared_multileg_core_with_lineage",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p qx-app --test depth_backtest",
+      "passed": 10,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p qx-app --test multi_market_depth_backtest",
+      "passed": 13,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p qx-app --test multi_leg_backtest",
+      "passed": 12,
+      "failed": 0
+    },
+    {
+      "command": "python -m unittest python.tests.test_sdk_layering.TopLevelStabilityTest.test_multi_leg_backtest_schema_matches_rust_python_and_runtime_constraints python.tests.test_app_use_cases.AppUseCaseTests.test_multi_leg_backtest_uses_the_shared_rust_application_flow_and_handle",
+      "passed": 2,
+      "failed": 0
+    },
+    {
+      "command": "python -m py_compile python/qianxing/app.py python/tests/test_sdk_layering.py",
+      "passed": true
+    },
+    {
+      "command": "cargo check -p qx-core -p qx-xingban -p qx-app -p qx-sdk -p qx-cli -p qx-service --tests",
+      "passed": true
+    }
+  ],
+  "limitations": [
+    "No exchange API was contacted and no venue funding history or account billing statement was compared row by row.",
+    "The provider supplies funding_interval_ms; this change does not discover or infer per-market intervals automatically.",
+    "No sandbox, capacity, or production approval is implied."
+  ],
+  "release_status": "unpublished workspace"
+}

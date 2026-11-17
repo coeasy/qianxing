@@ -12,7 +12,12 @@ use super::*;
 /// 稳定 JSON 与夹具都必须由它产出——夹具是 `to_json` 的输出，不是手抄的形状。
 fn cross_language_sample() -> AccountSnapshot {
     let instrument = InstrumentId::parse("BTCUSDT.BINANCE").expect("valid instrument");
-    let mut snapshot = AccountSnapshot::new(7, "main", "default", "BINANCE", 10);
+    let mut snapshot = AccountSnapshot::new(7, "main", "default", "BINANCE", "20260911", 10);
+    // Keep the checked-in v1 cross-language fixture as a true legacy writer sample; current v5
+    // behavior is covered separately by the explicit trading-day schema contract.
+    snapshot.header.schema_version = ACCOUNT_SNAPSHOT_V1_SCHEMA_VERSION;
+    // The legacy v1 wire sample predates trading_day and must retain its original empty field/hash.
+    snapshot.header.trading_day.clear();
     snapshot.cash_raw.insert("USDT".into(), 1000);
     snapshot.equity_raw = Some(1000);
     snapshot
@@ -28,6 +33,7 @@ fn cross_language_sample() -> AccountSnapshot {
             quantity_raw: Quantity::from_i64(2).raw(),
             filled_raw: Quantity::from_i64(1).raw(),
             status: OrderStatus::Accepted,
+            exact_amounts: None,
         },
     );
     snapshot.fills.insert(
@@ -38,6 +44,10 @@ fn cross_language_sample() -> AccountSnapshot {
             quantity_raw: Quantity::from_i64(1).raw(),
             price_raw: Price::from_i64(99).raw(),
             fee_raw: Money::from_i64(1).raw(),
+            fee_currency: None,
+            fees: vec![],
+            exact_amounts: None,
+            exact_fees: vec![],
             ts: 1234,
         },
     );

@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "kind": "dataset_manifest_json_canonicalization",
+  "acceptance_id": "dataset-manifest-json-canonicalization-current-worktree-2026-11-07",
+  "generated_at_utc": "2026-11-07T12:03:12+00:00",
+  "source": {
+    "head_commit": "4a70e85093906d1fc114970ec6349121dbcaa9f6",
+    "working_tree_changes_included": true,
+    "dirty_path_count_at_measurement": 692,
+    "measurement_source_fingerprint": "f61a03976e5434a4c6be2c36f8344d8bc2da4bc8e759690474b01aa570291813"
+  },
+  "change": {
+    "file": "crates/qx-data/src/catalog.rs",
+    "behavior": "DatasetComponentManifest always serializes its format, so explicit json survives a read/write round trip and legacy input without format canonicalizes to format=json.",
+    "fingerprint_compatibility": "Canonical JSON component Bundle fingerprints change because format=json is now included. Result data and strategy outputs remain unchanged in the deterministic backtest acceptance."
+  },
+  "checks": [
+    {
+      "command": "cargo test -p qx-data -j 1",
+      "result": "passed",
+      "passed": 42,
+      "failed": 0
+    },
+    {
+      "command": "cargo test --workspace --all-features -j 1 --quiet",
+      "result": "passed",
+      "exit_code": 0,
+      "postgres_service_tests": "skipped because QX_TEST_POSTGRES_DSN and a local service were unavailable"
+    },
+    {
+      "command": "python -m pytest python/tests -q",
+      "result": "passed",
+      "passed": 687,
+      "skipped": 14,
+      "failed": 0
+    },
+    {
+      "command": "cargo clippy --workspace --all-targets -j 1 -- -D warnings",
+      "result": "passed",
+      "exit_code": 0
+    },
+    {
+      "command": "cargo clippy --workspace --lib --bins -j 1 -- -D clippy::unwrap_used -D clippy::expect_used",
+      "result": "passed",
+      "exit_code": 0
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "result": "passed"
+    },
+    {
+      "command": "python tools/check_architecture.py --fast",
+      "result": "passed",
+      "shards": 4,
+      "named_checks": 372,
+      "duplicates": 0
+    },
+    {
+      "command": "tools/backtest_acceptance.py with current release qx-cli",
+      "result": "passed",
+      "scenarios": {
+        "crypto-example": {
+          "result_hash": "67c176977ad0f81d",
+          "data_fingerprint": "barframe:613fdc1dc0b779e7"
+        },
+        "ashare-example": {
+          "result_hash": "6e120606d81369b5",
+          "data_fingerprint": "dataset-bundle:b1e0200f8a3aa3da"
+        }
+      }
+    },
+    {
+      "command": "tools/paper_acceptance.py with current release qx-cli",
+      "result": "passed",
+      "orders_submitted": 1,
+      "fills": 1,
+      "ledger_entries": 4,
+      "credentials_required": false,
+      "network_accessed": false,
+      "orders_sent": false
+    },
+    {
+      "command": "Current-source Windows wheel and independent CLI clean-install acceptance",
+      "result": "passed",
+      "acceptance_evidence": "maturity/evidence/clean-install-current-worktree-2026-11-07.json",
+      "wheel_sha256": "195a482235486cccbe50e394a8201fd4639e950cba346ea207e15afd09b2c669",
+      "cli_sha256": "a71055713b68c74ccb0160374c45009fbba7225b334a7c11ccd74686526fe08f"
+    },
+    {
+      "command": "python tools/generate_unverified.py --check and python tools/generate_capability_catalog.py --check",
+      "result": "passed"
+    }
+  ],
+  "limitations": [
+    "Windows local acceptance only; Linux and macOS execution are not verified on this machine.",
+    "PostgreSQL service-backed tests requiring QX_TEST_POSTGRES_DSN remain unverified.",
+    "This is a dirty, unpublished worktree build and not a formal release artifact."
+  ]
+}

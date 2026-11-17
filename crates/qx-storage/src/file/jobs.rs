@@ -14,6 +14,7 @@ use super::*;
 #[derive(Clone, Debug)]
 pub struct FileJobQueue {
     root: PathBuf,
+    max_pending_jobs: usize,
 }
 
 impl JsonRecordStore for FileJobQueue {
@@ -24,7 +25,30 @@ impl JsonRecordStore for FileJobQueue {
 
 impl FileJobQueue {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self {
+            root: root.into(),
+            max_pending_jobs: crate::DEFAULT_MAX_PENDING_JOBS,
+        }
+    }
+
+    pub fn with_pending_limit(
+        root: impl Into<PathBuf>,
+        max_pending_jobs: usize,
+    ) -> Result<Self, StorageError> {
+        if max_pending_jobs == 0 || max_pending_jobs > crate::DEFAULT_MAX_PENDING_JOBS {
+            return Err(StorageError::Conflict(format!(
+                "JobQueue max_pending_jobs 必须在 1..={} 内",
+                crate::DEFAULT_MAX_PENDING_JOBS
+            )));
+        }
+        Ok(Self {
+            root: root.into(),
+            max_pending_jobs,
+        })
+    }
+
+    pub fn max_pending_jobs(&self) -> usize {
+        self.max_pending_jobs
     }
 
     pub fn root(&self) -> &Path {
@@ -43,13 +67,21 @@ impl FileJobQueue {
             enqueued_ts,
         };
         self.validate_enqueue_job_request(&envelope)?;
+        self.ensure_dirs()?;
+        let _enqueue_lock = acquire_storage_lock(self.root.join(".enqueue.lock"))?;
         let path = self.queue_path(envelope.run.run_id);
         if path.exists() {
             let existing: QueuedJob = read_state_json(&path)?;
             self.validate_existing_job(&existing, &envelope)?;
             return Ok(path);
         }
-        self.ensure_dirs()?;
+        let pending_count = self.list_records()?.len();
+        if pending_count >= self.max_pending_jobs {
+            return Err(StorageError::Conflict(format!(
+                "JobQueue pending capacity reached: {pending_count}/{}",
+                self.max_pending_jobs
+            )));
+        }
         write_state_json(&self.root, &path, &envelope)?;
         Ok(path)
     }
@@ -75,6 +107,36 @@ impl FileJobQueue {
             };
             if available {
                 jobs.push(job);
+            }
+        }
+        Ok(jobs)
+    }
+
+    pub fn available_for_owner(
+        &self,
+        now: u64,
+        worker_id: &str,
+        limit: usize,
+    ) -> Result<Vec<QueuedJob>, StorageError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let mut jobs = Vec::new();
+        for job in self.pending()? {
+            if !qx_scheduler::claimable_by(&job.job.owner, worker_id) {
+                continue;
+            }
+            let lease_path = self.lease_path(job.run.run_id);
+            let available = if !lease_path.exists() {
+                true
+            } else {
+                read_state_json::<JobLease>(&lease_path)?.expires_ts <= now
+            };
+            if available {
+                jobs.push(job);
+                if jobs.len() == limit {
+                    break;
+                }
             }
         }
         Ok(jobs)
@@ -263,6 +325,15 @@ impl JobQueueBackend for FileJobQueue {
 
     fn available_jobs(&self, now: u64) -> Result<Vec<QueuedJob>, StorageError> {
         self.available(now)
+    }
+
+    fn available_jobs_for_owner(
+        &self,
+        now: u64,
+        worker_id: &str,
+        limit: usize,
+    ) -> Result<Vec<QueuedJob>, StorageError> {
+        self.available_for_owner(now, worker_id, limit)
     }
 
     fn claim_job(

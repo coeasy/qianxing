@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "evidence_id": "ccxt-public-quickstart-network-block-windows-2026-11-13",
+  "recorded_at": "2026-11-13",
+  "scope": "Windows real CCXT public market-data quickstart and anonymous venue reachability; no authenticated operations",
+  "environment": {
+    "os": "Windows",
+    "workspace_commit": "d66ed6d2",
+    "cli_build_identity": "qianxing 0.4.0 (build c9f92b8-dirty, target x86_64-pc-windows-msvc, profile debug)",
+    "cli_sha256": "08f68d75967c6b75e0b3590da57cc8fc9400189a0c72ee4105d75c292b44644d",
+    "python_version": "3.13.13",
+    "ccxt_version": "4.5.89",
+    "ccxt_install": "isolated target/ci-artifacts venv with system packages; global Python packages unchanged"
+  },
+  "verification": [
+    {
+      "command": "qx-cli quickstart target/ci-artifacts/qx-quickstart-real-api-okx-20261113-pinned --profile ccxt --days 1 --timeframe 1h --exchange okx --instrument BTC/USDT:USDT.OKX",
+      "result": "blocked_by_dns_resolution_failure",
+      "stages_passed": [
+        "project initialization",
+        "static doctor checks",
+        "public-only CCXT config creation"
+      ],
+      "failure_stage": "CCXT load_markets before OHLCV fetch",
+      "remote_endpoint": "https://www.okx.com/api/v5/public/instruments?instType=SPOT",
+      "error_class": "retryable",
+      "root_cause": "NameResolutionError: Failed to resolve www.okx.com",
+      "credentials_loaded": false,
+      "orders_sent": false,
+      "dataset_snapshot_created": false,
+      "backtest_or_report_created": false
+    },
+    {
+      "command": "CCXT 4.5.89 anonymous fetch_ohlcv probes for OKX, Binance USDⓈ-M, and Bitget",
+      "result": "all_failed_before_market_data",
+      "probes": [
+        {
+          "exchange": "okx",
+          "error_class": "NetworkError",
+          "remote_endpoint": "https://www.okx.com/api/v5/public/instruments?instType=SPOT",
+          "root_cause": "DNS resolution failed"
+        },
+        {
+          "exchange": "binanceusdm",
+          "error_class": "RequestTimeout",
+          "remote_endpoint": "https://fapi.binance.com/fapi/v1/exchangeInfo",
+          "root_cause": "12 second HTTPS connection timeout"
+        },
+        {
+          "exchange": "bitget",
+          "error_class": "NetworkError",
+          "remote_endpoint": "https://api.bitget.com/api/v2/spot/public/coins",
+          "root_cause": "Connection reset by peer (Windows error 10054)"
+        }
+      ],
+      "credentials_loaded": false,
+      "orders_sent": false
+    }
+  ],
+  "limitations": [
+    "This records one environment/time observation; it does not establish that the exchange public APIs are generally unavailable.",
+    "The integrated quickstart stopped before OHLCV retrieval, fee snapshot, backtest, and report; no public-data E2E capability is marked complete.",
+    "The executable was an existing debug build identifying source c9f92b8-dirty, not a binary rebuilt from workspace_commit; this observation verifies network failure behavior, not the current source build."
+  ]
+}

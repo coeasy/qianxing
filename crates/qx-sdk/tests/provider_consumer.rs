@@ -257,6 +257,21 @@ mod tests {
                     interval_ms: 1,
                     timezone: "UTC".into(),
                     manifest_path: None,
+                    snapshot_context: qx_sdk::DatasetSnapshotContextV1 {
+                        schema_version: 1,
+                        instrument_role: qx_sdk::DatasetInstrumentRole::CryptoSpot,
+                        captured_at_ms: 1,
+                        frequency_ms: 1,
+                        timestamp_semantics: qx_sdk::DatasetTimestampSemantics::BarClose,
+                        price_precision: 8,
+                        quantity_precision: 8,
+                        price_unit: "USDT".into(),
+                        quantity_unit: "BTC".into(),
+                        calendar_id: "crypto-24x7".into(),
+                        calendar_version: "v1".into(),
+                        gaps: Vec::new(),
+                        corporate_action_policy: qx_sdk::CorporateActionPolicy::NotApplicable,
+                    },
                 },
             )
             .unwrap();

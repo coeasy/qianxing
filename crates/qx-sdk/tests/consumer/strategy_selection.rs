@@ -27,6 +27,10 @@ impl Strategy for BuyEachInstrument {
                 policy: None,
                 reduce_only: false,
                 post_only: false,
+
+                qty_exact: None,
+                limit_price_exact: None,
+                quote_budget: None,
             }]
         } else {
             Vec::new()
@@ -125,6 +129,8 @@ fn the_rust_sdk_facade_quick_selects_multiple_single_leg_strategy_kinds() {
             strategy_kinds: kinds,
             split_plan: None,
             baselines: Vec::new(),
+            search: None,
+            cost_sensitivity: Vec::new(),
         })
         .expect("Rust SDK should route strategy selection through qx-app");
     assert_eq!(result.total_candidates, 10);
@@ -191,6 +197,8 @@ fn the_rust_sdk_facade_selects_classic_strategies_over_order_book_data() {
                 queue_position_bps: 0,
                 queue_position_model: Default::default(),
                 market_impact_bps: 0,
+                funding_bps: 0,
+                funding_events: Vec::new(),
                 output_dir: output_dir.to_string_lossy().into_owned(),
                 strategy: base_strategy,
                 market_spec: None,
@@ -270,6 +278,10 @@ impl Strategy for BuyDepthQuantity {
                 policy: None,
                 reduce_only: false,
                 post_only: false,
+
+                qty_exact: None,
+                limit_price_exact: None,
+                quote_budget: None,
             }]
         };
         Ok(StrategyDecision {
@@ -338,6 +350,8 @@ fn rust_sdk_depth_experiment_factory_runs_parameterized_custom_strategies() {
             queue_position_bps: 0,
             queue_position_model: Default::default(),
             market_impact_bps: 0,
+            funding_bps: 0,
+            funding_events: Vec::new(),
             output_dir: output_dir.to_string_lossy().into_owned(),
             strategy,
             market_spec: None,

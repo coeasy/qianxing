@@ -86,6 +86,7 @@ pub(crate) fn run_ccxt_submit_order(args: &CcxtSubmitArgs) -> Result<(), String>
                     &python_interpreter(),
                     &ccxt_config_path,
                     runtime_path,
+                    &config.environment,
                     now,
                 )
             }

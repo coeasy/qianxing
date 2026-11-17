@@ -187,24 +187,12 @@ impl JsonDatasetRegistry {
             manifests,
         })
         .map_err(|error| format!("encode dataset registry failed: {error}"))?;
-        let temporary = self
-            .path
-            .with_extension(format!("json.tmp.{}", std::process::id()));
-        std::fs::write(&temporary, payload).map_err(|error| {
+        qx_core::atomic_file::write_atomic_file(&self.path, &payload).map_err(|error| {
             format!(
-                "write dataset registry {} failed: {error}",
-                temporary.display()
+                "commit dataset registry {} failed: {error}",
+                self.path.display()
             )
         })?;
-        if let Err(error) = std::fs::rename(&temporary, &self.path) {
-            let _ = std::fs::remove_file(&self.path);
-            std::fs::rename(&temporary, &self.path).map_err(|replacement| {
-                format!(
-                    "commit dataset registry {} failed: initial={error}; replacement={replacement}",
-                    self.path.display()
-                )
-            })?;
-        }
         Ok(())
     }
 }

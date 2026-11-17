@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-08",
+  "platform": "windows-x86_64",
+  "source_state": "dirty-worktree",
+  "validation": {
+    "cargo_test_workspace_all_features": {
+      "command": "cargo test --workspace --all-features -j 1 --quiet",
+      "exit_code": 0,
+      "qx_cli": {
+        "passed": 498,
+        "ignored": 1,
+        "failed": 0
+      },
+      "notes": "Workspace passed. Live PostgreSQL and C++ shared-library fixture tests are skipped when their external prerequisites are absent."
+    },
+    "cargo_clippy_workspace_all_targets_all_features": {
+      "command": "cargo clippy --workspace --all-targets --all-features -j 1 -- -D warnings",
+      "exit_code": 0
+    },
+    "python_unittest": {
+      "command": "python -m unittest discover -s python/tests -q",
+      "passed": 604,
+      "skipped": 3,
+      "failed": 0,
+      "duration_seconds": 523.249
+    },
+    "architecture_fast": {
+      "command": "python tools/check_architecture.py --fast",
+      "shards": 4,
+      "named_checks": 372,
+      "duplicates": 0,
+      "exit_code": 0,
+      "duration_seconds": 235.81
+    },
+    "format_and_diff": {
+      "cargo_fmt_check": "passed",
+      "git_diff_check": "passed"
+    },
+    "release_workflow_actionlint": {
+      "command": "go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/ci.yml .github/workflows/python-wheels.yml",
+      "exit_code": 0
+    },
+    "ashare_portable_evidence_regression": {
+      "command": "cargo test -p qx-cli --test cli_behavior_parity ashare_report_product::ashare_runs_export_documents_and_compare_on_the_same_input -- --exact --nocapture",
+      "passed": 1,
+      "failed": 0
+    },
+    "linux_release_build_attempt": {
+      "command": "cargo build --release --locked -p qx-cli --no-default-features --features sqlite",
+      "status": "tool_timeout_after_300_seconds_during_final_lto_link",
+      "fresh_artifact_produced": false,
+      "notes": "Existing Linux binary started and reported version, but it was not replaced by this build attempt."
+    },
+    "linux_sqlite_cli_retest": {
+      "command": "cargo test -p qx-cli -j 1 --quiet",
+      "exit_code": 0,
+      "passed": 696,
+      "failed": 0,
+      "ignored": 0,
+      "harnesses": 14,
+      "notes": "Rerun without a concurrent Release link. QX_PYTHON and PATH pointed to the isolated Linux wheel venv; the prior seven process/subprocess timeouts did not recur. This does not cover the PostgreSQL/NATS feature matrix or live services."
+    }
+  },
+  "artifacts": {
+    "cli": {
+      "path": "dist/release-candidate-v0.3.0-windows-x86_64/qx-cli-v0.3.0-windows-x86_64.exe",
+      "bytes": 43920384,
+      "sha256": "9e9a987a04120de458e8517d3e70df9f8b494e49b45f0a50f9a8ad326f7282e0",
+      "version_output": "qianxing 0.3.0 (build 4a70e85-dirty, target x86_64-pc-windows-msvc, profile release, schemas 924955e5ac02de7d2437901dd4751462f5545e1c3130bb0ff96e6fc5ab1d227f)"
+    },
+    "wheel": {
+      "path": "dist/release-candidate-v0.3.0-windows-x86_64/qianxing-0.3.0-cp310-abi3-win_amd64.whl",
+      "bytes": 22790887,
+      "sha256": "893b8ccbc9b8dc7bcf5a6b0bf33ebd4cbf7f72a27635888748b1cc5582520cab",
+      "repeat_build_byte_identical": true,
+      "stable_abi_audit": "passed",
+      "fresh_venv_offline_install": "passed",
+      "wheel_smoke": "passed: 17 strategies, 70 bars, A-share/classic/depth/multileg paths",
+      "bundled_cli_sha256": "9e9a987a04120de458e8517d3e70df9f8b494e49b45f0a50f9a8ad326f7282e0"
+    },
+    "checksum_file": "dist/release-candidate-v0.3.0-windows-x86_64/SHA256SUMS"
+  },
+  "release_status": "unpublished-local-candidate",
+  "remaining_release_gates": [
+    "Linux feature matrix, Linux integration retest, and a fresh Linux release build without build contention",
+    "Live PostgreSQL and NATS service integration",
+    "macOS runtime and wheel build",
+    "Clean tag reproducible build",
+    "PyPI and GitHub Release upload validation",
+    "Cargo registry package publication requires prior publication of internal workspace dependencies; qx-adapter is absent from the configured registry index"
+  ]
+}

@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "multi_account_multi_strategy_bar_capacity",
+  "generated_at_utc": "2026-10-22T05:49:34Z",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "binary": "D:\\aex_work\\qianxing\\target\\release\\qx-cli.exe",
+  "binary_sha256": "c61f0999a4b5aa6392e86df427db89d9ae9031504953d752025811b87674bef5",
+  "measurement_source_fingerprint_schema": 3,
+  "measurement_source_fingerprint": "e97f3e8c20ba50092fffba25a2f7dcc63ed7d196ed2fb4040aa2ea2529078cdb",
+  "bars_per_account": 64000,
+  "repeats": 3,
+  "configured_workloads": [
+    {
+      "accounts": 32,
+      "strategies_per_account": 1
+    }
+  ],
+  "method": "one qx-cli multi-account-backtest process; every account runs the same synthetic BarFrame through the normal per-account BacktestSpec path and optional same-account strategy portfolio",
+  "profile_coverage_claim": false,
+  "profile_target_statuses_updated": false,
+  "scope_limitations": [
+    "synthetic crypto spot Bars without TradingInstrumentSpec or venue rules",
+    "MultiAccountBacktestSpec accounts execute sequentially; this measures batch memory and wall time, not internal scheduler concurrency",
+    "does not exercise external provider, Paper, network, or multi-venue profile paths",
+    "process-tree RSS is a sampled aggregate and may miss brief spikes"
+  ],
+  "workloads": [
+    {
+      "accounts": 32,
+      "strategies_per_account": 1,
+      "total_strategy_slots": 32,
+      "bars_per_account": 64000,
+      "bars_total": 2048000,
+      "bars_times_strategy_slots": 2048000,
+      "warmup_wall_ms": 5911.32,
+      "p50_wall_ms": 5456.709,
+      "p95_wall_ms": 6770.717,
+      "peak_rss_bytes_max": 43925504,
+      "aggregate_process_tree_peak_rss_bytes_max": 43888640,
+      "peak_process_count": 1,
+      "process_tree_cpu_seconds_p50": 2.859,
+      "process_tree_io_read_bytes_max": 170229682,
+      "process_tree_io_write_bytes_max": 113619772,
+      "successful_fills": 32,
+      "result_hashes_by_account": [
+        "8bfdd2c07237d775",
+        "aa8ebcda8b3bac8d",
+        "8d7b41b84f15e809",
+        "0806a2a5037170c9",
+        "35b79d6f52a966ed",
+        "a40934c9e0be5de5",
+        "d21d5075d71e1309",
+        "9df77adbbe44f799",
+        "c5fca6684452fd55",
+        "c0e6ce732c0f005d",
+        "cbc0c2db9b4435b5",
+        "bcc1a45ab65b2649",
+        "12a86f2d7468656d",
+        "e1187d897cc0e4c1",
+        "1b1d00e672d38c15",
+        "678e740b510a0669",
+        "022c9d7f1835c80d",
+        "da579c00be144ae1",
+        "e06f1c4d8b0b1bf5",
+        "45e6d48d14e201f9",
+        "e4308672ccb4e171",
+        "a309f6ca9d0ce6ed",
+        "1ca1d69c46d892d5",
+        "1a07068c11a58901",
+        "28aada43c6728949",
+        "459cdf52d6afd2fd",
+        "2facd0cf15a9e145",
+        "1facfc38391b6ee9",
+        "c17f8ef98a364b01",
+        "08c05ecad2434c6d",
+        "23c136b1cd45be21",
+        "fdae662a2a2151b1"
+      ],
+      "deterministic_across_repeats": true
+    }
+  ]
+}

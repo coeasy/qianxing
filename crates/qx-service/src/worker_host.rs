@@ -1,8 +1,128 @@
 //! Supervised runtime worker host shared by CLI and future daemon facades.
 
 use std::path::Path;
+use std::sync::Arc;
 
+use crate::configured_backends::{
+    configured_command_queue, configured_control_store, ControlStateBackend,
+};
+use qx_control::{CommandKind, CommandStatus, ControlCommand, Permission};
 use qx_runtime::{RuntimeConfig, RuntimeSupervisor, WorkerConfig, WorkerContext, WorkerRole};
+use qx_storage::ControlCommandQueueBackend;
+
+struct RuntimeStrategyLifecyclePort {
+    control: ControlStateBackend,
+    queue: Arc<dyn ControlCommandQueueBackend>,
+}
+
+impl qx_orchestrator::StrategyLifecyclePort for RuntimeStrategyLifecyclePort {
+    fn submit(
+        &mut self,
+        operation_id: &str,
+        worker_id: &str,
+        operator_id: &str,
+        action: qx_orchestrator::StrategyLifecycleAction,
+    ) -> Result<u64, String> {
+        let request_id = format!("strategy-deployment:{operation_id}");
+        let digest = qx_strategy::sha256_hex(request_id.as_bytes());
+        let command_id = u64::from_str_radix(&digest[..16], 16)
+            .map_err(|_| "cannot derive lifecycle command ID from SHA-256".to_string())?
+            .max(1);
+        let command = ControlCommand {
+            command_id,
+            request_id,
+            operator_id: operator_id.to_string(),
+            reason: format!("strategy deployment operation {operation_id}"),
+            kind: match action {
+                qx_orchestrator::StrategyLifecycleAction::Pause => CommandKind::PauseStrategy,
+                qx_orchestrator::StrategyLifecycleAction::Resume => CommandKind::ResumeStrategy,
+            },
+            target: worker_id.to_string(),
+            payload: Default::default(),
+            permission: Permission::Trading,
+            dry_run: false,
+        };
+        let current = self.control.load()?.command(command_id).cloned();
+        if let Some(existing) = current {
+            if existing != command {
+                return Err(format!(
+                    "lifecycle command ID collision for operation {operation_id}"
+                ));
+            }
+        } else {
+            let persisted = self
+                .control
+                .transact(|plane| plane.submit_as(command.clone(), Permission::Admin, now_ms()))?;
+            persisted
+                .1
+                .map_err(|error| format!("cannot audit strategy lifecycle command: {error:?}"))?;
+        }
+        let status = self
+            .control
+            .load()?
+            .audit()
+            .iter()
+            .rev()
+            .find(|record| record.command_id == command_id)
+            .map(|record| record.status);
+        if status == Some(CommandStatus::Accepted) {
+            self.queue
+                .enqueue_command(command, qx_runtime::lease_clock(now_ms()))
+                .map_err(|error| {
+                    format!("RETRY_PENDING: cannot enqueue strategy lifecycle command: {error:?}")
+                })?;
+        }
+        Ok(command_id)
+    }
+
+    fn outcome(
+        &mut self,
+        command_id: u64,
+    ) -> Result<qx_orchestrator::StrategyLifecycleCommandOutcome, String> {
+        let plane = self.control.load()?;
+        let record = plane
+            .audit()
+            .iter()
+            .rev()
+            .find(|record| record.command_id == command_id)
+            .ok_or_else(|| {
+                format!("strategy lifecycle command {command_id} has no audit record")
+            })?;
+        Ok(match record.status {
+            CommandStatus::Accepted => qx_orchestrator::StrategyLifecycleCommandOutcome::Pending,
+            CommandStatus::Executed => qx_orchestrator::StrategyLifecycleCommandOutcome::Executed,
+            CommandStatus::Failed => {
+                qx_orchestrator::StrategyLifecycleCommandOutcome::Failed(record.result_code.clone())
+            }
+        })
+    }
+}
+
+#[cfg(test)]
+mod strategy_lifecycle_port_tests {
+    fn lifecycle_command_id(operation_id: &str) -> u64 {
+        let request_id = format!("strategy-deployment:{operation_id}");
+        let digest = qx_strategy::sha256_hex(request_id.as_bytes());
+        u64::from_str_radix(&digest[..16], 16).unwrap().max(1)
+    }
+
+    #[test]
+    fn strategy_deployment_command_id_uses_a_stable_nonzero_digest_prefix() {
+        let first = lifecycle_command_id("deploy-1");
+        assert_ne!(first, 0);
+        assert_eq!(first, lifecycle_command_id("deploy-1"));
+        assert_ne!(first, lifecycle_command_id("pause-2"));
+    }
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
+}
 
 /// Supervise the configured worker processes from this host process.
 ///
@@ -16,12 +136,31 @@ pub fn supervise_processes(
     work_dir: &Path,
     allow_unmanaged_roles: bool,
 ) -> Result<(), qx_orchestrator::SuperviseFailure> {
+    let mut backend_config = config.clone();
+    if !Path::new(&backend_config.storage.data_dir).is_absolute() {
+        backend_config.storage.data_dir = work_dir
+            .join(&backend_config.storage.data_dir)
+            .to_string_lossy()
+            .into_owned();
+    }
+    if let Some(sqlite_path) = backend_config.storage.sqlite_path.as_mut() {
+        if !Path::new(sqlite_path).is_absolute() {
+            *sqlite_path = work_dir.join(&*sqlite_path).to_string_lossy().into_owned();
+        }
+    }
+    let control = configured_control_store(&backend_config)
+        .map_err(qx_orchestrator::SuperviseFailure::Usage)?;
+    let queue_root = Path::new(&backend_config.storage.data_dir);
+    let queue = configured_command_queue(&backend_config, queue_root)
+        .map_err(qx_orchestrator::SuperviseFailure::Usage)?;
+    let mut lifecycle_port = RuntimeStrategyLifecyclePort { control, queue };
     qx_orchestrator::supervise_workers(
         config,
         config_path,
         executable,
         work_dir,
         allow_unmanaged_roles,
+        &mut lifecycle_port,
     )
 }
 

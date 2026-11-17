@@ -1,0 +1,11 @@
+docs\architecture-local-server-refactor-review-2026-10-28.md:27: broken or case-mismatched link: hs300-sma-2010-present/status.json
+docs\architecture-local-server-refactor-review-2026-10-28.md:317: broken or case-mismatched link: 牵星Qianxing-本地与服务端策略运行架构对标及重构实施方案-2026-10-28.md
+docs\architecture-local-server-refactor-review-2026-10-28.md:317: broken or case-mismatched link: ../maturity/strategy-run-refactor-work-packages.json
+docs\architecture-local-server-refactor-review-2026-10-28.md:319: broken or case-mismatched link: strategy-host-capabilities.md
+docs\architecture-local-server-refactor-review-2026-10-28.md:319: broken or case-mismatched link: strategy-deployment-observations.md
+docs\architecture-local-server-refactor-review-2026-10-28.md:319: broken or case-mismatched link: backtest-report-layout.md
+docs\architecture-local-server-refactor-review-2026-10-28.md:319: broken or case-mismatched link: local-backtest-validation.md
+docs\architecture-local-server-refactor-review-2026-10-28.md:319: broken or case-mismatched link: hs300-sma-2010-present/README.md
+docs\architecture-local-server-refactor-review-2026-10-28.md:658: broken or case-mismatched link: ../maturity/acceptance-artifacts/c0c8ecbf-56d1-43ed-8b02-a622a381f704.log
+docs\strategy-project-runs.md:211: broken or case-mismatched link: backtest-report-layout.md
+Markdown link check failed: 10 broken link(s)

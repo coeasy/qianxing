@@ -147,6 +147,7 @@ mod tests {
             builtin_reference_bars_snapshot_path: Some("../research/reference.json".into()),
             external_executable: Some("../bin/strategy.exe".into()),
             python_module: Some("../python/strategy.py".into()),
+            python_strategy_spec: None,
             c_abi_library: Some("../lib/strategy.dll".into()),
             ..StrategyRuntimeConfig::default()
         };
@@ -180,6 +181,7 @@ mod tests {
         let mut named = StrategyRuntimeConfig {
             external_executable: Some("strategy-worker".into()),
             python_module: Some("package.strategy".into()),
+            python_strategy_spec: None,
             c_abi_library: Some("strategy_plugin".into()),
             ..StrategyRuntimeConfig::default()
         };

@@ -1,0 +1,109 @@
+$ D:\aex_work\qianxing\python\.venv\Scripts\python.exe tools/accept_clean_install.py --python D:\aex_work\qianxing\python\.venv\Scripts\python.exe --work-dir D:\aex_work\qianxing\target\r20-install-work-offline --wheel D:\aex_work\qianxing\target\r20-wheel-out\qx_python-0.3.0-cp310-abi3-win_amd64.whl
+exit_code=1
+
+[stdout]
+$ 'D:\aex_work\qianxing\python\.venv\Scripts\python.exe' -m venv 'D:\aex_work\qianxing\target\r20-install-work-offline\installed-venv'
+$ 'D:\aex_work\qianxing\target\r20-install-work-offline\installed-venv\Scripts\python.exe' -m pip install --no-index 'D:\aex_work\qianxing\target\r20-wheel-out\qx_python-0.3.0-cp310-abi3-win_amd64.whl'
+Processing d:\aex_work\qianxing\target\r20-wheel-out\qx_python-0.3.0-cp310-abi3-win_amd64.whl
+Installing collected packages: qx-python
+Successfully installed qx-python-0.3.0
+$ cargo install --path 'D:\aex_work\qianxing\crates\qx-cli' --locked --offline --root 'D:\aex_work\qianxing\target\r20-install-work-offline\installed-cli' --force
+$ 'D:\aex_work\qianxing\target\r20-install-work-offline\installed-cli\bin\qx-cli.exe' version
+qianxing 0.3.0 (build 7f719a8-dirty, target x86_64-pc-windows-msvc, profile release, schemas c7e5863e86f7be138e7b90a91564c2fc664e53bdf39b5b29b5b5204e1e4510fa)
+
+[stderr]
+  Installing qx-cli v0.3.0 (D:\aex_work\qianxing\crates\qx-cli)
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling syn v3.0.4
+   Compiling memchr v2.8.3
+   Compiling serde_derive v1.0.229
+   Compiling serde_json v1.0.151
+   Compiling serde v1.0.229
+   Compiling qx-core v0.3.0 (D:\aex_work\qianxing\crates\qx-core)
+   Compiling qx-guanxing v0.3.0 (D:\aex_work\qianxing\crates\qx-guanxing)
+   Compiling zerocopy v0.8.56
+   Compiling once_cell v1.21.4
+   Compiling qx-datastruct v0.3.0 (D:\aex_work\qianxing\crates\qx-datastruct)
+   Compiling ahash v0.8.12
+   Compiling qx-data v0.3.0 (D:\aex_work\qianxing\crates\qx-data)
+   Compiling qx-risk v0.3.0 (D:\aex_work\qianxing\crates\qx-risk)
+   Compiling pkg-config v0.3.34
+   Compiling vcpkg v0.2.15
+   Compiling libsqlite3-sys v0.30.1
+   Compiling qx-zhenlu v0.3.0 (D:\aex_work\qianxing\crates\qx-zhenlu)
+   Compiling hashbrown v0.14.5
+   Compiling qx-control v0.3.0 (D:\aex_work\qianxing\crates\qx-control)
+   Compiling zeroize v1.9.0
+   Compiling rustls-pki-types v1.15.1
+   Compiling qx-strategy v0.3.0 (D:\aex_work\qianxing\crates\qx-strategy)
+   Compiling hashlink v0.9.1
+   Compiling bitflags v2.13.1
+   Compiling fallible-streaming-iterator v0.1.9
+   Compiling fallible-iterator v0.3.0
+   Compiling smallvec v1.16.0
+   Compiling rusqlite v0.32.1
+   Compiling qx-spec v0.3.0 (D:\aex_work\qianxing\crates\qx-spec)
+   Compiling windows-sys v0.61.2
+   Compiling generic-array v0.14.7
+   Compiling qx-scheduler v0.3.0 (D:\aex_work\qianxing\crates\qx-scheduler)
+   Compiling qx-protocol v0.3.0 (D:\aex_work\qianxing\crates\qx-protocol)
+   Compiling typenum v1.20.1
+   Compiling rustls v0.23.43
+   Compiling qx-storage v0.3.0 (D:\aex_work\qianxing\crates\qx-storage)
+   Compiling rustls-webpki v0.103.15
+   Compiling qx-execution v0.3.0 (D:\aex_work\qianxing\crates\qx-execution)
+   Compiling qx-provider v0.3.0 (D:\aex_work\qianxing\crates\qx-provider)
+   Compiling qx-factor v0.3.0 (D:\aex_work\qianxing\crates\qx-factor)
+   Compiling subtle v2.6.1
+   Compiling anstyle v1.0.14
+   Compiling once_cell_polyfill v1.70.2
+   Compiling utf8parse v0.2.2
+   Compiling anstyle-parse v1.0.0
+   Compiling anstyle-wincon v3.0.11
+   Compiling qx-runtime v0.3.0 (D:\aex_work\qianxing\crates\qx-runtime)
+   Compiling anstyle-query v1.1.5
+   Compiling qx-xingban v0.3.0 (D:\aex_work\qianxing\crates\qx-xingban)
+   Compiling thiserror v2.0.20
+   Compiling crc32fast v1.5.2
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling colorchoice v1.0.5
+   Compiling qx-process-io v0.3.0 (D:\aex_work\qianxing\crates\qx-process-io)
+   Compiling anstream v1.0.0
+   Compiling qx-app v0.3.0 (D:\aex_work\qianxing\crates\qx-app)
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling webpki-roots v1.0.9
+   Compiling qx-genglu v0.3.0 (D:\aex_work\qianxing\crates\qx-genglu)
+   Compiling thiserror-impl v2.0.20
+   Compiling equivalent v1.0.2
+   Compiling clap_lex v1.1.1
+   Compiling zip v2.4.2
+   Compiling hashbrown v0.17.1
+   Compiling strsim v0.11.1
+   Compiling clap_builder v4.6.7
+   Compiling indexmap v2.14.2
+   Compiling clap_derive v4.6.7
+   Compiling qx-adapter v0.3.0 (D:\aex_work\qianxing\crates\qx-adapter)
+   Compiling digest v0.10.7
+   Compiling qx-api v0.3.0 (D:\aex_work\qianxing\crates\qx-api)
+   Compiling qx-cli v0.3.0 (D:\aex_work\qianxing\crates\qx-cli)
+   Compiling qx-orchestrator v0.3.0 (D:\aex_work\qianxing\crates\qx-orchestrator)
+   Compiling displaydoc v0.2.7
+   Compiling cpufeatures v0.2.17
+   Compiling sha2 v0.10.9
+   Compiling qx-service v0.3.0 (D:\aex_work\qianxing\crates\qx-service)
+   Compiling clap v4.6.7
+   Compiling qx-plugin v0.3.0 (D:\aex_work\qianxing\crates\qx-plugin)
+    Finished `release` profile [optimized] target(s) in 11m 57s
+  Installing D:\aex_work\qianxing\target\r20-install-work-offline\installed-cli\bin\qx-cli.exe
+   Installed package `qx-cli v0.3.0 (D:\aex_work\qianxing\crates\qx-cli)` (executable `qx-cli.exe`)
+warning: be sure to add `D:\aex_work\qianxing\target\r20-install-work-offline\installed-cli\bin` to your PATH to be able to run the installed binaries
+Traceback (most recent call last):
+  File "D:\aex_work\qianxing\tools\accept_clean_install.py", line 165, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "D:\aex_work\qianxing\tools\accept_clean_install.py", line 99, in main
+    identity = run([str(cli), "version"], cwd=work, env=cli_env).stdout.strip()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'strip'

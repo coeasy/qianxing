@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "kind": "rust-workspace-release-candidate-v1",
+  "generated_at_utc": "2026-10-27T09:46:15Z",
+  "source": {
+    "head_commit": "b23ab7eed3fc2aa5f1ffdfcf7d27fee53057b649",
+    "working_tree_changes_included": false
+  },
+  "command": "cargo test --workspace --offline -j 1",
+  "environment": {
+    "os": "Windows 11 Pro build 22631",
+    "target": "x86_64-pc-windows-msvc",
+    "temporary_directory": ".codex-tmp-build"
+  },
+  "result": {
+    "exit_code": 0,
+    "test_targets_passed": 178,
+    "tests_passed": 2578,
+    "tests_failed": 0,
+    "tests_ignored": 2,
+    "rustfmt_check": "passed"
+  },
+  "limitations": [
+    "This records the committed release candidate, not a published release.",
+    "The Windows Microsandbox local runtime smoke subsequently passed; its scoped evidence is maturity/evidence/microsandbox-local-windows-smoke-2026-10-27.json.",
+    "The local runtime smoke does not validate a Qianxing strategy worker inside the guest, connected server provider sessions, tenant isolation, capacity, billing, or production approval."
+  ],
+  "release_status": "candidate_tests_passed_not_published"
+}

@@ -10,12 +10,44 @@ from typing import get_args, get_type_hints
 from qianxing.app import (
     BacktestSpec,
     BuiltinStrategySpec,
+    ExperimentParameterRange,
     ExperimentParameterSpace,
     list_builtin_strategies,
+    list_builtin_strategy_recipes,
     run_backtest,
     verify_run,
 )
 from qianxing_bridge import native
+
+
+class ParameterTypingContractTest(unittest.TestCase):
+
+    def test_typed_parameter_names_cover_rust_sizing_and_depth_maker_dimensions(self) -> None:
+        names = set(get_args(get_type_hints(ExperimentParameterSpace)["name"]))
+        self.assertEqual(
+            names,
+            {
+                "fast_window",
+                "slow_window",
+                "period",
+                "threshold_bps",
+                "quantity_raw",
+                "target_notional_raw",
+                "target_available_margin_bps",
+                "target_volatility_bps",
+                "target_kelly_fraction_bps",
+                "market_making_spread_bps",
+                "market_making_quote_qty_raw",
+                "market_making_max_inventory_raw",
+                "market_making_tick_size_raw",
+                "market_making_inventory_skew_bps",
+            },
+        )
+
+    def test_continuous_parameter_names_stay_open_for_callback_parameters(self) -> None:
+        # Rust built-in dimensions are checked against the schema at execution;
+        # custom callback strategies may use any valid declared identifier.
+        self.assertIs(get_type_hints(ExperimentParameterRange)["name"], str)
 
 
 class StrategyCatalogTest(unittest.TestCase):
@@ -42,24 +74,23 @@ class StrategyCatalogTest(unittest.TestCase):
         self.assertEqual(next(item for item in catalog if item.name == "macd").signal_knobs, ())
         self.assertTrue(all(item.description.strip() for item in catalog))
 
-    def test_typed_parameter_names_cover_rust_sizing_and_depth_maker_dimensions(self) -> None:
-        names = set(get_args(get_type_hints(ExperimentParameterSpace)["name"]))
+    def test_recipes_match_all_builtin_strategies_and_disclose_required_costs(self) -> None:
+        recipes = list_builtin_strategy_recipes()
+        self.assertEqual(len(recipes), 17)
+        self.assertEqual({recipe.name for recipe in recipes}, {item.name for item in list_builtin_strategies()})
+        for recipe in recipes:
+            self.assertTrue(recipe.id.endswith(".v1"))
+            self.assertTrue(recipe.cost_inputs)
+            self.assertTrue(recipe.risk_notes)
+            self.assertTrue(recipe.validation_notes)
+        macd = next(recipe for recipe in recipes if recipe.name == "macd")
         self.assertEqual(
-            names,
-            {
-                "fast_window",
-                "slow_window",
-                "period",
-                "threshold_bps",
-                "quantity_raw",
-                "target_kelly_fraction_bps",
-                "market_making_spread_bps",
-                "market_making_quote_qty_raw",
-                "market_making_max_inventory_raw",
-                "market_making_tick_size_raw",
-                "market_making_inventory_skew_bps",
-            },
+            [(item.name, item.default_value, item.configurable) for item in macd.signal_parameters],
+            [("fast_period", 12, False), ("slow_period", 26, False), ("signal_period", 9, False)],
         )
+        pairs = next(recipe for recipe in recipes if recipe.name == "pairs_arbitrage")
+        self.assertEqual(pairs.required_inputs, ("primary_bar_series", "reference_bar_series"))
+        self.assertTrue(any("funding" in item for item in pairs.cost_inputs))
 
     def test_selecting_catalog_entry_runs_and_verifies_shared_rust_backtest(self) -> None:
         selected = next(

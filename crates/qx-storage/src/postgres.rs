@@ -16,11 +16,14 @@ use super::{
     OutboxStore, QueuedControlCommand, QueuedJob, StorageError, TransactionalConsumerStateStore,
 };
 use super::{validate_event_log, validate_event_log_name};
-use postgres::{Client, GenericClient, Transaction};
+use postgres::{Error as PgError, Row};
 use qx_control::{AuditRecord, ControlCommand, ControlPlane};
 use qx_core::{EventLog, QxResult};
 use qx_protocol::{AccountSnapshot, ProtocolError, SnapshotStore};
 use qx_scheduler::{JobRun, JobSpec};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -30,21 +33,23 @@ const AUDIT_LOCK_KEY: i64 = 7_381_922_401_129;
 const EVENT_LOG_LOCK_KEY: i64 = 7_381_922_401_131;
 const OUTBOX_LOCK_KEY: i64 = 7_381_922_401_137;
 const CONSUMER_LOCK_KEY: i64 = 7_381_922_401_139;
+const JSON_STATE_LOCK_KEY: i64 = 7_381_922_401_149;
+const DEPLOYMENT_BLOB_LOCK_KEY: i64 = 7_381_922_401_151;
+const MAX_DEPLOYMENT_BLOB_BYTES: usize = 256 * 1024 * 1024;
+const MAX_DEPLOYMENT_BLOB_BATCH_BYTES: usize = 320 * 1024 * 1024;
+const MAX_DEPLOYMENT_BLOB_BATCH_ITEMS: usize = 2_049;
 
-/// 建池时每个连接的握手时间预算（TCP 连接 + TLS 协商 + 认证）。
-///
-/// `Client::connect` 在此之前没有任何界：一台接受了 TCP 却迟迟不完成握手的
-/// Postgres（或一个挂起的 DNS）会让同步的启动路径按存储后端逐个无限阻塞，
-/// 而单次启动会串行建控制面 / 命令队列 / JobQueue / EventLog / Outbox 多个池。
-/// 会话级 `statement_timeout` 等三条 SET 只在连接成功之后才生效，管不到这一段。
-/// （V13 R2 第三十三遍 #263）
+mod connection;
+use connection::{BoundedClient as Client, BoundedTransaction as Transaction, QueryClient};
+
+/// 建池时每个连接从 DNS/Socket 到 TLS 和 PostgreSQL 认证完成的总时限。
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
-fn pg_error(error: postgres::Error) -> StorageError {
+fn pg_error(error: PgError) -> StorageError {
     StorageError::Io(format!("PostgreSQL: {error}"))
 }
 
-fn pg_protocol_error(error: postgres::Error) -> ProtocolError {
+fn pg_protocol_error(error: PgError) -> ProtocolError {
     ProtocolError::Io(format!("PostgreSQL: {error}"))
 }
 
@@ -129,17 +134,9 @@ impl PostgresStorage {
                 "PostgreSQL pool_size 必须在 1..=128 内".into(),
             ));
         }
-        // DSN 解析与 `Client::connect(dsn, ..)` 完全同路（后者内部就是 dsn.parse()
-        // ?.connect(..)），这里只是把它拆出来好挂上 connect_timeout，让握手有界。
-        let mut config: postgres::Config = dsn.parse().map_err(pg_error)?;
-        config.connect_timeout(CONNECT_TIMEOUT);
         let mut clients = Vec::with_capacity(pool_size);
         for index in 0..pool_size {
-            let tls = native_tls::TlsConnector::builder()
-                .build()
-                .map_err(|error| StorageError::Io(format!("PostgreSQL TLS 初始化失败: {error}")))?;
-            let connector = postgres_native_tls::MakeTlsConnector::new(tls);
-            let mut client = config.connect(connector).map_err(pg_error)?;
+            let mut client = Client::connect(dsn, CONNECT_TIMEOUT)?;
             if index == 0 {
                 migrate_client(&mut client)?;
             }
@@ -168,6 +165,10 @@ impl PostgresStorage {
 #[path = "postgres/schema_adoption.rs"]
 mod schema_adoption;
 pub use schema_adoption::adopt_legacy_postgres_schema;
+
+#[cfg(test)]
+#[path = "postgres/json_state_tests.rs"]
+mod json_state_tests;
 
 fn configure_client(client: &mut Client) -> Result<(), StorageError> {
     client
@@ -218,6 +219,12 @@ fn migrate_client(client: &mut Client) -> Result<(), StorageError> {
             "2" => transaction
                 .batch_execute(super::schema_migrations::POSTGRES_V2_SCHEMA)
                 .map_err(pg_error)?,
+            "3" => transaction
+                .batch_execute(super::schema_migrations::POSTGRES_V3_SCHEMA)
+                .map_err(pg_error)?,
+            "4" => transaction
+                .batch_execute(super::schema_migrations::POSTGRES_V4_SCHEMA)
+                .map_err(pg_error)?,
             _ => unreachable!("migration plan only contains known schema versions"),
         }
         transaction
@@ -237,6 +244,233 @@ fn lock_transaction<'a>(transaction: &mut Transaction<'a>, key: i64) -> Result<(
         .query_one("SELECT pg_advisory_xact_lock($1)", &[&key])
         .map(|_| ())
         .map_err(pg_error)
+}
+
+/// Transactional JSON documents for runtime state that must share PostgreSQL durability.
+///
+/// Keys are logical relative names, not filesystem paths. A transaction lock serializes
+/// updates across processes, including first-write races before a row exists.
+#[derive(Clone, Debug)]
+pub struct PostgresJsonStateStore {
+    storage: PostgresStorage,
+}
+
+impl PostgresJsonStateStore {
+    pub fn connect(dsn: &str) -> Result<Self, StorageError> {
+        Ok(Self {
+            storage: PostgresStorage::connect(dsn)?,
+        })
+    }
+
+    pub fn load_json_at<T: DeserializeOwned>(
+        &self,
+        state_key: &str,
+    ) -> Result<Option<T>, StorageError> {
+        validate_json_state_key(state_key)?;
+        let mut client = self.storage.lock_client()?;
+        let content = client
+            .query_opt(
+                "SELECT content FROM qx_json_state WHERE state_key = $1",
+                &[&state_key],
+            )
+            .map_err(pg_error)?
+            .map(|row| row.get::<_, String>(0));
+        content
+            .map(|content| {
+                serde_json::from_str(&content).map_err(|error| {
+                    StorageError::Conflict(format!(
+                        "PostgreSQL JSON state {state_key:?} is invalid: {error}"
+                    ))
+                })
+            })
+            .transpose()
+    }
+
+    pub fn transact_json_at<T, R, E, F>(
+        &self,
+        state_key: &str,
+        initial: T,
+        update: F,
+    ) -> Result<(T, Result<R, E>), StorageError>
+    where
+        T: Serialize + DeserializeOwned,
+        F: FnOnce(&mut T) -> Result<R, E>,
+    {
+        validate_json_state_key(state_key)?;
+        let mut client = self.storage.lock_client()?;
+        let mut transaction = client.transaction().map_err(pg_error)?;
+        lock_transaction(&mut transaction, JSON_STATE_LOCK_KEY)?;
+        let content = transaction
+            .query_opt(
+                "SELECT content FROM qx_json_state WHERE state_key = $1 FOR UPDATE",
+                &[&state_key],
+            )
+            .map_err(pg_error)?
+            .map(|row| row.get::<_, String>(0));
+        let mut state = match content {
+            Some(content) => serde_json::from_str(&content).map_err(|error| {
+                StorageError::Conflict(format!(
+                    "PostgreSQL JSON state {state_key:?} is invalid: {error}"
+                ))
+            })?,
+            None => initial,
+        };
+        let outcome = update(&mut state);
+        if outcome.is_ok() {
+            let serialized = serde_json::to_string(&state).map_err(|error| {
+                StorageError::Io(format!(
+                    "cannot serialize PostgreSQL JSON state {state_key:?}: {error}"
+                ))
+            })?;
+            transaction
+                .execute(
+                    "INSERT INTO qx_json_state(state_key, content) VALUES ($1, $2)
+                     ON CONFLICT(state_key) DO UPDATE SET content = EXCLUDED.content",
+                    &[&state_key, &serialized],
+                )
+                .map_err(pg_error)?;
+            transaction.commit().map_err(pg_error)?;
+        } else {
+            transaction.rollback().map_err(pg_error)?;
+        }
+        Ok((state, outcome))
+    }
+}
+
+/// Content-addressed immutable deployment artifact blobs stored in PostgreSQL `BYTEA`.
+#[derive(Clone, Debug)]
+pub struct PostgresBlobStore {
+    storage: PostgresStorage,
+}
+
+impl PostgresBlobStore {
+    pub fn connect(dsn: &str) -> Result<Self, StorageError> {
+        Ok(Self {
+            storage: PostgresStorage::connect(dsn)?,
+        })
+    }
+
+    pub fn load_blob_at(&self, sha256: &str) -> Result<Option<Vec<u8>>, StorageError> {
+        validate_blob_sha256(sha256)?;
+        let mut client = self.storage.lock_client()?;
+        let content = client
+            .query_opt(
+                "SELECT content FROM qx_deployment_blobs WHERE sha256 = $1",
+                &[&sha256],
+            )
+            .map_err(pg_error)?
+            .map(|row| row.get::<_, Vec<u8>>(0));
+        if content
+            .as_ref()
+            .is_some_and(|bytes| bytes.is_empty() || bytes.len() > MAX_DEPLOYMENT_BLOB_BYTES)
+        {
+            return Err(StorageError::Conflict(format!(
+                "PostgreSQL deployment blob {sha256} has invalid size"
+            )));
+        }
+        if content
+            .as_ref()
+            .is_some_and(|bytes| deployment_blob_sha256(bytes) != sha256)
+        {
+            return Err(StorageError::Conflict(format!(
+                "PostgreSQL deployment blob {sha256} failed digest verification"
+            )));
+        }
+        Ok(content)
+    }
+
+    /// Insert a bounded batch under one transaction; repeated identical blobs are idempotent.
+    pub fn put_blobs_at(&self, blobs: &[(String, Vec<u8>)]) -> Result<(), StorageError> {
+        if blobs.len() > MAX_DEPLOYMENT_BLOB_BATCH_ITEMS {
+            return Err(StorageError::Conflict(format!(
+                "deployment blob batch exceeds {MAX_DEPLOYMENT_BLOB_BATCH_ITEMS} items"
+            )));
+        }
+        let mut batch_bytes = 0usize;
+        for (sha256, content) in blobs {
+            validate_blob_sha256(sha256)?;
+            if content.is_empty() || content.len() > MAX_DEPLOYMENT_BLOB_BYTES {
+                return Err(StorageError::Conflict(format!(
+                    "deployment blob size must be in 1..={MAX_DEPLOYMENT_BLOB_BYTES} bytes"
+                )));
+            }
+            if deployment_blob_sha256(content) != *sha256 {
+                return Err(StorageError::Conflict(
+                    "deployment blob content does not match its SHA-256 key".into(),
+                ));
+            }
+            batch_bytes = batch_bytes.checked_add(content.len()).ok_or_else(|| {
+                StorageError::Conflict("deployment blob batch size overflow".into())
+            })?;
+            if batch_bytes > MAX_DEPLOYMENT_BLOB_BATCH_BYTES {
+                return Err(StorageError::Conflict(format!(
+                    "deployment blob batch exceeds {MAX_DEPLOYMENT_BLOB_BATCH_BYTES} bytes"
+                )));
+            }
+        }
+        if blobs.is_empty() {
+            return Ok(());
+        }
+        let mut client = self.storage.lock_client()?;
+        let mut transaction = client.transaction().map_err(pg_error)?;
+        lock_transaction(&mut transaction, DEPLOYMENT_BLOB_LOCK_KEY)?;
+        for (sha256, content) in blobs {
+            let existing = transaction
+                .query_opt(
+                    "SELECT content FROM qx_deployment_blobs WHERE sha256 = $1 FOR UPDATE",
+                    &[sha256],
+                )
+                .map_err(pg_error)?
+                .map(|row| row.get::<_, Vec<u8>>(0));
+            match existing {
+                Some(existing) if existing == *content => {}
+                Some(_) => {
+                    transaction.rollback().map_err(pg_error)?;
+                    return Err(StorageError::Conflict(format!(
+                        "deployment blob digest {sha256} already exists with different content"
+                    )));
+                }
+                None => {
+                    transaction
+                        .execute(
+                            "INSERT INTO qx_deployment_blobs(sha256, content) VALUES ($1, $2)",
+                            &[sha256, content],
+                        )
+                        .map_err(pg_error)?;
+                }
+            }
+        }
+        transaction.commit().map_err(pg_error)
+    }
+}
+
+fn validate_blob_sha256(sha256: &str) -> Result<(), StorageError> {
+    if sha256.len() != 64
+        || !sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(StorageError::InvalidName(
+            "deployment blob key must be a 64-digit SHA-256".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn deployment_blob_sha256(content: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(content))
+}
+
+fn validate_json_state_key(state_key: &str) -> Result<(), StorageError> {
+    if state_key.trim().is_empty()
+        || state_key.len() > 512
+        || state_key.bytes().any(|byte| byte.is_ascii_control())
+    {
+        return Err(StorageError::InvalidName(
+            "PostgreSQL JSON state key must contain 1..=512 non-control bytes".into(),
+        ));
+    }
+    Ok(())
 }
 
 // ----------------------------- Consumer state ---------------------------
@@ -1237,7 +1471,7 @@ impl PostgresAuditStore {
     }
 }
 
-fn read_audit<C: GenericClient>(client: &mut C) -> Result<Vec<AuditEntry>, StorageError> {
+fn read_audit<C: QueryClient>(client: &mut C) -> Result<Vec<AuditEntry>, StorageError> {
     let rows = client
         .query(
             "SELECT sequence, record_json, previous_hash, entry_hash
@@ -1248,7 +1482,7 @@ fn read_audit<C: GenericClient>(client: &mut C) -> Result<Vec<AuditEntry>, Stora
     parse_audit_rows(rows)
 }
 
-fn parse_audit_rows(rows: Vec<postgres::Row>) -> Result<Vec<AuditEntry>, StorageError> {
+fn parse_audit_rows(rows: Vec<Row>) -> Result<Vec<AuditEntry>, StorageError> {
     let mut entries = Vec::with_capacity(rows.len());
     for row in rows {
         let record: AuditRecord = serde_json::from_str(row.get(1))
@@ -1472,6 +1706,19 @@ impl PostgresControlCommandQueue {
             transaction.commit().map_err(pg_error)?;
             return Ok(marker_path("control-commands", command.command_id));
         }
+        let pending_count: i64 = transaction
+            .query_one(
+                "SELECT COUNT(*) FROM qx_control_commands WHERE done = FALSE",
+                &[],
+            )
+            .map_err(pg_error)?
+            .get(0);
+        if pending_count >= crate::DEFAULT_MAX_PENDING_CONTROL_COMMANDS as i64 {
+            return Err(StorageError::Conflict(format!(
+                "ControlCommandQueue pending capacity reached: {pending_count}/{}",
+                crate::DEFAULT_MAX_PENDING_CONTROL_COMMANDS
+            )));
+        }
         transaction
             .execute(
                 "INSERT INTO qx_control_commands(command_id, command_json, enqueued_ts, done)
@@ -1673,18 +1920,52 @@ impl ControlCommandQueueBackend for PostgresControlCommandQueue {
 #[derive(Clone, Debug)]
 pub struct PostgresJobQueue {
     storage: PostgresStorage,
+    max_pending_jobs: usize,
 }
 
 impl PostgresJobQueue {
     pub fn connect(dsn: &str) -> Result<Self, StorageError> {
+        Self::connect_with_pending_limit(dsn, crate::DEFAULT_MAX_PENDING_JOBS)
+    }
+
+    pub fn connect_with_pending_limit(
+        dsn: &str,
+        max_pending_jobs: usize,
+    ) -> Result<Self, StorageError> {
+        if max_pending_jobs == 0 || max_pending_jobs > crate::DEFAULT_MAX_PENDING_JOBS {
+            return Err(StorageError::Conflict(format!(
+                "JobQueue max_pending_jobs 必须在 1..={} 内",
+                crate::DEFAULT_MAX_PENDING_JOBS
+            )));
+        }
         Ok(Self {
             storage: PostgresStorage::connect(dsn)?,
+            max_pending_jobs,
         })
     }
 
     pub fn connect_with_pool_size(dsn: &str, pool_size: usize) -> Result<Self, StorageError> {
+        Self::connect_with_pool_size_and_pending_limit(
+            dsn,
+            pool_size,
+            crate::DEFAULT_MAX_PENDING_JOBS,
+        )
+    }
+
+    pub fn connect_with_pool_size_and_pending_limit(
+        dsn: &str,
+        pool_size: usize,
+        max_pending_jobs: usize,
+    ) -> Result<Self, StorageError> {
+        if max_pending_jobs == 0 || max_pending_jobs > crate::DEFAULT_MAX_PENDING_JOBS {
+            return Err(StorageError::Conflict(format!(
+                "JobQueue max_pending_jobs 必须在 1..={} 内",
+                crate::DEFAULT_MAX_PENDING_JOBS
+            )));
+        }
         Ok(Self {
             storage: PostgresStorage::connect_with_pool_size(dsn, pool_size)?,
+            max_pending_jobs,
         })
     }
 
@@ -1719,6 +2000,16 @@ impl PostgresJobQueue {
             self.validate_existing_job(&old, &envelope)?;
             transaction.commit().map_err(pg_error)?;
             return Ok(marker_path("jobs", envelope.run.run_id));
+        }
+        let pending_count: i64 = transaction
+            .query_one("SELECT COUNT(*) FROM qx_jobs WHERE done = FALSE", &[])
+            .map_err(pg_error)?
+            .get(0);
+        if pending_count as usize >= self.max_pending_jobs {
+            return Err(StorageError::Conflict(format!(
+                "JobQueue pending capacity reached: {pending_count}/{}",
+                self.max_pending_jobs
+            )));
         }
         transaction
             .execute(
@@ -1757,6 +2048,40 @@ impl PostgresJobQueue {
             jobs.push(job);
         }
         jobs.sort_by(crate::job_queue::compare_queued_job_order);
+        Ok(jobs)
+    }
+
+    pub fn available_for_owner(
+        &self,
+        now: u64,
+        worker_id: &str,
+        limit: usize,
+    ) -> Result<Vec<QueuedJob>, StorageError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let limit = limit.min(i64::MAX as usize) as i64;
+        let mut client = self.storage.lock_client()?;
+        let rows = client
+            .query(
+                "SELECT j.envelope_json
+                 FROM qx_jobs j LEFT JOIN qx_job_leases l ON l.run_id = j.run_id
+                 WHERE j.done = FALSE
+                   AND (l.expires_ts IS NULL OR l.expires_ts::numeric <= $1::text::numeric)
+                   AND ((j.envelope_json::jsonb #>> '{job,owner}') = $2
+                        OR (j.envelope_json::jsonb #>> '{job,owner}') = '*')
+                 ORDER BY (j.envelope_json::jsonb #>> '{run,trading_day}'), j.run_id::numeric
+                 LIMIT $3",
+                &[&u64_text(now), &worker_id, &limit],
+            )
+            .map_err(pg_error)?;
+        let mut jobs = Vec::with_capacity(rows.len());
+        for row in rows {
+            let job: QueuedJob = serde_json::from_str(row.get(0))
+                .map_err(|error| StorageError::Io(format!("任务 JSON 非法: {error}")))?;
+            job.validate()?;
+            jobs.push(job);
+        }
         Ok(jobs)
     }
 
@@ -1901,6 +2226,15 @@ impl JobQueueBackend for PostgresJobQueue {
 
     fn available_jobs(&self, now: u64) -> Result<Vec<QueuedJob>, StorageError> {
         self.available(now)
+    }
+
+    fn available_jobs_for_owner(
+        &self,
+        now: u64,
+        worker_id: &str,
+        limit: usize,
+    ) -> Result<Vec<QueuedJob>, StorageError> {
+        self.available_for_owner(now, worker_id, limit)
     }
 
     fn claim_job(

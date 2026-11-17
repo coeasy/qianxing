@@ -36,6 +36,8 @@ fn spot_multi_leg_attribution_closes_fees_and_stays_deterministic() {
     assert!(field(&reconcile_fields(&stdout), "pending") > 0);
 
     let payload = attribution_artifact(&first);
+    // CLI multi-builtin uses the independent-ledger composition artifact (v2).
+    // The shared-account strategy artifact consumed by research_artifacts is a separate v3 schema.
     assert_eq!(payload["schema_version"], 2);
     assert_eq!(
         payload["pending_reconcile"]["items"]

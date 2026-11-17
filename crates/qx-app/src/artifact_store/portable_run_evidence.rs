@@ -430,6 +430,25 @@ pub fn prepare_portable_run_evidence_export(
         }
     }
 
+    let mut strategy_diagnostics_relative = None;
+    if let Some(diagnostics) = run.strategy_diagnostics.as_mut() {
+        let source = verified_source(
+            source_root,
+            &diagnostics.input_path,
+            &diagnostics.input_sha256,
+            |actual| {
+                format!(
+                    "导出前策略诊断 SHA-256 不匹配: {} 声明={} 实际={actual}",
+                    diagnostics.input_path, diagnostics.input_sha256
+                )
+            },
+        )?;
+        let relative = "inputs/strategy-diagnostics.json".to_string();
+        push_source(&mut sources, source, relative.clone());
+        diagnostics.input_path = relative.clone();
+        strategy_diagnostics_relative = Some(relative);
+    }
+
     for (artifact, source) in run
         .artifacts
         .iter_mut()
@@ -451,6 +470,9 @@ pub fn prepare_portable_run_evidence_export(
         run.recompute.inputs.push(path);
     }
     if let Some(path) = report_calendar_relative {
+        run.recompute.inputs.push(path);
+    }
+    if let Some(path) = strategy_diagnostics_relative {
         run.recompute.inputs.push(path);
     }
 
@@ -480,6 +502,22 @@ pub fn commit_portable_run_evidence_export(
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("创建证据包目录失败 {}: {error}", parent.display()))?;
         copy_portable_run_evidence_file(&source.source, &target)?;
+        if source.relative == "inputs/strategy-diagnostics.json" {
+            let expected = match &plan.bundle.generation {
+                EvidenceGeneration::Run(run) => run
+                    .strategy_diagnostics
+                    .as_ref()
+                    .map(|diagnostics| diagnostics.input_sha256.as_str())
+                    .ok_or("策略诊断来源存在但 EvidenceBundle 缺少诊断引用")?,
+                _ => return Err("evidence export-run 只接受 generation=run".into()),
+            };
+            let actual = qx_strategy::file_digest::sha256_file_hex(&target)?;
+            if actual != expected {
+                return Err(format!(
+                    "导出后的策略诊断 SHA-256 不匹配: {actual} != {expected}"
+                ));
+            }
+        }
     }
     for generated in generated_files {
         let target = staging.join(&generated.relative);

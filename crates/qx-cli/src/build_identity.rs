@@ -13,6 +13,8 @@ pub(crate) const BUILD_REVISION: &str = env!("QX_GIT_COMMIT");
 pub(crate) const TARGET_TRIPLE: &str = env!("QX_TARGET_TRIPLE");
 /// 构建档（`release` / `debug`）：debug 二进制的哈希与性能都不可与 release 互证。
 pub(crate) const BUILD_PROFILE: &str = env!("QX_BUILD_PROFILE");
+/// SHA-256 over the versioned JSON Schema filenames and bytes used for this build.
+pub(crate) const SCHEMA_CATALOG_SHA256: &str = env!("QX_SCHEMA_CATALOG_SHA256");
 
 /// 短提交号：保留 `-dirty` 后缀，否则"脏"这一格信息会在截断里丢失。
 pub(crate) fn short_revision() -> String {
@@ -25,11 +27,12 @@ pub(crate) fn short_revision() -> String {
 /// 一行的完整身份串：`version` 出口、`doctor` 检查项与文档核对共用这一份措辞。
 pub(crate) fn identity_line() -> String {
     format!(
-        "qianxing {} (build {}, target {}, profile {})",
+        "qianxing {} (build {}, target {}, profile {}, schemas {})",
         RUNTIME_VERSION,
         short_revision(),
         TARGET_TRIPLE,
-        BUILD_PROFILE
+        BUILD_PROFILE,
+        SCHEMA_CATALOG_SHA256
     )
 }
 

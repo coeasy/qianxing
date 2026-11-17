@@ -42,6 +42,7 @@ fn canonical_output_target(path: &std::path::Path) -> Option<PathBuf> {
 pub(crate) struct ReportArtifactPaths {
     pub(crate) equity_csv: PathBuf,
     pub(crate) fills_csv: PathBuf,
+    pub(crate) event_trace: PathBuf,
     pub(crate) html: PathBuf,
 }
 
@@ -51,6 +52,7 @@ pub(crate) fn report_artifact_paths(summary_path: &Path) -> Result<ReportArtifac
         return Ok(ReportArtifactPaths {
             equity_csv: summary_path.with_file_name("equity.csv"),
             fills_csv: summary_path.with_file_name("fills.csv"),
+            event_trace: summary_path.with_file_name("events.jsonl"),
             html: summary_path.with_file_name("report.html"),
         });
     }
@@ -65,6 +67,7 @@ pub(crate) fn report_artifact_paths(summary_path: &Path) -> Result<ReportArtifac
     Ok(ReportArtifactPaths {
         equity_csv: summary_path.with_file_name(format!("{stem}.equity.csv")),
         fills_csv: summary_path.with_file_name(format!("{stem}.fills.csv")),
+        event_trace: summary_path.with_file_name(format!("{stem}.events.jsonl")),
         html: summary_path.with_file_name(format!("{stem}.report.html")),
     })
 }

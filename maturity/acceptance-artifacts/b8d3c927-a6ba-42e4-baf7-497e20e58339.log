@@ -1,0 +1,32 @@
+OK   old_copy_is_the_pre_fix_scope tool16=cdb9f6afbe1d29b4 old16=3cb55f06a21fc5d3
+OK   pre_widened_tool_is_green_at_78 rc=0 files=78 total=78
+OK   pre_old_tool_was_green_at_58 rc=0 files=58
+OK   widening_added_exactly_the_exempted_files total=78 new=78 old=58 exempt=20 archive=19 named=1
+OK   pre_baseline_run_is_green_on_the_widened_scope rc=0 files=78/78 local=146 broken=0
+OK   gun1_widened_tool_saw_the_archive_dead_link rc=1 row=docs\archive\README.md:57: broken or case-mismatched link: does-not-exist-r17-archive.md
+OK   gun1_old_tool_was_blind_to_the_same_row rc=0 mentions=0
+OK   gun1_driver_red_on_both_legs rc=1 mdlinks_rc=1 broken=1 pointers_broken=1 pointers_rc=1
+OK   gun1_breakage_landed_in_broken_not_in_local_only local_only=146
+OK   gun1_audit_named_the_archive_row   BROKEN docs/archive/README.md:57 docs/archive/does-not-exist-r17-archive.md
+OK   gun1_restored_by_sha archive16=64c51b5c3ef78b98
+OK   gun2_widened_tool_still_green_on_a_valid_archive_link rc=0
+OK   gun2_old_tool_also_green_on_it rc=0
+OK   gun2_face_unchanged rc=0
+OK   gun2_restored_by_sha archive16=64c51b5c3ef78b98
+OK   gun3_mutant_is_one_line audit16=4a6e11a36b199ef8
+OK   gun3_driver_refused_with_the_mirror_message rc=2 found=True
+OK   gun3_died_before_writing_a_summary
+OK   gun3_restored_by_sha audit16=b8834ff1333ffd6a
+OK   gun4_tightened_below_the_measured_face_goes_red rc=1 pointers_rc=1 local=146
+OK   gun4_loosened_back_to_146_is_green rc=0
+OK   verdict_run_is_green_on_final_bytes rc=0
+OK   no_injection_survived_into_the_verdict_run
+OK   archive_restored_to_its_pre_battery_bytes archive16=64c51b5c3ef78b98
+OK   tally_adds_up adjudicated=4 fired=4
+OK   every_adjudicated_shot_is_killed_or_equivalent survived=0
+OK   audit_restored_by_sha audit16=b8834ff1333ffd6a
+OK   tool_untouched_by_the_battery tool16=cdb9f6afbe1d29b4
+OK   archive_restored_by_sha_at_exit archive16=64c51b5c3ef78b98
+TALLY fired=4 adjudicated=4 killed=3 equivalent=1 survived=0
+CHECKS ok=29 bad=0 rows=29
+GUNS_OK shots=4 killed=3 equivalent=1

@@ -1,0 +1,13 @@
+./-prefixed path-shaped citation occurrences: 5
+  pointing at a tracked path once the prefix is stripped: 5
+  already tracked with the prefix kept (so nothing to rescue): 0
+  untracked either way (the prefix is not what makes them absent): 0
+  distinct spellings: 2  distinct targets after stripping: 2
+
+  docs/archive/README-历史实测快照-2026-10-09.md                   139  ./tools/build_python_wheel.ps1 -> tools/build_python_wheel.ps1
+  docs/archive/自研量化框架审计与重构方案-V12.md                          1139  ./build.sh -> build.sh
+  docs/archive/自研量化框架审计与重构方案-V12.md                          1278  ./tools/build_python_wheel.ps1 -> tools/build_python_wheel.ps1
+  docs/changelog/v12.md                                      285  ./tools/build_python_wheel.ps1 -> tools/build_python_wheel.ps1
+  docs/自研量化框架审计与重构方案-V13.md                                  266  ./build.sh -> build.sh
+
+shipped audit faces: examined=4617 exact=2685 local_only=150 gated=36 case=0 ambiguous=0 dead=1782

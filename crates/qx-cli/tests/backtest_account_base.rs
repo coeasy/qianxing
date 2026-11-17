@@ -127,7 +127,11 @@ fn builtin_entry_prints_the_default_it_booked_with() {
         format!("[Strategy · Account] initial_cash_raw={DEFAULT_RAW} account_base_source=builtin-default"),
         "默认本金必须原样印出来，缺了这行等于回到「没人知道自己跑在多少钱上」: {stderr}"
     );
-    assert_eq!(field(&stdout, "[Strategy · Backtest]", "fills"), "1");
+    assert_eq!(
+        field(&stdout, "[Strategy · Backtest]", "fills"),
+        "2",
+        "fills 统计实际成交事件，进场与离场各记一笔"
+    );
 }
 
 /// 同一份配置、同一份夹具、同一个下单量：只有那一格本金不同，结果就必须不同。
@@ -159,8 +163,8 @@ fn a_declared_account_base_is_what_makes_the_second_unit_fillable() {
     assert_eq!(code, 0, "声明本金后同一条命令要能跑完: {funded_err}");
     assert_eq!(
         field(&funded, "[Strategy · Backtest]", "fills"),
-        "1",
-        "声明的本金必须真的进到引擎账户"
+        "2",
+        "声明的本金必须让策略完成进场与离场，且逐笔计入 fills"
     );
     assert!(
         line_with(&funded, "[Strategy · Account]")
@@ -235,7 +239,7 @@ fn summary_chains_land_the_account_base_they_actually_used() {
     );
     assert_eq!(
         summary["schema_version"],
-        serde_json::json!(7),
+        serde_json::json!(8),
         "摘要世代包含当前 RunRecord 与回测分析字段"
     );
 

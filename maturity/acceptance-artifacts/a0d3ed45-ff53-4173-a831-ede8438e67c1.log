@@ -1,0 +1,18 @@
+{
+  "account_id": null,
+  "artifacts": {
+    "equity": ".task-tmp/nextstyle-run\\python-file-sma-nextstyle.equity.csv",
+    "event_trace": ".task-tmp/nextstyle-run\\python-file-sma-nextstyle.events.jsonl",
+    "fills": ".task-tmp/nextstyle-run\\python-file-sma-nextstyle.fills.csv",
+    "run_manifest": ".task-tmp/nextstyle-run\\python-file-sma-nextstyle.run.json",
+    "summary": ".task-tmp/nextstyle-run\\python-file-sma-nextstyle.summary.json"
+  },
+  "data_fingerprint": "barframe:613fdc1dc0b779e7",
+  "equity_points": 70,
+  "fills": 0,
+  "instrument": "BTCUSDT.BINANCE",
+  "max_drawdown_bps": 0,
+  "result_hash": "cc34404aedac1bac",
+  "return_bps": 0,
+  "run_id": "python-file-sma-nextstyle"
+}

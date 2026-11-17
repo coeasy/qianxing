@@ -1,0 +1,8 @@
+$ python -c import os,runpy,subprocess,sys; x=runpy.run_path('tools/check_architecture.py',run_name='gate_module'); x['python_strategy_provider_module_check'](); sys.exit(1 if x['failures'] else subprocess.call(['cargo','check','--workspace','-j','1'],env={**os.environ,'CARGO_PROFILE_DEV_DEBUG':'0'}))
+exit_code=0
+
+[stdout]
+[PASS] Python strategy provider selection/配置由 providers 子模块唯一拥有，凭证仍与普通 worker 环境隔离，host facade 保留启动顺序
+
+[stderr]
+    Finished `dev` profile [unoptimized] target(s) in 0.58s

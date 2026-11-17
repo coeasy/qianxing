@@ -102,7 +102,7 @@ pub(crate) fn run_ecosystem_smoke_inner(as_json: bool) -> Result<(), String> {
         candidate.config.feature_version
     );
 
-    let mut base = AccountSnapshot::new(1, "main", "default", "SIM", 20);
+    let mut base = AccountSnapshot::new(1, "main", "default", "SIM", "20260911", 20);
     base.cash_raw.insert("USD".into(), 100_000);
     base.positions.insert(
         instrument.clone(),

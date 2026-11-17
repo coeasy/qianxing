@@ -1,0 +1,40 @@
+$ podman exec qianxing-linux-test sh -lc set -eu; export PATH=/usr/local/cargo/bin:$PATH; cd /workspace/qianxing-07505ae; CARGO_TARGET_DIR=/target CARGO_BUILD_JOBS=1 QX_PYTHON=python3 cargo test --workspace --all-targets --locked --offline
+exit_code=125
+
+[stdout]
+
+[stderr]
+   Compiling qx-core v0.4.0 (/workspace/qianxing-07505ae/crates/qx-core)
+   Compiling qx-guanxing v0.4.0 (/workspace/qianxing-07505ae/crates/qx-guanxing)
+   Compiling qx-datastruct v0.4.0 (/workspace/qianxing-07505ae/crates/qx-datastruct)
+   Compiling qx-strategy v0.4.0 (/workspace/qianxing-07505ae/crates/qx-strategy)
+   Compiling qx-risk v0.4.0 (/workspace/qianxing-07505ae/crates/qx-risk)
+   Compiling qx-data v0.4.0 (/workspace/qianxing-07505ae/crates/qx-data)
+   Compiling qx-zhenlu v0.4.0 (/workspace/qianxing-07505ae/crates/qx-zhenlu)
+   Compiling qx-control v0.4.0 (/workspace/qianxing-07505ae/crates/qx-control)
+   Compiling qx-spec v0.4.0 (/workspace/qianxing-07505ae/crates/qx-spec)
+   Compiling qx-xingban v0.4.0 (/workspace/qianxing-07505ae/crates/qx-xingban)
+   Compiling qx-provider v0.4.0 (/workspace/qianxing-07505ae/crates/qx-provider)
+   Compiling qx-app v0.4.0 (/workspace/qianxing-07505ae/crates/qx-app)
+   Compiling qx-scheduler v0.4.0 (/workspace/qianxing-07505ae/crates/qx-scheduler)
+   Compiling qx-protocol v0.4.0 (/workspace/qianxing-07505ae/crates/qx-protocol)
+   Compiling qx-storage v0.4.0 (/workspace/qianxing-07505ae/crates/qx-storage)
+   Compiling qx-execution v0.4.0 (/workspace/qianxing-07505ae/crates/qx-execution)
+   Compiling qx-factor v0.4.0 (/workspace/qianxing-07505ae/crates/qx-factor)
+   Compiling qx-runtime v0.4.0 (/workspace/qianxing-07505ae/crates/qx-runtime)
+   Compiling qx-api v0.4.0 (/workspace/qianxing-07505ae/crates/qx-api)
+   Compiling qx-process-io v0.4.0 (/workspace/qianxing-07505ae/crates/qx-process-io)
+   Compiling qx-genglu v0.4.0 (/workspace/qianxing-07505ae/crates/qx-genglu)
+   Compiling qx-adapter v0.4.0 (/workspace/qianxing-07505ae/crates/qx-adapter)
+   Compiling qx-orchestrator v0.4.0 (/workspace/qianxing-07505ae/crates/qx-orchestrator)
+   Compiling qx-cli v0.4.0 (/workspace/qianxing-07505ae/crates/qx-cli)
+   Compiling qx-service v0.4.0 (/workspace/qianxing-07505ae/crates/qx-service)
+   Compiling qx-plugin v0.4.0 (/workspace/qianxing-07505ae/crates/qx-plugin)
+   Compiling qx-sdk v0.4.0 (/workspace/qianxing-07505ae/crates/qx-sdk)
+   Compiling contract-tests v0.4.0 (/workspace/qianxing-07505ae/crates/contract-tests)
+   Compiling pyo3 v0.29.2
+   Compiling qx-python v0.4.0 (/workspace/qianxing-07505ae/crates/qx-python)
+warning: could not load dep-graph from `/target/debug/incremental/qx_orchestrator-0vm0ui9d30oi7/s-ho05vmwpwi-1bs34j4-working/dep-graph.bin`: memory map must have a non-zero length
+
+warning: `qx-orchestrator` (lib test) generated 1 warning
+Error: Get "http://d/v6.1.4/libpod/exec/287b74b5058e211a91da4cec9df6e0ad2ab81ecea9492ec3436c07304a8a466a/json": EOF

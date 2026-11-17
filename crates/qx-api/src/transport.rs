@@ -11,6 +11,8 @@ use std::net::TcpStream;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+
 pub(crate) fn configure_connection(stream: &TcpStream) -> std::io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_millis(100)))?;
     stream.set_write_timeout(Some(Duration::from_secs(10)))
@@ -26,7 +28,34 @@ pub(crate) fn tls_stream(
             format!("TLS server config invalid: {error}"),
         )
     })?;
-    Ok(StreamOwned::new(connection, stream))
+    let mut secured = StreamOwned::new(connection, stream);
+    let deadline = Instant::now() + TLS_HANDSHAKE_TIMEOUT;
+    while secured.conn.is_handshaking() {
+        if Instant::now() >= deadline {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "TLS handshake deadline exceeded",
+            ));
+        }
+        match secured.conn.complete_io(&mut secured.sock) {
+            Ok(_) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) && Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Err(error) => {
+                return Err(std::io::Error::new(
+                    error.kind(),
+                    format!("TLS handshake failed: {error}"),
+                ));
+            }
+        }
+    }
+    Ok(secured)
 }
 
 pub(crate) fn write_ws_text<S: Write>(stream: &mut S, text: &str) -> std::io::Result<()> {

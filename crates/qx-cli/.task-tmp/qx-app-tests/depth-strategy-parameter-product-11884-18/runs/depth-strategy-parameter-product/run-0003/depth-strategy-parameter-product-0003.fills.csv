@@ -1,2 +1,0 @@
-ts,order_id,qty_raw,price_raw,fee_raw,strategy_id
-24000,2,1000000000,107000000000,0,depth-sma

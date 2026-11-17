@@ -1,0 +1,266 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "product_spec_bound_cli_backtest_proxy",
+  "generated_at_utc": "2026-10-27T00:38:16Z",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "binary": "D:\\aex_work\\qianxing\\target\\release\\qx-cli.exe",
+  "binary_sha256": "824212a677cd4604d41e144bb6768c7ffdd34f7322f1434394b94c2c5ce9020c",
+  "measurement_source_fingerprint_schema": 3,
+  "measurement_source_fingerprint": "ed6bfe0958520a68d8e5b3e21bc808fac5a3d72a74b3b7efe6d0b1d460414053",
+  "scenario": "qx-cli backtest builtin sma_cross with fixture instrument + TradingInstrumentSpec",
+  "resource_measurement": {
+    "peak_rss_field": "peak_rss_bytes",
+    "process_tree_peak_rss_field": "process_tree_peak_rss_bytes",
+    "method": "Windows process PeakWorkingSetSize; Linux VmHWM; macOS 10ms RSS sampling",
+    "process_tree_method": "optional psutil 10ms aggregate RSS sampling across qx-cli and descendants",
+    "scope": "process tree excludes shared-system cache; tree RSS may miss short spikes"
+  },
+  "profile_coverage_claim": false,
+  "market_workloads": [
+    {
+      "fixture": "ashare-equity",
+      "market_domain": "A-share equity instrument",
+      "instrument": "600519.SSE",
+      "product": "spot",
+      "settlement_currency": "CNY",
+      "quantity": 100,
+      "runtime_config_sha256": "58ee73c3cfbcc91a1df404042769959e3026d6b6ded30b61a07c8dbb816cf980",
+      "market_spec_sha256": "c23c1ae88f1c0a8745375246ad17b514c3ebbe956be54943f67e670a203fed35",
+      "scope_limitations": [
+        "synthetic BarFrame generated at runtime",
+        "measures CLI Bar backtest with market spec only",
+        "does not exercise full profile-specific Paper, calendar, corporate-action, funding, or venue workflows"
+      ],
+      "rows": [
+        {
+          "bars": 64000,
+          "repeats": 3,
+          "input_generation_ms": 49.366,
+          "input_bytes": 5007904,
+          "persisted_output_bytes": 3712946,
+          "p50_ms": 2151.924,
+          "p95_ms": 2169.607,
+          "peak_rss_bytes_max": 244383744,
+          "peak_rss_samples": 3,
+          "process_tree_peak_rss_bytes_max": 237903872,
+          "process_tree_peak_rss_samples": 3,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds_p50": 0.453,
+          "process_tree_io_read_bytes_max": 22459947,
+          "process_tree_io_write_bytes_max": 2366,
+          "result_hash": "7c44033304ef2a23",
+          "deterministic_across_repeats": true
+        }
+      ]
+    },
+    {
+      "fixture": "cn-futures",
+      "market_domain": "Chinese futures instrument",
+      "instrument": "rb2510.SHFE",
+      "product": "future",
+      "settlement_currency": "CNY",
+      "quantity": 1,
+      "runtime_config_sha256": "cec548a70cf9649ecfab5d6009221844398dd76bfd4502550b0536ccc6b4b735",
+      "market_spec_sha256": "b467d26b57abdff6f8e9a8b961f2692c54571974fb9175062baff88b286e308e",
+      "scope_limitations": [
+        "synthetic BarFrame generated at runtime",
+        "measures CLI Bar backtest with market spec only",
+        "does not exercise full profile-specific Paper, calendar, corporate-action, funding, or venue workflows"
+      ],
+      "rows": [
+        {
+          "bars": 64000,
+          "repeats": 3,
+          "input_generation_ms": 48.417,
+          "input_bytes": 5256386,
+          "persisted_output_bytes": 3543607,
+          "p50_ms": 2513.456,
+          "p95_ms": 2577.298,
+          "peak_rss_bytes_max": 249999360,
+          "peak_rss_samples": 3,
+          "process_tree_peak_rss_bytes_max": 246923264,
+          "process_tree_peak_rss_samples": 3,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds_p50": 0.734,
+          "process_tree_io_read_bytes_max": 22866709,
+          "process_tree_io_write_bytes_max": 2364,
+          "result_hash": "b5d4eb7b10d7b164",
+          "deterministic_across_repeats": true
+        }
+      ]
+    },
+    {
+      "fixture": "global-equity",
+      "market_domain": "global equity instrument",
+      "instrument": "AAPL.NASDAQ",
+      "product": "spot",
+      "settlement_currency": "USD",
+      "quantity": 1,
+      "runtime_config_sha256": "07ef5556e64adb276ab32cc447dd98cc1d3c45613e6891919b28a3bbdc0041c5",
+      "market_spec_sha256": "b20e92a587309e100b6ce44ae6fe8808f1650596c05bf77b1ceb1b70c3a7185f",
+      "scope_limitations": [
+        "synthetic BarFrame generated at runtime",
+        "measures CLI Bar backtest with market spec only",
+        "does not exercise full profile-specific Paper, calendar, corporate-action, funding, or venue workflows"
+      ],
+      "rows": [
+        {
+          "bars": 64000,
+          "repeats": 3,
+          "input_generation_ms": 49.649,
+          "input_bytes": 4879907,
+          "persisted_output_bytes": 3712957,
+          "p50_ms": 2138.179,
+          "p95_ms": 2159.706,
+          "peak_rss_bytes_max": 244531200,
+          "peak_rss_samples": 3,
+          "process_tree_peak_rss_bytes_max": 240418816,
+          "process_tree_peak_rss_samples": 3,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds_p50": 0.625,
+          "process_tree_io_read_bytes_max": 20732318,
+          "process_tree_io_write_bytes_max": 764,
+          "result_hash": "a4d2ea76ef6ce1bb",
+          "deterministic_across_repeats": true
+        }
+      ]
+    },
+    {
+      "fixture": "fx-cfd",
+      "market_domain": "FX/CFD instrument",
+      "instrument": "EURUSD.FX",
+      "product": "margin",
+      "settlement_currency": "USD",
+      "quantity": 1,
+      "runtime_config_sha256": "ba3b4940771df7e0bd91942d30efdf44da2aeea6f80b349f77985a3668e06452",
+      "market_spec_sha256": "0fdc72c3870a0733d50784f8a6db3e38667079a930da9537da9acaa98580cbac",
+      "scope_limitations": [
+        "synthetic BarFrame generated at runtime",
+        "measures CLI Bar backtest with market spec only",
+        "does not exercise full profile-specific Paper, calendar, corporate-action, funding, or venue workflows"
+      ],
+      "rows": [
+        {
+          "bars": 64000,
+          "repeats": 3,
+          "input_generation_ms": 48.349,
+          "input_bytes": 4488367,
+          "persisted_output_bytes": 3840794,
+          "p50_ms": 2257.632,
+          "p95_ms": 2317.258,
+          "peak_rss_bytes_max": 250056704,
+          "peak_rss_samples": 3,
+          "process_tree_peak_rss_bytes_max": 202289152,
+          "process_tree_peak_rss_samples": 3,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds_p50": 0.688,
+          "process_tree_io_read_bytes_max": 21156992,
+          "process_tree_io_write_bytes_max": 2322,
+          "result_hash": "dc0ab1414e915ff0",
+          "deterministic_across_repeats": true
+        }
+      ]
+    },
+    {
+      "fixture": "crypto-spot",
+      "market_domain": "crypto spot instrument",
+      "instrument": "BTCUSDT.BINANCE",
+      "product": "spot",
+      "settlement_currency": "USDT",
+      "quantity": 1,
+      "runtime_config_sha256": "b7723468bc931863acc4038f88c753b29be671ccca3e01b941311edd4ae336a7",
+      "market_spec_sha256": "7108cf7a2afa6d1ea01ad17f9f0342e789ce8ebd1d1cb2a8815e9ec320b312ce",
+      "scope_limitations": [
+        "synthetic BarFrame generated at runtime",
+        "measures CLI Bar backtest with market spec only",
+        "does not exercise full profile-specific Paper, calendar, corporate-action, funding, or venue workflows"
+      ],
+      "rows": [
+        {
+          "bars": 64000,
+          "repeats": 3,
+          "input_generation_ms": 51.595,
+          "input_bytes": 5320394,
+          "persisted_output_bytes": 3713010,
+          "p50_ms": 2186.08,
+          "p95_ms": 2262.757,
+          "peak_rss_bytes_max": 244662272,
+          "peak_rss_samples": 3,
+          "process_tree_peak_rss_bytes_max": 239042560,
+          "process_tree_peak_rss_samples": 3,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds_p50": 0.641,
+          "process_tree_io_read_bytes_max": 23397577,
+          "process_tree_io_write_bytes_max": 2395,
+          "result_hash": "ec94898aec117b1c",
+          "deterministic_across_repeats": true
+        }
+      ]
+    },
+    {
+      "fixture": "crypto-perpetual",
+      "market_domain": "crypto perpetual instrument",
+      "instrument": "BTCUSDT-PERP.BINANCE",
+      "product": "perpetual",
+      "settlement_currency": "USDT",
+      "quantity": 1,
+      "runtime_config_sha256": "8357d0957483bd464b77b8b051386d66be6e02dd688ca95c6318fa7aeddfd99a",
+      "market_spec_sha256": "7f2ce38ffcb9164413d69d7f08e5077913901382cffa24b96e0fe94294e4d454",
+      "scope_limitations": [
+        "synthetic BarFrame generated at runtime",
+        "measures CLI Bar backtest with market spec only",
+        "does not exercise full profile-specific Paper, calendar, corporate-action, funding, or venue workflows"
+      ],
+      "rows": [
+        {
+          "bars": 64000,
+          "repeats": 3,
+          "input_generation_ms": 49.505,
+          "input_bytes": 5320431,
+          "persisted_output_bytes": 3713146,
+          "p50_ms": 2455.03,
+          "p95_ms": 2480.581,
+          "peak_rss_bytes_max": 250486784,
+          "peak_rss_samples": 3,
+          "process_tree_peak_rss_bytes_max": 202620928,
+          "process_tree_peak_rss_samples": 3,
+          "peak_process_count": 1,
+          "process_tree_cpu_seconds_p50": 0.672,
+          "process_tree_io_read_bytes_max": 23398002,
+          "process_tree_io_write_bytes_max": 2471,
+          "result_hash": "dea7c748154871ae",
+          "deterministic_across_repeats": true
+        }
+      ]
+    }
+  ],
+  "unmeasured_profile_targets": {
+    "ashare-research": "the profile requires A-share rules, calendar, PIT and corporate-action behavior",
+    "ashare-paper": "the profile requires the Paper worker and virtual execution path",
+    "cn-futures-research": "the profile requires night-session calendar, margin, fees and rollover behavior",
+    "cn-options-research": "the profile requires options chain, exercise/assignment and seller-margin behavior",
+    "global-equity-paper": "the profile requires Paper execution, calendar, FX valuation and corporate actions",
+    "fx-paper": "the profile requires Paper execution, rollover, margin and hedge-mode behavior",
+    "crypto-paper": "the profile requires Paper execution, partial fills, rate limiting and funding behavior",
+    "crypto-testnet": "requires authenticated testnet order/ack/reconciliation evidence",
+    "multi-venue-arb": "requires paired venue pipeline, group state, compensation and reconciliation"
+  },
+  "unsupported_market_fixtures": [
+    {
+      "fixture": "cn-options",
+      "market_domain": "Chinese option contract",
+      "status": "not_measured",
+      "reason": "the Bar backtest rejects option contracts without chain, exercise and assignment inputs"
+    }
+  ],
+  "profile_target_statuses_updated": false
+}

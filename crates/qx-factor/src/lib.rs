@@ -1579,6 +1579,8 @@ mod tests {
             input_event_hash: "input".into(),
             output_event_hash: "output".into(),
             runtime_version: "runtime".into(),
+            canonical_run_spec_json: None,
+            canonical_run_spec_fingerprint: None,
         };
         let verified = candidate.clone().mark_event_verified(&manifest).unwrap();
         assert_eq!(verified.event_manifest_digest, Some(manifest.digest()));

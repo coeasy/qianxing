@@ -1,0 +1,70 @@
+measured BASE={'examined': 4617, 'examined_shape': 3363, 'exact_hits': 2685, 'local_only': 150, 'build': 114, 'gated': 36, 'case': 0, 'ambiguous': 0, 'dead': 1782, 'no_target': 1267} driver baseline=36 floor=4617
+shots fired=11 tally={'KILL': 4, 'EQUIV': 2, 'REFUSE': 5} declared={'KILL': 4, 'EQUIV': 2, 'REFUSE': 5}
+OK 1 mutated a file
+OK 1 went exactly as red
+OK 1 face mdlinks_rc
+OK 1 face mdlinks_citations_bad
+OK 1 face pointers_citations_case_mismatched
+OK 1 face pointers_citations_gated
+OK 1 face pointers_citations_examined
+OK 1 face pointers_rc
+OK 1 restore hashes match pre-sha
+OK 2 mutated a file
+OK 2 stayed green
+OK 2 face mdlinks_citations_examined
+OK 2 face mdlinks_citations_bad
+OK 2 face pointers_citations_examined
+OK 2 face pointers_citations_gated
+OK 2 restore hashes match pre-sha
+OK 3 mutated a file
+OK 3 went exactly as red
+OK 3 face mdlinks_rc
+OK 3 face pointers_citations_gated
+OK 3 face pointers_citation_baseline
+OK 3 face pointers_rc
+OK 3 restore hashes match pre-sha
+OK 4 went exactly as red
+OK 4 face pointers_citations_gated
+OK 4 face pointers_citation_baseline
+OK 4 face pointers_rc
+OK 4 restore hashes match pre-sha
+OK 5 refused by the driver
+OK 5 refusal never reached a verdict line
+OK 5 restore hashes match pre-sha
+OK 6 mutated a file
+OK 6 refused by the driver
+OK 6 refusal never reached a verdict line
+OK 6 restore hashes match pre-sha
+OK 7 mutated a file
+OK 7 refused by the driver
+OK 7 refusal never reached a verdict line
+OK 7 restore hashes match pre-sha
+OK 8 mutated a file
+OK 8 went exactly as red
+OK 8 face pointers_citations_local_only
+OK 8 face pointers_citations_build
+OK 8 face pointers_citations_gated
+OK 8 face pointers_rc
+OK 8 face mdlinks_rc
+OK 8 restore hashes match pre-sha
+OK 9 mutated a file
+OK 9 refused by the driver
+OK 9 refusal never reached a verdict line
+OK 9 restore hashes match pre-sha
+OK 10 mutated a file
+OK 10 refused by the driver
+OK 10 refusal never reached a verdict line
+OK 10 restore hashes match pre-sha
+OK 11 mutated a file
+OK 11 stayed green
+OK 11 face mdlinks_rc
+OK 11 face pointers_rc
+OK 11 face pointers_citations_dead
+OK 11 face pointers_dead_no_target
+OK 11 face pointers_citations_tracked_exact
+OK 11 face pointers_citations_examined
+OK 11 face pointers_citations_gated
+OK 11 restore hashes match pre-sha
+CHECKS total=65 ok=65 bad=0
+VERDICT OK
+battery_rc=0

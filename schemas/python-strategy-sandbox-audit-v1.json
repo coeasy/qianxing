@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.dev/schemas/python-strategy-sandbox-audit-v1.json",
+  "title": "Qianxing Python Strategy Sandbox Audit Record v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "record_type",
+    "record_sequence",
+    "occurred_at_ms",
+    "provider",
+    "job_id",
+    "host_worker_id",
+    "session_id",
+    "lifecycle_state",
+    "package_version",
+    "entry_sha256",
+    "bundle_sha256",
+    "spec_sha256",
+    "runtime_ref",
+    "backend",
+    "resource_limits",
+    "network_policy",
+    "failure_code",
+    "request_sequence",
+    "strategy_id",
+    "strategy_version",
+    "data_fingerprint",
+    "response_sha256",
+    "previous_record_sha256",
+    "record_sha256"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "record_type": { "const": "strategy_sandbox_lifecycle" },
+    "record_sequence": { "type": "integer", "minimum": 1 },
+    "occurred_at_ms": { "type": "integer", "minimum": 1 },
+    "provider": { "enum": ["e2b", "microsandbox", "opensandbox"] },
+    "job_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "host_worker_id": { "type": ["string", "null"], "maxLength": 256 },
+    "session_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "lifecycle_state": {
+      "enum": [
+        "create_requested",
+        "created",
+        "ready",
+        "create_failed",
+        "request_completed",
+        "request_failed",
+        "destroy_requested",
+        "destroyed",
+        "destroy_failed"
+      ]
+    },
+    "package_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "entry_sha256": { "$ref": "#/$defs/nullableSha256" },
+    "bundle_sha256": { "$ref": "#/$defs/nullableSha256" },
+    "spec_sha256": { "$ref": "#/$defs/nullableSha256" },
+    "runtime_ref": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "backend": { "type": ["string", "null"], "maxLength": 64 },
+    "resource_limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cpu_count",
+        "memory_bytes",
+        "request_timeout_ms",
+        "session_ttl_seconds",
+        "max_request_bytes",
+        "max_response_bytes"
+      ],
+      "properties": {
+        "cpu_count": { "type": "integer", "minimum": 1 },
+        "memory_bytes": { "type": "integer", "minimum": 1 },
+        "request_timeout_ms": { "type": "integer", "minimum": 1 },
+        "session_ttl_seconds": { "type": "integer", "minimum": 1 },
+        "max_request_bytes": { "type": "integer", "minimum": 1 },
+        "max_response_bytes": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "network_policy": { "const": "deny_all" },
+    "failure_code": { "type": ["string", "null"], "maxLength": 96 },
+    "request_sequence": { "type": ["integer", "null"], "minimum": 1 },
+    "strategy_id": { "type": ["string", "null"], "maxLength": 256 },
+    "strategy_version": { "type": ["string", "null"], "maxLength": 256 },
+    "data_fingerprint": { "type": ["string", "null"], "maxLength": 256 },
+    "response_sha256": { "$ref": "#/$defs/nullableSha256" },
+    "previous_record_sha256": { "$ref": "#/$defs/sha256" },
+    "record_sha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "nullableSha256": {
+      "anyOf": [
+        { "$ref": "#/$defs/sha256" },
+        { "type": "null" }
+      ]
+    }
+  }
+}

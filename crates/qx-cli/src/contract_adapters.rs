@@ -38,6 +38,7 @@ mod tests {
             low_raw: 9,
             close_raw: 10,
             volume_raw: 3,
+            exact_ohlcv: None,
         }
     }
 

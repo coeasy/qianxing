@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "ccxt_amendment_capability_catalog_local_validation",
+  "recorded_at_utc": "2026-11-13",
+  "source_revision": "f9941173b41ac0b58fc0095cd9fecd36d3d97492",
+  "environment": {
+    "os": "Windows 11",
+    "python": "D:\\dev\\miniforge3\\python.exe"
+  },
+  "commands": [
+    {
+      "argv": ["python", "tools/generate_capability_catalog.py", "--check"],
+      "exit_code": 0,
+      "result": "API/Python JSON catalogs and Markdown capability table match all sources"
+    },
+    {
+      "argv": ["python", "tools/check_architecture.py", "--fast"],
+      "exit_code": 0,
+      "checks": 373,
+      "shards": 4,
+      "duplicates": 0,
+      "result": "passed"
+    },
+    {
+      "argv": ["git", "diff", "--check"],
+      "exit_code": 0,
+      "result": "passed"
+    }
+  ],
+  "coverage": [
+    "The CCXT capability limitation now distinguishes ordinary Market/Limit amendment from quantity/limit amendment of an already-triggered native OCO child on the supported OKX Spot/Perpetual and Bitget UTA Spot paths.",
+    "The statement retains implemented-unverified maturity and names unchanged trigger conditions, untriggered conditional orders, Bracket, Binance OCO, cancel-replace, and venue Sandbox acceptance as incomplete.",
+    "API and Python generated capability catalogs and the Markdown capability table were regenerated from the three source registries."
+  ],
+  "scope_limitations": [
+    "This validates capability inventory consistency, not exchange behavior or Sandbox acceptance.",
+    "No credentials, private exchange endpoint, or order mutation was used."
+  ]
+}

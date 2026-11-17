@@ -1,0 +1,162 @@
+$ powershell -NoProfile -Command ='0'; ='1'; cargo test -p qx-cli --bin qx-cli venue_runtime::paper_worker::pipeline::tests --offline
+exit_code=1
+
+[stdout]
+
+[stderr]
+=0 : The term '=0' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spe
+lling of the name, or if a path was included, verify that the path is correct and try again.
+At line:1 char:1
++ ='0'; ='1'; cargo test -p qx-cli --bin qx-cli venue_runtime::paper_wo ...
++ ~~~~
+    + CategoryInfo          : ObjectNotFound: (=0:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+ 
+=1 : The term '=1' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spe
+lling of the name, or if a path was included, verify that the path is correct and try again.
+At line:1 char:7
++ ='0'; ='1'; cargo test -p qx-cli --bin qx-cli venue_runtime::paper_wo ...
++       ~~~~
+    + CategoryInfo          : ObjectNotFound: (=1:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+ 
+   Compiling zerocopy v0.8.56
+   Compiling typenum v1.20.1
+   Compiling ring v0.17.14
+   Compiling syn v2.0.119
+   Compiling libsqlite3-sys v0.30.1
+   Compiling libc v0.2.189
+   Compiling num-traits v0.2.19
+   Compiling qx-core v0.3.0 (D:\aex_work\qianxing\crates\qx-core)
+   Compiling crossbeam-deque v0.8.8
+   Compiling alloca v0.4.0
+   Compiling cpufeatures v0.2.17
+   Compiling plotters-svg v0.3.7
+   Compiling clap_builder v4.6.7
+   Compiling regex-automata v0.4.18
+   Compiling winapi v0.3.9
+   Compiling same-file v1.0.6
+   Compiling itertools v0.13.0
+error: failed to run custom build command for `ring v0.17.14`
+
+Caused by:
+  process didn't exit successfully: `D:\aex_work\qianxing\target\debug\build\ring-35e53f0a0bce4436\build-script-build` (exit code: 1)
+  --- stdout
+  cargo:rerun-if-env-changed=CARGO_MANIFEST_DIR
+  cargo:rerun-if-env-changed=CARGO_PKG_NAME
+  cargo:rerun-if-env-changed=CARGO_PKG_VERSION_MAJOR
+  cargo:rerun-if-env-changed=CARGO_PKG_VERSION_MINOR
+  cargo:rerun-if-env-changed=CARGO_PKG_VERSION_PATCH
+  cargo:rerun-if-env-changed=CARGO_PKG_VERSION_PRE
+  cargo:rerun-if-env-changed=CARGO_MANIFEST_LINKS
+  cargo:rerun-if-env-changed=RING_PREGENERATE_ASM
+  cargo:rerun-if-env-changed=OUT_DIR
+  cargo:rerun-if-env-changed=CARGO_CFG_TARGET_ARCH
+  cargo:rerun-if-env-changed=CARGO_CFG_TARGET_OS
+  cargo:rerun-if-env-changed=CARGO_CFG_TARGET_ENV
+  cargo:rerun-if-env-changed=CARGO_CFG_TARGET_ENDIAN
+  cargo:rerun-if-env-changed=VCINSTALLDIR
+  VCINSTALLDIR = None
+  cargo:rerun-if-env-changed=VSTEL_MSBuildProjectFullPath
+  VSTEL_MSBuildProjectFullPath = None
+  cargo:rerun-if-env-changed=VCToolsVersion
+  VCToolsVersion = None
+  cargo:rerun-if-env-changed=VSCMD_ARG_VCVARS_SPECTRE
+  VSCMD_ARG_VCVARS_SPECTRE = None
+  cargo:rerun-if-env-changed=WindowsSdkDir
+  WindowsSdkDir = None
+  cargo:rerun-if-env-changed=WindowsSDKVersion
+  WindowsSDKVersion = None
+  cargo:rerun-if-env-changed=LIB
+  LIB = None
+  PATH = Some(D:\aex_work\qianxing\target\debug;D:\aex_work\qianxing\target\debug\deps;C:\Users\Administrator\.rustup\toolchains\1.98.1-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\powershell;C:\Users\Administrator\.codex\tmp\arg0-windows\codex-arg06MgR9g;C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\libheif\libheif\bin;C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\jxrlib\jxrlib\bin;C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\poppler\Library\bin;C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\bin\override;D:\dev\miniforge3;D:\dev\miniforge3\Library\mingw-w64\bin;D:\dev\miniforge3\Library\usr\bin;D:\dev\miniforge3\Library\bin;D:\dev\miniforge3\Scripts;D:\dev\miniforge3\bin;D:\dev\miniforge3\condabin;C:\Program Files\coreutils\bin;C:\Program Files\YunShu\utils;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Windows\System32\OpenSSH;D:\dev\miniforge3\Scripts;D:\dev\miniforge3\Library\bin;D:\dev\miniforge3;D:\java\jdk-11.0.2\bin;D:\dev\Go\bin;C:\Program Files\Git\cmd;D:\dev\nodejs;C:\insolu\client001;C:\Program Files\CMake\bin;C:\Users\Administrator\.mimocode\bin;C:\Users\Administrator\AppData\Local\kdocs-cli;C:\Users\Administrator\scoop\shims;C:\Users\Administrator\.cargo\bin;C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\powershell;C:\Users\Administrator\AppData\Local\Microsoft\WindowsApps;D:\dev\MicrosoftVSCode\bin;C:\Users\Administrator\go\bin;C:\Users\Administrator\.local\bin;C:\Users\Administrator\AppData\Local\zazflow;C:\Users\Administrator\AppData\Local\azaflow;C:\Users\Administrator\.azaloop;D:\soft\WPS Office\12.9.0.27735\clitool;C:\Users\Administrator\AppData\Local\Programs\CodeBuddy CN\bin;C:\Users\Administrator\.qoder\bin\qodercli;C:\Users\Administrator\AppData\Local\Microsoft\WinGet\Links;C:\Users\Administrator\AppData\Roaming\npm;C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\bin\fallback;C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin;C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\git\cmd;C:\Users\Administrator\AppData\Local\OpenAI\Codex\bin\593bad775a30e636;C:\Users\Administrator\AppData\Local\OpenAI\Codex\bin\08d187884f2330d1;C:\Users\Administrator\.rustup\toolchains\1.98.1-x86_64-pc-windows-msvc\bin)
+  cargo:rerun-if-env-changed=INCLUDE
+  INCLUDE = None
+  cargo:rerun-if-env-changed=CC_x86_64-pc-windows-msvc
+  CC_x86_64-pc-windows-msvc = None
+  cargo:rerun-if-env-changed=CC_x86_64_pc_windows_msvc
+  CC_x86_64_pc_windows_msvc = None
+  cargo:rerun-if-env-changed=HOST_CC
+  HOST_CC = None
+  cargo:rerun-if-env-changed=CC
+  CC = None
+  cargo:rerun-if-env-changed=CRATE_CC_NO_DEFAULTS
+  CRATE_CC_NO_DEFAULTS = None
+  cargo:rerun-if-env-changed=CFLAGS
+  CFLAGS = None
+  cargo:rerun-if-env-changed=HOST_CFLAGS
+  HOST_CFLAGS = None
+  cargo:rerun-if-env-changed=CFLAGS_x86_64_pc_windows_msvc
+  CFLAGS_x86_64_pc_windows_msvc = None
+  cargo:rerun-if-env-changed=CFLAGS_x86_64-pc-windows-msvc
+  CFLAGS_x86_64-pc-windows-msvc = None
+  curve25519.c
+  cl : Command line error D8050 : cannot execute 'C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\HostX64\x64\c1.dll': failed to get command line into debug records
+
+  --- stderr
+
+
+  error occurred in cc-rs: command did not execute successfully (status code exit code: 2): "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\cl.exe" "-nologo" "-MD" "-Z7" "-Brepro" "-I" "C:\\Users\\Administrator\\.cargo\\registry\\src\\mirrors.tuna.tsinghua.edu.cn-e791a3f93f26854f\\ring-0.17.14\\include" "-I" "C:\\Users\\Administrator\\.cargo\\registry\\src\\mirrors.tuna.tsinghua.edu.cn-e791a3f93f26854f\\ring-0.17.14\\pregenerated" "-W4" "/Gy" "/Zc:wchar_t" "/Zc:forScope" "/Zc:inline" "/Wall" "/wd4127" "/wd4464" "/wd4514" "/wd4710" "/wd4711" "/wd4820" "/wd5045" "-DNDEBUG" "-FoD:\\aex_work\\qianxing\\target\\debug\\build\\ring-209b86dbb2934973\\out\\73090ba2100ad232-curve25519.o" "-c" "C:\\Users\\Administrator\\.cargo\\registry\\src\\mirrors.tuna.tsinghua.edu.cn-e791a3f93f26854f\\ring-0.17.14\\crypto/curve25519/curve25519.c"
+
+
+warning: build failed, waiting for other jobs to finish...
+error: failed to run custom build command for `libsqlite3-sys v0.30.1`
+
+Caused by:
+  process didn't exit successfully: `D:\aex_work\qianxing\target\debug\build\libsqlite3-sys-89565aa132c1b7ed\build-script-build` (exit code: 1)
+  --- stdout
+  cargo:rerun-if-env-changed=LIBSQLITE3_SYS_USE_PKG_CONFIG
+  cargo:include=C:\Users\Administrator\.cargo\registry\src\mirrors.tuna.tsinghua.edu.cn-e791a3f93f26854f\libsqlite3-sys-0.30.1/sqlite3
+  cargo:rerun-if-changed=sqlite3/sqlite3.c
+  cargo:rerun-if-changed=sqlite3/wasm32-wasi-vfs.c
+  cargo:rerun-if-env-changed=SQLITE_MAX_VARIABLE_NUMBER
+  cargo:rerun-if-env-changed=SQLITE_MAX_EXPR_DEPTH
+  cargo:rerun-if-env-changed=SQLITE_MAX_COLUMN
+  cargo:rerun-if-env-changed=LIBSQLITE3_FLAGS
+  cargo:rerun-if-env-changed=CC_FORCE_DISABLE
+  CC_FORCE_DISABLE = None
+  cargo:rerun-if-env-changed=VCINSTALLDIR
+  VCINSTALLDIR = None
+  cargo:rerun-if-env-changed=VSTEL_MSBuildProjectFullPath
+  VSTEL_MSBuildProjectFullPath = None
+  cargo:rerun-if-env-changed=VCToolsVersion
+  VCToolsVersion = None
+  cargo:rerun-if-env-changed=VSCMD_ARG_VCVARS_SPECTRE
+  VSCMD_ARG_VCVARS_SPECTRE = None
+  cargo:rerun-if-env-changed=WindowsSdkDir
+  WindowsSdkDir = None
+  cargo:rerun-if-env-changed=WindowsSDKVersion
+  WindowsSDKVersion = None
+  cargo:rerun-if-env-changed=LIB
+  LIB = None
+  PATH = Some(D:\aex_work\qianxing\target\debug;D:\aex_work\qianxing\target\debug\deps;C:\Users\Administrator\.rustup\toolchains\1.98.1-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\powershell;C:\Users\Administrator\.codex\tmp\arg0-windows\codex-arg06MgR9g;C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\libheif\libheif\bin;C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\jxrlib\jxrlib\bin;C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\poppler\Library\bin;C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\bin\override;D:\dev\miniforge3;D:\dev\miniforge3\Library\mingw-w64\bin;D:\dev\miniforge3\Library\usr\bin;D:\dev\miniforge3\Library\bin;D:\dev\miniforge3\Scripts;D:\dev\miniforge3\bin;D:\dev\miniforge3\condabin;C:\Program Files\coreutils\bin;C:\Program Files\YunShu\utils;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Windows\System32\OpenSSH;D:\dev\miniforge3\Scripts;D:\dev\miniforge3\Library\bin;D:\dev\miniforge3;D:\java\jdk-11.0.2\bin;D:\dev\Go\bin;C:\Program Files\Git\cmd;D:\dev\nodejs;C:\insolu\client001;C:\Program Files\CMake\bin;C:\Users\Administrator\.mimocode\bin;C:\Users\Administrator\AppData\Local\kdocs-cli;C:\Users\Administrator\scoop\shims;C:\Users\Administrator\.cargo\bin;C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\powershell;C:\Users\Administrator\AppData\Local\Microsoft\WindowsApps;D:\dev\MicrosoftVSCode\bin;C:\Users\Administrator\go\bin;C:\Users\Administrator\.local\bin;C:\Users\Administrator\AppData\Local\zazflow;C:\Users\Administrator\AppData\Local\azaflow;C:\Users\Administrator\.azaloop;D:\soft\WPS Office\12.9.0.27735\clitool;C:\Users\Administrator\AppData\Local\Programs\CodeBuddy CN\bin;C:\Users\Administrator\.qoder\bin\qodercli;C:\Users\Administrator\AppData\Local\Microsoft\WinGet\Links;C:\Users\Administrator\AppData\Roaming\npm;C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\bin\fallback;C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin;C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\git\cmd;C:\Users\Administrator\AppData\Local\OpenAI\Codex\bin\593bad775a30e636;C:\Users\Administrator\AppData\Local\OpenAI\Codex\bin\08d187884f2330d1;C:\Users\Administrator\.rustup\toolchains\1.98.1-x86_64-pc-windows-msvc\bin)
+  cargo:rerun-if-env-changed=INCLUDE
+  INCLUDE = None
+  cargo:rerun-if-env-changed=CC_x86_64-pc-windows-msvc
+  CC_x86_64-pc-windows-msvc = None
+  cargo:rerun-if-env-changed=CC_x86_64_pc_windows_msvc
+  CC_x86_64_pc_windows_msvc = None
+  cargo:rerun-if-env-changed=HOST_CC
+  HOST_CC = None
+  cargo:rerun-if-env-changed=CC
+  CC = None
+  cargo:rerun-if-env-changed=CRATE_CC_NO_DEFAULTS
+  CRATE_CC_NO_DEFAULTS = None
+  cargo:rerun-if-env-changed=CFLAGS
+  CFLAGS = None
+  cargo:rerun-if-env-changed=HOST_CFLAGS
+  HOST_CFLAGS = None
+  cargo:rerun-if-env-changed=CFLAGS_x86_64_pc_windows_msvc
+  CFLAGS_x86_64_pc_windows_msvc = None
+  cargo:rerun-if-env-changed=CFLAGS_x86_64-pc-windows-msvc
+  CFLAGS_x86_64-pc-windows-msvc = None
+  cargo:rerun-if-env-changed=CC_ENABLE_DEBUG_OUTPUT
+  sqlite3.c
+  cl : Command line error D8050 : cannot execute 'C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\HostX64\x64\c1.dll': failed to get command line into debug records
+
+  --- stderr
+
+
+  error occurred in cc-rs: command did not execute successfully (status code exit code: 2): "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\cl.exe" "-nologo" "-MD" "-Z7" "-Brepro" "-W0" "-DSQLITE_CORE" "-DSQLITE_DEFAULT_FOREIGN_KEYS=1" "-DSQLITE_ENABLE_API_ARMOR" "-DSQLITE_ENABLE_COLUMN_METADATA" "-DSQLITE_ENABLE_DBSTAT_VTAB" "-DSQLITE_ENABLE_FTS3" "-DSQLITE_ENABLE_FTS3_PARENTHESIS" "-DSQLITE_ENABLE_FTS5" "-DSQLITE_ENABLE_JSON1" "-DSQLITE_ENABLE_LOAD_EXTENSION=1" "-DSQLITE_ENABLE_MEMORY_MANAGEMENT" "-DSQLITE_ENABLE_RTREE" "-DSQLITE_ENABLE_STAT4" "-DSQLITE_SOUNDEX" "-DSQLITE_THREADSAFE=1" "-DSQLITE_USE_URI" "-DHAVE_USLEEP=1" "-DHAVE_ISNAN" "-D_POSIX_THREAD_SAFE_FUNCTIONS" "-FoD:\\aex_work\\qianxing\\target\\debug\\build\\libsqlite3-sys-e83281c8d7bf6811\\out\\c877a2978823c39d-sqlite3.o" "-c" "sqlite3/sqlite3.c"
+
+

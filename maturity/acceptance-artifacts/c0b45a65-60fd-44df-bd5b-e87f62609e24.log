@@ -1,0 +1,32 @@
+DOCTOR_BUCKETS .task-tmp\r7_doctor_buckets.txt
+  source=.task-tmp/r6_doctor_census_fails.txt raw_fail_rows=20 unique_defects=10 files=5
+  bucket role_catalog_missing raw=10 unique=5
+  bucket single_market_needs_symbols raw=4 unique=2
+  bucket external_file_absent raw=4 unique=2
+  bucket parent_dir_absent raw=2 unique=1
+  unarchored_reasons=none
+  file qianxing.runtime.binance-testnet.example.json rows=2 defects=1 causes=role_catalog_missing(2\u884c/1\u7f3a\u9677)
+  file qianxing.runtime.ccxt.example.json rows=2 defects=1 causes=single_market_needs_symbols(2\u884c/1\u7f3a\u9677)
+  file qianxing.runtime.multi-venue-arbitrage.example.json rows=4 defects=2 causes=role_catalog_missing(4\u884c/2\u7f3a\u9677)
+  file qianxing.runtime.multi-venue-contract.example.json rows=4 defects=2 causes=role_catalog_missing(4\u884c/2\u7f3a\u9677)
+  file qianxing.runtime.production.example.json rows=8 defects=4 causes=external_file_absent(4\u884c/2\u7f3a\u9677),parent_dir_absent(2\u884c/1\u7f3a\u9677),single_market_needs_symbols(2\u884c/1\u7f3a\u9677)
+  partition_raw=True (want True)
+  needles_mutually_exclusive=True (want True)
+  mirror_pair_halving=True (want True)
+  failing_files_is_five=True (want True)
+  gun_role_catalog_missing_two_needles_is_ambiguous=True (want True)
+  gun_role_catalog_missing_stripped_needle_leaves_bucket=True (want True)
+  gun_single_market_needs_symbols_two_needles_is_ambiguous=True (want True)
+  gun_single_market_needs_symbols_stripped_needle_leaves_bucket=True (want True)
+  gun_external_file_absent_two_needles_is_ambiguous=True (want True)
+  gun_external_file_absent_stripped_needle_leaves_bucket=True (want True)
+  gun_parent_dir_absent_two_needles_is_ambiguous=True (want True)
+  gun_parent_dir_absent_stripped_needle_leaves_bucket=True (want True)
+  gun_third_duplicate_row_breaks_halving=True (want True)
+  gun_third_row_key_matches_existing=True (want True)
+  gun_file_count_rejects_off_by_one=True (want True)
+  gun_empty_partition_rejected=True (want True)
+  per_file_rows_equal_global_raw_rows=True (want True)
+  per_file_defects_equal_global_unique=True (want True)
+  gun_per_file_rows_rejects_off_by_one=True (want True)
+  all_as_expected=True (19/19)

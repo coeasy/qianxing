@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "kind": "qianxing_acceptance_human_review",
+  "work_package": "R10",
+  "acceptance_id": "R10-AC01",
+  "reviewed_at": "2026-11-05",
+  "decision": "accepted_for_windows_local_acceptance",
+  "reviewed_run_ids": [
+    "eee1a461-011d-4036-a7bf-72653ca150c6",
+    "368f2f7a-e957-4dc3-9bbb-6b4dceb4204a",
+    "0e5a0b9b-d9e2-4132-9553-e11d3096de21",
+    "0149127b-0de9-45d7-a4dd-f3712751ac7a",
+    "f053dd0e-bf2e-4972-8b72-30124a623289"
+  ],
+  "reviewed_artifacts": [
+    "crates/qx-runtime/src/pipeline.rs",
+    "crates/qx-cli/src/workers/strategy_worker/execution_updates/replay.rs",
+    "crates/qx-cli/src/workers/strategy_worker/prepared_command_replay.rs",
+    "crates/qx-cli/src/workers/strategy_worker/prepared_finalize.rs",
+    "maturity/evidence/strategy-worker-crash-recovery-2026-10-29.json",
+    "maturity/evidence/strategy-worker-crash-recovery-sqlite-2026-10-29.json",
+    "maturity/acceptance-artifacts/eee1a461-011d-4036-a7bf-72653ca150c6.log",
+    "maturity/acceptance-artifacts/368f2f7a-e957-4dc3-9bbb-6b4dceb4204a.log",
+    "maturity/acceptance-artifacts/0e5a0b9b-d9e2-4132-9553-e11d3096de21.log",
+    "maturity/acceptance-artifacts/0149127b-0de9-45d7-a4dd-f3712751ac7a.log",
+    "maturity/acceptance-artifacts/f053dd0e-bf2e-4972-8b72-30124a623289.log"
+  ],
+  "findings": [
+    "File and SQLite crash-boundary runs preserve one durable Submitted intent and prevent a second Venue call across pre-effect and lost-response crashes.",
+    "An ambiguous submit remains Unknown across reopen and cannot be retried until authoritative Venue facts and fresh clean reconciliation resolve it; both Accepted and Rejected paths are covered.",
+    "Worker recovery tests hold the execution cursor until the command outcome and reconciliation resolve, then persist the host catalog and constructed/initialized lifecycle observation before committing progress.",
+    "The deployment readiness projection consumes the recovered observation; the fixture correctly leaves trading_enabled=null because the evidence is not authoritative live readiness."
+  ],
+  "limitations": [
+    "This is Windows unit/integration evidence using simulated Venue state; it does not exercise a real venue.",
+    "PostgreSQL and Linux worker recovery, plus an authorized live/testnet integration, remain outstanding."
+  ]
+}

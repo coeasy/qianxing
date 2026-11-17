@@ -1,0 +1,7 @@
+$ python tools/check_strategy_deployment_lifecycle_evidence.py maturity/evidence/r13-strategy-deployment-lifecycle-sqlite-2026-11-04.json --storage-backend sqlite
+exit_code=0
+
+[stdout]
+PASS: maturity\evidence\r13-strategy-deployment-lifecycle-sqlite-2026-11-04.json (049a1a917aee45b28163fc2f3cebe203)
+
+[stderr]

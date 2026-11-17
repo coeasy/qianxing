@@ -1,0 +1,124 @@
+[建议] RunDepthExperimentSpec 没有训练/样本外切分；当前排名只表示该深度输入上的样本内候选排序。
+{
+  "artifact_path": "./runs/tick-moving-average-grid\\tick-moving-average-grid\\tick-moving-average-grid.depth-experiment.json",
+  "candidate_count": 9,
+  "experiment_id": "tick-moving-average-grid",
+  "failed_candidates": 0,
+  "fold_candidate_failures": [],
+  "note": "multi-market grid has no time split; in-sample ranking alone does not establish out-of-sample effectiveness",
+  "out_of_sample": null,
+  "ranking_scope": "full_input_in_sample",
+  "search": null,
+  "succeeded_candidates": 9,
+  "target_strategy_id": null,
+  "top_candidates": [
+    {
+      "max_drawdown_bps": 49,
+      "ordinal": 1,
+      "parameters": {
+        "fast_window": 2,
+        "slow_window": 8
+      },
+      "rank": 1,
+      "result_hash": "f9f6ff6210767321",
+      "return_bps": 36,
+      "run_id": "tick-moving-average-grid-0001"
+    },
+    {
+      "max_drawdown_bps": 49,
+      "ordinal": 2,
+      "parameters": {
+        "fast_window": 2,
+        "slow_window": 10
+      },
+      "rank": 2,
+      "result_hash": "314639542e26f625",
+      "return_bps": 36,
+      "run_id": "tick-moving-average-grid-0002"
+    },
+    {
+      "max_drawdown_bps": 49,
+      "ordinal": 4,
+      "parameters": {
+        "fast_window": 3,
+        "slow_window": 8
+      },
+      "rank": 3,
+      "result_hash": "314639542e26f625",
+      "return_bps": 36,
+      "run_id": "tick-moving-average-grid-0004"
+    },
+    {
+      "max_drawdown_bps": 49,
+      "ordinal": 3,
+      "parameters": {
+        "fast_window": 2,
+        "slow_window": 12
+      },
+      "rank": 4,
+      "result_hash": "7d9f08bc9eb9c5e1",
+      "return_bps": 34,
+      "run_id": "tick-moving-average-grid-0003"
+    },
+    {
+      "max_drawdown_bps": 49,
+      "ordinal": 5,
+      "parameters": {
+        "fast_window": 3,
+        "slow_window": 10
+      },
+      "rank": 5,
+      "result_hash": "7d9f08bc9eb9c5e1",
+      "return_bps": 34,
+      "run_id": "tick-moving-average-grid-0005"
+    },
+    {
+      "max_drawdown_bps": 49,
+      "ordinal": 6,
+      "parameters": {
+        "fast_window": 3,
+        "slow_window": 12
+      },
+      "rank": 6,
+      "result_hash": "5f6f250a4952c178",
+      "return_bps": 34,
+      "run_id": "tick-moving-average-grid-0006"
+    },
+    {
+      "max_drawdown_bps": 49,
+      "ordinal": 7,
+      "parameters": {
+        "fast_window": 4,
+        "slow_window": 8
+      },
+      "rank": 7,
+      "result_hash": "7d9f08bc9eb9c5e1",
+      "return_bps": 34,
+      "run_id": "tick-moving-average-grid-0007"
+    },
+    {
+      "max_drawdown_bps": 49,
+      "ordinal": 8,
+      "parameters": {
+        "fast_window": 4,
+        "slow_window": 10
+      },
+      "rank": 8,
+      "result_hash": "5f6f250a4952c178",
+      "return_bps": 34,
+      "run_id": "tick-moving-average-grid-0008"
+    },
+    {
+      "max_drawdown_bps": 49,
+      "ordinal": 9,
+      "parameters": {
+        "fast_window": 4,
+        "slow_window": 12
+      },
+      "rank": 9,
+      "result_hash": "52ad4781d6123b84",
+      "return_bps": 31,
+      "run_id": "tick-moving-average-grid-0009"
+    }
+  ]
+}

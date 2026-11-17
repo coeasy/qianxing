@@ -1,0 +1,7 @@
+$ python tools/check_strategy_deployment_nodes_evidence.py maturity/evidence/r14-two-node-mtls-2026-11-04.json
+exit_code=0
+
+[stdout]
+PASS: maturity\evidence\r14-two-node-mtls-2026-11-04.json (8f52f417729842ed823ae8c4783028c6)
+
+[stderr]

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/strategy-process-checkpoint-restore-ack-v1.json",
+  "title": "Qianxing Strategy Process Checkpoint Restore Ack v1",
+  "description": "外部 Strategy process 响应中的 checkpoint_restore_ack；摘要绑定本次输入 checkpoint 的规范 JSON 字节。",
+  "type": "object",
+  "required": ["schema_version", "checkpoint_sha256"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "checkpoint_sha256": {
+      "type": "string",
+      "pattern": "^[A-Fa-f0-9]{64}$",
+      "description": "输入 StrategyCheckpointV1 的 SHA-256。对 checkpoint 对象递归按键名升序排列，UTF-8 紧凑 JSON 编码（无空白）后计算。"
+    }
+  },
+  "additionalProperties": false
+}

@@ -10,8 +10,8 @@
 
 use super::*;
 use qx_genglu::{
-    filled_action, reconcile_order_facts, status_action, OrderReconcileDiff, OrderReconcileFact,
-    VerdictAction,
+    exact_filled_action, filled_action, reconcile_order_facts, status_action, OrderReconcileDiff,
+    OrderReconcileFact, VerdictAction,
 };
 
 impl AdapterReconcileIssue {
@@ -25,6 +25,9 @@ impl AdapterReconcileIssue {
             }
             | Self::FilledMismatch {
                 client_order_id, ..
+            }
+            | Self::FilledExactMismatch {
+                client_order_id, ..
             } => *client_order_id,
         }
     }
@@ -36,12 +39,12 @@ impl AdapterReconcileIssue {
             Self::MissingLocally { .. } => "missing_locally",
             Self::MissingAtVenue { .. } => "missing_at_venue",
             Self::StatusMismatch { .. } => "status_mismatch",
-            Self::FilledMismatch { .. } => "filled_mismatch",
+            Self::FilledMismatch { .. } | Self::FilledExactMismatch { .. } => "filled_mismatch",
         }
     }
 
     /// 差异 → 动作的唯一归类：委托 qx-genglu 裁决所用的同一对维度判据
-    /// （[`status_action`] / [`filled_action`]），本模块不重复比较状态或数量。
+    /// （[`status_action`] / [`filled_action`] / [`exact_filled_action`]），本模块不重复比较状态或数量。
     /// 状态维度既可能是远端权威推进（可自动收敛），也可能是互斥迁移（需人工），
     /// 只看 [`Self::reason_code`] 的维度码分不出这两类，因此落待对账事实的 reason
     /// 必须来这儿（V12 §18 TX7）。
@@ -51,6 +54,7 @@ impl AdapterReconcileIssue {
             Self::MissingLocally { .. } => VerdictAction::ManualReview,
             Self::StatusMismatch { local, venue, .. } => status_action(*local, *venue),
             Self::FilledMismatch { local, venue, .. } => filled_action(local.raw(), venue.raw()),
+            Self::FilledExactMismatch { local, venue, .. } => exact_filled_action(*local, *venue),
         }
     }
 }
@@ -65,6 +69,7 @@ pub(crate) fn remote_order_facts(
             client_order_id: *id,
             status: Some(snapshot.status),
             filled_raw: snapshot.filled.raw(),
+            filled_exact: snapshot.filled_exact,
         })
         .collect()
 }
@@ -75,6 +80,7 @@ pub(crate) fn local_order_fact(id: &u64, order: &Order) -> OrderReconcileFact {
         client_order_id: *id,
         status: Some(order.status),
         filled_raw: order.filled.raw(),
+        filled_exact: order.exact_amounts.map(|amounts| amounts.filled),
     }
 }
 
@@ -113,6 +119,15 @@ pub(crate) fn reconcile_issues(
                 local: qx_core::Quantity::from_raw(local_raw),
                 venue: qx_core::Quantity::from_raw(venue_raw),
             }),
+            OrderReconcileDiff::FilledExactMismatch {
+                client_order_id,
+                local,
+                venue,
+            } => Some(AdapterReconcileIssue::FilledExactMismatch {
+                client_order_id,
+                local,
+                venue,
+            }),
             OrderReconcileDiff::DuplicateLocal { .. }
             | OrderReconcileDiff::DuplicateRemote { .. } => None,
         })
@@ -122,13 +137,14 @@ pub(crate) fn reconcile_issues(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use qx_core::OrderStatus;
+    use qx_core::{ExactDecimal, OrderStatus};
 
     fn fact(client_order_id: u64, status: OrderStatus, filled_raw: i128) -> OrderReconcileFact {
         OrderReconcileFact {
             client_order_id,
             status: Some(status),
             filled_raw,
+            filled_exact: None,
         }
     }
 
@@ -188,5 +204,31 @@ mod tests {
         assert_eq!(at_venue[0].action().reason_code(), "pending_reconcile");
         let locally = reconcile_issues(&[], &[fact(7, OrderStatus::Submitted, 0)]);
         assert_eq!(locally[0].action().reason_code(), "manual_review");
+    }
+
+    #[test]
+    fn exact_filled_difference_survives_adapter_projection() {
+        let local = OrderReconcileFact {
+            client_order_id: 11,
+            status: Some(OrderStatus::PartiallyFilled),
+            filled_raw: 0,
+            filled_exact: Some(ExactDecimal::parse("0.0000000001").unwrap()),
+        };
+        let remote = OrderReconcileFact {
+            client_order_id: 11,
+            status: Some(OrderStatus::PartiallyFilled),
+            filled_raw: 0,
+            filled_exact: Some(ExactDecimal::parse("0.0000000002").unwrap()),
+        };
+        let issues = reconcile_issues(&[local], &[remote]);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].reason_code(), "filled_mismatch");
+        assert_eq!(issues[0].action().reason_code(), "resync");
+        assert!(matches!(
+            issues[0],
+            AdapterReconcileIssue::FilledExactMismatch { local, venue, .. }
+                if local == ExactDecimal::parse("0.0000000001").unwrap()
+                    && venue == ExactDecimal::parse("0.0000000002").unwrap()
+        ));
     }
 }

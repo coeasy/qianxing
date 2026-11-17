@@ -1,0 +1,23 @@
+anchor case-off/ambig-on  occurrences=1 OK
+anchor norm-off           occurrences=1 OK
+anchor shape-drop         occurrences=1 OK
+anchor msg-cited-only     occurrences=1 OK
+anchor link-empty-false   occurrences=1 OK
+anchor blind-anchor       occurrences=1 OK
+Traceback (most recent call last):
+  File "D:\aex_work\qianxing\.task-tmp\shots_r18_testfile.py", line 199, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "D:\aex_work\qianxing\.task-tmp\shots_r18_testfile.py", line 176, in main
+    restore()
+    ~~~~~~~^^
+  File "D:\aex_work\qianxing\.task-tmp\shots_r18_testfile.py", line 153, in restore
+    TOOL.write_bytes(tool_pre)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "D:\dev\miniforge3\Lib\pathlib\_abc.py", line 641, in write_bytes
+    with self.open(mode='wb') as f:
+         ~~~~~~~~~^^^^^^^^^^^
+  File "D:\dev\miniforge3\Lib\pathlib\_local.py", line 537, in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: [Errno 22] Invalid argument: 'tools\\check_markdown_links.py'

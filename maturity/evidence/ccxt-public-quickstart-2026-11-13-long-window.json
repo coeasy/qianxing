@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "public_ccxt_quickstart_acceptance",
+  "captured_at_utc": "2026-11-13",
+  "workflow": {
+    "name": "Public CCXT quickstart acceptance",
+    "run_id": 43453629363,
+    "run_url": "https://github.com/coeasy/qianxing/actions/runs/43453629363",
+    "tested_source_commit": "b69fe89de247f052f345f8be4e7e34272b839991",
+    "shared_linux_release_artifact_build": "passed"
+  },
+  "scope": {
+    "mode": "anonymous public market data only",
+    "credentials_loaded": false,
+    "orders_submitted": false,
+    "timeframe": "15m",
+    "common_as_of_cutoff": "not yet implemented in tested source"
+  },
+  "venues": {
+    "okx": {
+      "result": "passed",
+      "instrument": "BTC/USDT:USDT.OKX",
+      "requested_days": 180,
+      "bars": 17280,
+      "missing_intervals": 0,
+      "rejected_orders": 0,
+      "html_report": "generated"
+    },
+    "binance": {
+      "result": "blocked_by_public_endpoint_location_policy",
+      "instrument": "BTC/USDT:USDT.BINANCE",
+      "requested_days": 180,
+      "http_status": 451,
+      "endpoint": "https://api.binance.com/api/v3/exchangeInfo",
+      "message": "Service unavailable from a restricted location according to Binance eligibility terms"
+    },
+    "bitget": {
+      "result": "failed_market_data_quality_gate",
+      "instrument": "BTC/USDT:USDT.BITGET",
+      "requested_days": 52,
+      "expected_bars": 4992,
+      "observed_bars": 2594,
+      "reported_missing_intervals": 1598,
+      "rejected_orders": 0,
+      "html_report": "generated before acceptance rejected incomplete input"
+    }
+  },
+  "bitget_root_cause": {
+    "description": "CCXT 4.5.89 Classic Futures history-candles pages are capped at 200 bars. The client requested 1000; CCXT derived a 1000-bar end window and then shortened the historical request to 200 without moving that end, skipping 800 bars on each page. The client also advanced its cursor by 1 ms, which does not preserve Bitget candle boundary alignment.",
+    "primary_sources": [
+      "https://www.bitget.com/docs/catalog/classic-contract-market/classic-contract-market",
+      "https://github.com/ccxt/ccxt/blob/v4.5.89/python/ccxt/bitget.py"
+    ],
+    "worktree_remediation": "Use a 200-bar page limit for Bitget and align each subsequent fixed-duration cursor to the next candle open. Add a regression test that verifies page size and aligned cursors.",
+    "remediation_hosted_acceptance": "pending"
+  },
+  "local_verification": {
+    "python_ccxt_tests": "65 passed",
+    "bitget_page_alignment_regression": "passed",
+    "quickstart_window_tests": "6 passed",
+    "cargo_fmt": "passed",
+    "actionlint": "passed",
+    "git_diff_check": "passed"
+  },
+  "limitations": [
+    "The run predates the Bitget pagination fix and shared as-of cutoff implementation.",
+    "The Binance public profile was not tested because the hosted runner's region was rejected.",
+    "This evidence does not cover authenticated APIs, testnet/live orders, or exchange execution lifecycle."
+  ]
+}

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://qianxing.local/schemas/strategy-api-v1.json",
   "title": "Qianxing Strategy API v1",
-  "description": "策略进程返回给运行时的 output 载荷。required 逐项等于 Rust 侧 StrategyContractOutput / StrategyContractIntent 的非 #[serde(default)] 字段；additionalProperties: false 等于这两个结构体的 #[serde(deny_unknown_fields)]。定点数量按 Rust i128 交换，只允许 JSON 整数：Rust 读写都是整数（含 i64 范围外），Python SDK 写的也是整数；十进制字符串会被运行时判为 invalid number，所以这里不放行字符串形态（见 $defs 的 raw_signed）。side/position_side/margin_mode/position_mode 按 Rust 序列化的规范小写形式约束；运行时读入时会先 to_ascii_lowercase，因此大写载荷能过运行时但过不了本 schema——这是有意的：schema 是作者侧的严格口径，比运行时严不会放行坏载荷。",
+  "description": "策略进程返回给运行时的 output 载荷。required 逐项等于 Rust 侧 StrategyContractOutput / StrategyContractIntent 的非 #[serde(default)] 字段；additionalProperties: false 等于这两个结构体的 #[serde(deny_unknown_fields)]。旧 target_qty 使用 Rust i128 raw 整数；target_qty_exact 可精确表达有符号目标仓位，此时 target_qty 必须为 0 且 intents 为空。旧 qty_raw/limit_price_raw 使用 Rust i128 raw 整数；高精度实时订单通过 qty_exact/limit_price_exact 十进制字符串表达，qty_raw 必须为 0，精确限价只能与精确数量一起使用。side/position_side/margin_mode/position_mode 按 Rust 序列化的规范小写形式约束；运行时读入时会先 to_ascii_lowercase，因此大写载荷能过运行时但过不了本 schema——这是有意的：schema 是作者侧的严格口径，比运行时严不会放行坏载荷。",
   "type": "object",
   "required": [
     "schema_version",
@@ -22,6 +22,11 @@
     "signal_id": {"type": "integer", "minimum": 1},
     "instrument": {"type": "string", "minLength": 1},
     "target_qty": {"$ref": "#/$defs/raw_signed"},
+    "target_qty_exact": {
+      "type": ["string", "null"],
+      "pattern": "^-?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?$",
+      "description": "Signed exact target position up to 18 decimal places. When set, target_qty must be zero and intents must be empty."
+    },
     "confidence": {"$ref": "#/$defs/raw_signed"},
     "priority": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647},
     "expires_at": {"type": "integer", "minimum": 0},
@@ -32,6 +37,20 @@
     }
   },
   "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "required": ["target_qty_exact"],
+        "properties": {"target_qty_exact": {"type": "string"}}
+      },
+      "then": {
+        "properties": {
+          "target_qty": {"const": 0},
+          "intents": {"maxItems": 0}
+        }
+      }
+    }
+  ],
   "$defs": {
     "raw_signed": {
       "description": "核心定点 raw 值（Rust i128，可负）：只允许 JSON 整数。serde_json 对 i128 既读写整数、也接受超出 i64 的整数；十进制字符串会被判 invalid number。",
@@ -53,16 +72,105 @@
         "intent_id": {"type": "integer", "minimum": 1},
         "instrument": {"type": "string", "minLength": 1},
         "side": {"enum": ["buy", "sell"]},
-        "qty_raw": {"$ref": "#/$defs/raw_positive"},
+        "qty_raw": {"type": "integer", "minimum": 0},
+        "qty_exact": {
+          "type": ["string", "null"],
+          "pattern": "^(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?$"
+        },
+        "quote_budget_exact": {
+          "type": ["string", "null"],
+          "pattern": "^(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?$",
+          "description": "Quote-currency spending cap for Bitget Spot market buys; mutually exclusive with base quantity and limit price."
+        },
         "limit_price_raw": {"$ref": "#/$defs/optional_raw_positive"},
+        "limit_price_exact": {
+          "type": ["string", "null"],
+          "pattern": "^(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?$"
+        },
         "reduce_only": {"type": "boolean"},
         "post_only": {"type": "boolean"},
         "position_side": {"enum": ["net", "long", "short", null]},
         "margin_mode": {"enum": ["cash", "cross", "isolated", null]},
         "position_mode": {"enum": ["one_way", "hedge", null]},
-        "leverage": {"type": ["integer", "null"], "minimum": 1}
+        "leverage": {"type": ["integer", "null"], "minimum": 1},
+        "account_id": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "description": "Optional execution account ID for this intent; must match an enabled execution worker on the instrument venue."
+        }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "properties": {"qty_raw": {"minimum": 1}},
+          "not": {
+            "required": ["qty_exact"],
+            "properties": {"qty_exact": {"type": "string"}}
+          }
+        },
+        {
+          "required": ["qty_exact"],
+          "properties": {
+            "qty_raw": {"const": 0},
+            "qty_exact": {
+              "type": "string",
+              "pattern": "^(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?$"
+            }
+          }
+        },
+        {
+          "required": ["quote_budget_exact"],
+          "properties": {
+            "qty_raw": {"const": 0},
+            "quote_budget_exact": {
+              "type": "string",
+              "pattern": "^(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?$"
+            },
+            "side": {"const": "buy"},
+            "limit_price_raw": {"type": "null"},
+            "limit_price_exact": {"type": "null"}
+          },
+          "not": {"required": ["qty_exact"], "properties": {"qty_exact": {"type": "string"}}}
+        }
+      ],
+      "allOf": [
+        {
+          "if": {
+            "required": ["quote_budget_exact"],
+            "properties": {"quote_budget_exact": {"type": "string"}}
+          },
+          "then": {
+            "properties": {
+              "qty_raw": {"const": 0},
+              "side": {"const": "buy"},
+              "qty_exact": {"type": "null"},
+              "limit_price_raw": {"type": "null"},
+              "limit_price_exact": {"type": "null"}
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["qty_exact"],
+            "properties": {"qty_exact": {"type": "string"}}
+          },
+          "then": {"properties": {"limit_price_raw": {"type": "null"}}}
+        },
+        {
+          "if": {
+            "required": ["limit_price_exact"],
+            "properties": {"limit_price_exact": {"type": "string"}}
+          },
+          "then": {
+            "required": ["qty_exact"],
+            "properties": {
+              "qty_raw": {"const": 0},
+              "qty_exact": {"type": "string"},
+              "limit_price_raw": {"type": "null"}
+            }
+          }
+        }
+      ]
     }
   }
 }

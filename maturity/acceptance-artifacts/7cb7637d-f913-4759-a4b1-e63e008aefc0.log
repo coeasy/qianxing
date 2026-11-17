@@ -1,0 +1,8 @@
+$ python -c import os,runpy,subprocess; os.environ['CARGO_PROFILE_DEV_DEBUG']='0'; subprocess.run(['cargo','check','-p','qx-cli','-j','1'],check=True); runpy.run_path('tools/check_architecture.py')['multi_account_joint_evidence_recompute_check']()
+exit_code=0
+
+[stdout]
+[PASS] 联合账户 Evidence 的 code revision 绑定、市场输入复算和结果/报告对拍归 recompute owner，facade 先复核便携报告
+
+[stderr]
+    Finished `dev` profile [unoptimized] target(s) in 0.50s

@@ -37,6 +37,7 @@ impl BarStrategy for BuyOnce {
             account_id: "main".into(),
             trace: None,
             policy: None,
+            exact_amounts: None,
         })
     }
 }
@@ -60,10 +61,12 @@ fn pre_trade_risk_uses_last_visible_close_not_current_bar_close() {
         price_tick: 1,
         qty_step: 1,
         min_qty: 1,
+        min_notional_raw: 0,
         max_leverage: 1,
         maintenance_margin_bps: 0,
         valid_from: 1,
         valid_to: None,
+        exact_rules: None,
     };
     let config = BacktestConfig {
         instrument,

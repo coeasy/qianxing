@@ -16,7 +16,26 @@
     "failed_candidates": {"type": "integer", "minimum": 0, "maximum": 256},
     "candidates": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/Candidate"}},
     "ranking": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/RankedCandidate"}},
-    "artifact_path": {"type": "string", "minLength": 1}
+    "out_of_sample": {"$ref": "run-experiment-result-v1.json#/$defs/OutOfSampleReport"},
+    "fold_candidate_failures": {"type": "array", "maxItems": 4096, "items": {"$ref": "#/$defs/FoldCandidateFailure"}},
+    "search": {"$ref": "#/$defs/SearchReport"},
+    "artifact_path": {"type": "string", "minLength": 1},
+    "canonical_run_spec_json": {"type": "string", "minLength": 2},
+    "canonical_run_spec_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "input_data_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "result_hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "run_manifest": {"type": "string", "minLength": 1},
+    "run_record": {"type": "string", "minLength": 1},
+    "artifact_locations": {
+      "type": "object",
+      "required": ["experiment_report", "run_manifest", "experiment_input"],
+      "properties": {
+        "experiment_report": {"type": "string", "minLength": 1},
+        "run_manifest": {"type": "string", "minLength": 1},
+        "experiment_input": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false,
   "$defs": {
@@ -42,6 +61,42 @@
         "return_bps": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647},
         "max_drawdown_bps": {"type": "integer", "minimum": 0, "maximum": 4294967295},
         "shared_result_hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"}
+      },
+      "additionalProperties": false
+    },
+    "FoldCandidateFailure": {
+      "type": "object",
+      "required": ["fold", "ordinal", "error"],
+      "properties": {
+        "fold": {"type": "integer", "minimum": 1, "maximum": 10000},
+        "ordinal": {"type": "integer", "minimum": 1, "maximum": 256},
+        "error": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "SearchReport": {
+      "type": "object",
+      "required": ["algorithm", "objective", "seed", "budget", "fold_local_search", "fold_searches"],
+      "properties": {
+        "algorithm": {"enum": ["random", "tpe", "tpe_kde", "pareto_tpe"]},
+        "objective": {"enum": ["return", "pareto_return_drawdown"]},
+        "seed": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+        "budget": {"type": "integer", "minimum": 1, "maximum": 256},
+        "max_training_drawdown_bps": {"type": "integer", "minimum": 0, "maximum": 10000},
+        "fold_local_search": {"type": "boolean"},
+        "fold_searches": {"type": "array", "minItems": 1, "maxItems": 10000, "items": {"$ref": "#/$defs/FoldSearchReport"}}
+      },
+      "additionalProperties": false
+    },
+    "FoldSearchReport": {
+      "type": "object",
+      "required": ["fold", "seed", "train_range", "test_range", "trials"],
+      "properties": {
+        "fold": {"type": "integer", "minimum": 1, "maximum": 10000},
+        "seed": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+        "train_range": {"$ref": "run-experiment-result-v1.json#/$defs/TimeRange"},
+        "test_range": {"$ref": "run-experiment-result-v1.json#/$defs/TimeRange"},
+        "trials": {"type": "array", "minItems": 1, "maxItems": 256, "items": {"$ref": "run-experiment-result-v1.json#/$defs/SearchTrial"}}
       },
       "additionalProperties": false
     }

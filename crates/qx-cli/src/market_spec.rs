@@ -23,7 +23,7 @@ fn ccxt_market_to_spec(
 pub(crate) fn app_margin_model_from_market(
     market: &serde_json::Value,
 ) -> qx_app::BacktestMarginConfig {
-    qx_app::backtest_margin_model_from_market(market)
+    qx_app::backtest_margin_model_from_market(market).expect("market tier fixture is valid")
 }
 
 /// Runtime adapter: application code owns parsing; qx-cli only binds the serializable model to
@@ -52,6 +52,18 @@ pub(crate) fn ccxt_margin_rule_from_market(
                 })
                 .collect();
             Box::new(qx_xingban::TieredMargin { tiers })
+        }
+        qx_app::BacktestMarginConfig::ContractTiers { tiers } => {
+            let tiers = tiers
+                .into_iter()
+                .map(|tier| qx_xingban::ContractMarginTier {
+                    max_contracts: tier.max_contracts,
+                    initial_bp: tier.initial_bp,
+                    maintenance_bp: tier.maintenance_bp,
+                    max_leverage: tier.max_leverage,
+                })
+                .collect();
+            Box::new(qx_xingban::ContractTieredMargin { tiers })
         }
     }
 }

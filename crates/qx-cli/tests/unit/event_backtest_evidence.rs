@@ -31,6 +31,8 @@ fn evidence_manifest(
         input_event_hash: "input-v1".into(),
         output_event_hash: "output-v1".into(),
         runtime_version: "runtime-v1".into(),
+        canonical_run_spec_json: None,
+        canonical_run_spec_fingerprint: None,
     }
 }
 

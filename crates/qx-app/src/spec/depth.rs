@@ -5,7 +5,7 @@ use super::{
     BuiltinStrategySpec, PortfolioBacktestConfig,
 };
 use crate::error::{AppError, AppErrorCategory};
-use qx_core::{OrderPolicy, TradingInstrumentSpec};
+use qx_core::{FundingRateEvent, OrderPolicy, TradingInstrumentSpec};
 use qx_strategy::BuiltinStrategyKind;
 use qx_xingban::{ExecutionCostRules, MarketMakingConfig, QueuePositionModel};
 use serde::{Deserialize, Serialize};
@@ -47,6 +47,12 @@ pub struct DepthBacktestSpec {
     #[serde(default, skip_serializing_if = "is_queue_position_model_disabled")]
     pub queue_position_model: QueuePositionModel,
     pub market_impact_bps: i128,
+    /// Constant derivative funding rate in basis points per default UTC 8-hour settlement.
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    pub funding_bps: i64,
+    /// Historical exchange settlement events; mutually exclusive with a nonzero constant rate.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub funding_events: Vec<FundingRateEvent>,
     pub output_dir: String,
     pub strategy: BuiltinStrategySpec,
     /// Optional normalized market contract. Missing preserves legacy spot semantics.
@@ -237,6 +243,41 @@ impl DepthBacktestSpec {
                 "DepthBacktestSpec.initial_cash_raw 必须为正",
             ));
         }
+        if !(-10_000..=10_000).contains(&self.funding_bps)
+            || self.funding_events.len() > 100_000
+            || (self.funding_bps != 0 && !self.funding_events.is_empty())
+        {
+            return Err(AppError::new(
+                AppErrorCategory::InvalidInput,
+                "深度回测资金费率范围、数量或常量/历史混用无效",
+            ));
+        }
+        if self.funding_bps != 0 || !self.funding_events.is_empty() {
+            let Some(market) = self
+                .market_spec
+                .as_ref()
+                .filter(|market| market.product.is_derivative())
+            else {
+                return Err(AppError::new(
+                    AppErrorCategory::InvalidInput,
+                    "深度资金费只支持显式声明的永续或期货 market_spec",
+                ));
+            };
+            let mut settlement_times = std::collections::BTreeSet::new();
+            for event in &self.funding_events {
+                if event.instrument != market.instrument
+                    || event.settlement_ts == 0
+                    || !event.has_valid_funding_interval()
+                    || !(-10_000..=10_000).contains(&event.rate_bps)
+                    || !settlement_times.insert(event.settlement_ts)
+                {
+                    return Err(AppError::new(
+                        AppErrorCategory::InvalidInput,
+                        "深度历史资金费事件必须匹配标的、唯一且资金周期有效",
+                    ));
+                }
+            }
+        }
         for (field, value) in [
             ("queue_position_bps", self.queue_position_bps),
             ("market_impact_bps", self.market_impact_bps),
@@ -361,7 +402,7 @@ impl DepthBacktestSpec {
         }
         self.strategy.validate()?;
         if let Some(portfolio) = &self.portfolio {
-            portfolio.validate(&self.strategy, self.initial_cash_raw)?;
+            portfolio.validate(&self.strategy, self.initial_cash_raw, None)?;
             if self
                 .order_policy
                 .is_some_and(|policy| policy.position_mode != qx_core::PositionMode::OneWay)
@@ -507,6 +548,10 @@ fn is_queue_position_model_disabled(model: &QueuePositionModel) -> bool {
     *model == QueuePositionModel::Disabled
 }
 
+fn is_zero_i64(value: &i64) -> bool {
+    *value == 0
+}
+
 fn strategy_has_sizing(strategy: &BuiltinStrategySpec) -> bool {
     strategy.target_notional_raw.is_some()
         || strategy.target_available_margin_bps.is_some()
@@ -518,6 +563,10 @@ fn strategy_has_sizing(strategy: &BuiltinStrategySpec) -> bool {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DepthBacktestOutcome {
     pub run_id: String,
+    /// RunManifest identity when it intentionally differs from the user-facing run id.
+    /// Older outcomes omit this field and retain the historical `run_id` fallback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_run_id: Option<String>,
     pub instrument: String,
     pub tier: String,
     pub result_hash: String,
@@ -544,6 +593,7 @@ pub struct DepthBacktestOutcome {
 impl PartialEq for DepthBacktestOutcome {
     fn eq(&self, other: &Self) -> bool {
         self.run_id == other.run_id
+            && self.manifest_run_id == other.manifest_run_id
             && self.instrument == other.instrument
             && self.tier == other.tier
             && self.result_hash == other.result_hash

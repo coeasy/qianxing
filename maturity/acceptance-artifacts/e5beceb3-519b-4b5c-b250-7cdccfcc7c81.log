@@ -1,0 +1,17 @@
+MULTI_MARKET_DEPTH_PYTHON_OBSERVED markets=2 fills=1 callback_slots=2 replay_verified=true custom_run_handle=succeeded parameter_candidates=2 strategy_factory=true experiment_run_handle=succeeded builtin_run_handle=succeeded builtin_fills=true
+MULTI_MARKET_CUSTOM_OBSERVED markets=3 custom_slots=1 callback_version=python-test-v1 replay_verified=true run_handle=succeeded
+custom_depth_grid=candidates=2 succeeded=2 fills=2 factory_instances_per_candidate=true run_handle=true asyncio=true
+..............................................................................................................................................[建议] 多市场文件策略实验未配置 split_plan；结果只有样本内排序，不能据此判断样本外有效性。
+Interactive HTML report: C:\Users\ADMINI~1\AppData\Local\Temp\tmpbijio4_7\report.html
+...[建议] RunExperimentSpec 未配置 split_plan；结果只有样本内排序，不能据此判断样本外有效性。
+Interactive HTML report: C:\Users\ADMINI~1\AppData\Local\Temp\tmps8tirrjw\report.html
+.[建议] RunExperimentSpec 未配置 split_plan；结果只有样本内排序，不能据此判断样本外有效性。
+........................................................s.......................................................................sss.s.........Project run: 206e656432754541a4974080d612cb8d
+.Project run: c19fca0ab5f144f08df367fc6eb93d5b
+.........................................................................................................................strategy on_error hook failed: RuntimeError; original callback error retained
+....................................................................................................................................strategy on_error hook failed: RuntimeError; original request error retained
+..................................................
+----------------------------------------------------------------------
+Ran 589 tests in 447.117s
+
+OK (skipped=5)

@@ -45,7 +45,9 @@ fn terminal_result(api: &qx_api::ApiService, run_id: &str) -> Value {
             return document;
         }
         assert!(Instant::now() < deadline, "run did not finish: {document}");
-        std::thread::sleep(Duration::from_millis(2));
+        // Keep the in-process API's status polling below its 100 requests/sec
+        // limiter even when a run takes the full ten-second test budget.
+        std::thread::sleep(Duration::from_millis(20));
     }
 }
 

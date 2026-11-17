@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "kind": "strategy-history-diagnostics-error-v1",
+  "generated_at_utc": "2026-10-27T02:47:37Z",
+  "scope": {
+    "strategy_hosts": [
+      "python local BaseStrategy callback",
+      "Python Runtime BaseStrategy worker",
+      "Python candidate bias diagnostic worker"
+    ],
+    "error_stage": "history_requirements",
+    "diagnostic_bar_visibility": "primary and peer Bars are clipped to the request as_of before class lifecycle replay"
+  },
+  "behavior": {
+    "history_requirements_deferred_until_callback_context": true,
+    "standardized_error_dto": "StrategyErrorV1",
+    "legacy_error_hook_preserved": true,
+    "observer_failure_replaces_original_failure": false,
+    "base_strategy_diagnostics_use_runtime_class_adapter": true,
+    "classic_bar_lifecycle": ["prenext", "nextstart", "next"]
+  },
+  "validation": [
+    {
+      "command": "python python/tests/test_strategy_process_adapter.py",
+      "passed": 26,
+      "failed": 0
+    },
+    {
+      "command": "python python/tests/test_strategy_base.py",
+      "passed": 33,
+      "failed": 0
+    },
+    {
+      "command": "python python/tests/test_callback_strategy_diagnostics.py",
+      "passed": 16,
+      "failed": 0
+    },
+    {
+      "command": "python python/tests/test_cli_strategy_file.py",
+      "passed": 22,
+      "failed": 0
+    },
+    {
+      "command": "python -m pytest -q python/tests",
+      "passed": 538,
+      "skipped": 10,
+      "failed": 0
+    },
+    {
+      "command": "python -m py_compile python/qianxing_strategy/base.py python/qianxing_strategy/class_adapter.py python/qianxing_strategy/diagnostic_callback_worker.py python/qianxing_bridge/app.py python/qianxing/cli.py",
+      "passed": true
+    }
+  ],
+  "limitations": [
+    "An instance-level observer cannot run if module import fails before a strategy instance exists.",
+    "This does not close the four-host lifecycle golden matrix or external sandbox provider security and capacity acceptance.",
+    "No connected sandbox or live exchange service was contacted."
+  ],
+  "release_status": "unpublished workspace"
+}

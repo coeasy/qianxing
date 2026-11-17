@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "dynamic_strategy_preflight_process_tree_cleanup",
+  "recorded_at_utc": "2026-10-29T14:39:10.062882Z",
+  "platform": "win32",
+  "timeout_seconds": 0.5,
+  "process_tree_cases": [
+    {
+      "case": "normal-return",
+      "parent_expected_timeout": false,
+      "timed_out": false,
+      "descendant_pid": 40920,
+      "descendant_reaped": true,
+      "elapsed_seconds": 0.1513
+    },
+    {
+      "case": "timeout",
+      "parent_expected_timeout": true,
+      "timed_out": true,
+      "descendant_pid": 43548,
+      "descendant_reaped": true,
+      "elapsed_seconds": 0.7833
+    }
+  ],
+  "detached_process_limit_documented": "POSIX children that deliberately start a new session escape the owned process group."
+}

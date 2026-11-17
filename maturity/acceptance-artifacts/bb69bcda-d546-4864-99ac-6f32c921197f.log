@@ -1,0 +1,8 @@
+$ python tools/check_architecture.py --fast
+exit_code=0
+
+[stdout]
+架构分片汇总通过：4 片，完整覆盖 348 个具名检查且无重复
+架构 --fast 完成：全量判据四片执行并聚合，墙钟 156.69s
+
+[stderr]

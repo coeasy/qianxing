@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/dataset-snapshot-v1.json",
+  "title": "Qianxing Dataset Snapshot v1",
+  "description": "Immutable dataset capture metadata. Dataset instrument role is explicit so research-only indexes cannot authorize execution.",
+  "type": "object",
+  "required": ["schema_version", "manifest", "instrument_role", "captured_at_ms", "frequency_ms", "timestamp_semantics", "price_precision", "quantity_precision", "price_unit", "quantity_unit", "coverage_start_ts_ms", "coverage_end_ts_ms", "calendar_id", "calendar_version", "gaps", "corporate_action_policy"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "manifest": {"$ref": "dataset-manifest-v2.json"},
+    "instrument_role": {"enum": ["index", "equity", "etf", "future", "crypto_spot", "fx", "other_tradable", "unknown"]},
+    "captured_at_ms": {"type": "integer", "minimum": 1},
+    "frequency_ms": {"type": "integer", "minimum": 1},
+    "timestamp_semantics": {"enum": ["bar_open", "bar_close", "event_time"]},
+    "price_precision": {"type": "integer", "minimum": 0, "maximum": 18},
+    "quantity_precision": {"type": "integer", "minimum": 0, "maximum": 18},
+    "price_unit": {"type": "string", "minLength": 1},
+    "quantity_unit": {"type": "string", "minLength": 1},
+    "coverage_start_ts_ms": {"type": "integer", "minimum": 1},
+    "coverage_end_ts_ms": {"type": "integer", "minimum": 1},
+    "calendar_id": {"type": "string", "minLength": 1},
+    "calendar_version": {"type": "string", "minLength": 1},
+    "gaps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["start_ts_ms", "end_ts_ms"],
+        "properties": {
+          "start_ts_ms": {"type": "integer", "minimum": 1},
+          "end_ts_ms": {"type": "integer", "minimum": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "corporate_action_policy": {"enum": ["adjusted", "unadjusted", "not_applicable", "unknown"]}
+  },
+  "additionalProperties": false
+}

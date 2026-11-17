@@ -1,0 +1,14 @@
+$ cargo test -p qx-cli --bin qx-cli live_finalize_gate_tests --offline
+exit_code=0
+
+[stdout]
+
+running 1 test
+test workers::strategy_worker::prepared_finalize::live_finalize_gate_tests::cursor_finalize_is_blocked_until_live_command_resolution_completes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 474 filtered out; finished in 0.00s
+
+
+[stderr]
+    Finished `test` profile [unoptimized] target(s) in 0.79s
+     Running unittests src\main.rs (target\debug\deps\qx_cli-f4bb28e5802ee70c.exe)

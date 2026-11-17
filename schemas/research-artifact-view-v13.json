@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/research-artifact-view-v13.json",
+  "title": "Qianxing ResearchArtifactView v13",
+  "description": "Verified multi-exchange joint-account report with separately paged account event streams; no global cross-venue event order is implied.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_kind",
+    "run_id",
+    "instrument",
+    "verification",
+    "summary",
+    "equity",
+    "fills",
+    "events",
+    "bars",
+    "event_trace_available",
+    "accounts"
+  ],
+  "properties": {
+    "schema_version": {"const": 13},
+    "run_kind": {"const": "multi_account_joint"},
+    "run_id": {"type": "string", "minLength": 1},
+    "instrument": {"type": "string", "minLength": 1},
+    "verification": {"$ref": "verification-result-v1.json"},
+    "summary": {"type": "object", "additionalProperties": true},
+    "equity": {"$ref": "research-artifact-view-v2.json#/$defs/equityRows"},
+    "fills": {"$ref": "research-artifact-view-v2.json#/$defs/rows"},
+    "events": {
+      "type": "object",
+      "required": ["total", "offset", "truncated", "rows"],
+      "properties": {
+        "total": {"const": 0},
+        "offset": {"const": 0},
+        "truncated": {"const": false},
+        "rows": {"type": "array", "maxItems": 0}
+      },
+      "additionalProperties": false
+    },
+    "bars": {
+      "type": "object",
+      "required": ["source_status", "total", "truncated", "rows"],
+      "properties": {
+        "source_status": {"const": "unsupported_input_kind"},
+        "total": {"const": 0},
+        "truncated": {"const": false},
+        "rows": {"type": "array", "maxItems": 0}
+      },
+      "additionalProperties": false
+    },
+    "event_trace_available": {"const": false},
+    "accounts": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 32,
+      "items": {"$ref": "#/$defs/account"}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "jointEvents": {
+      "type": "object",
+      "required": [
+        "total",
+        "offset",
+        "limit",
+        "previous_offset",
+        "next_offset",
+        "truncated",
+        "rows"
+      ],
+      "properties": {
+        "total": {"type": "integer", "minimum": 0},
+        "offset": {"type": "integer", "minimum": 0},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 300},
+        "previous_offset": {"type": ["integer", "null"], "minimum": 0},
+        "next_offset": {"type": ["integer", "null"], "minimum": 0},
+        "truncated": {"type": "boolean"},
+        "rows": {"type": "array", "maxItems": 300, "items": {"type": "object"}}
+      },
+      "additionalProperties": false
+    },
+    "jointMemberReport": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "run_kind",
+        "run_id",
+        "instrument",
+        "verification",
+        "summary",
+        "equity",
+        "fills",
+        "events",
+        "bars",
+        "event_trace_available"
+      ],
+      "properties": {
+        "schema_version": {"const": 13},
+        "run_kind": {"const": "multi_account_joint_member"},
+        "run_id": {"type": "string", "minLength": 1},
+        "instrument": {"type": "string", "minLength": 1},
+        "verification": {"$ref": "verification-result-v1.json"},
+        "summary": {"type": "object", "additionalProperties": true},
+        "equity": {
+          "type": "object",
+          "required": ["total", "truncated", "rows"],
+          "properties": {
+            "total": {"type": "integer", "minimum": 1},
+            "truncated": {"const": true},
+            "rows": {"type": "array", "maxItems": 0}
+          },
+          "additionalProperties": false
+        },
+        "fills": {"$ref": "research-artifact-view-v2.json#/$defs/rows"},
+        "events": {"$ref": "#/$defs/jointEvents"},
+        "bars": {
+          "type": "object",
+          "required": ["source_status", "total", "truncated", "rows"],
+          "properties": {
+            "source_status": {"const": "not_loaded_by_joint_report"},
+            "total": {"const": 0},
+            "truncated": {"const": false},
+            "rows": {"type": "array", "maxItems": 0}
+          },
+          "additionalProperties": false
+        },
+        "event_trace_available": {"const": false}
+      },
+      "additionalProperties": false
+    },
+    "account": {
+      "type": "object",
+      "required": [
+        "account_id",
+        "exchange_id",
+        "status",
+        "run_id",
+        "data_fingerprint",
+        "result_hash",
+        "return_bps",
+        "max_drawdown_bps",
+        "fills",
+        "equity_points",
+        "report"
+      ],
+      "properties": {
+        "account_id": {"type": "string", "minLength": 1},
+        "exchange_id": {"type": "string", "minLength": 1},
+        "status": {"const": "succeeded"},
+        "run_id": {"type": "string", "minLength": 1},
+        "data_fingerprint": {"type": "string", "minLength": 1},
+        "result_hash": {"type": "string", "minLength": 1},
+        "return_bps": {"type": "integer"},
+        "max_drawdown_bps": {"type": "integer", "minimum": 0},
+        "fills": {"type": "integer", "minimum": 0},
+        "equity_points": {"type": "integer", "minimum": 1},
+        "report": {"$ref": "#/$defs/jointMemberReport"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

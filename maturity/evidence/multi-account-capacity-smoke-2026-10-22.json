@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "multi_account_multi_strategy_bar_capacity",
+  "generated_at_utc": "2026-10-22T04:15:54Z",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "binary": "D:\\aex_work\\qianxing\\target\\release\\qx-cli.exe",
+  "binary_sha256": "5819a464f5acdb22dcf008d4a3f13e44d15d22db8c07a285617449b6a9b0f3a9",
+  "measurement_source_fingerprint_schema": 3,
+  "measurement_source_fingerprint": "f009fcded27762896e3926b0203cf489a8447d62e7b3204a4d832d08ae5068a5",
+  "bars_per_account": 1024,
+  "repeats": 2,
+  "method": "one qx-cli multi-account-backtest process; every account runs the same synthetic BarFrame through the normal per-account BacktestSpec path and optional same-account strategy portfolio",
+  "profile_coverage_claim": false,
+  "profile_target_statuses_updated": false,
+  "scope_limitations": [
+    "synthetic crypto spot Bars without TradingInstrumentSpec or venue rules",
+    "MultiAccountBacktestSpec accounts execute sequentially; this measures batch memory and wall time, not internal scheduler concurrency",
+    "does not exercise external provider, Paper, network, or multi-venue profile paths",
+    "process-tree RSS is a sampled aggregate and may miss brief spikes"
+  ],
+  "workloads": [
+    {
+      "accounts": 2,
+      "strategies_per_account": 1,
+      "total_strategy_slots": 2,
+      "bars_per_account": 1024,
+      "bars_total": 2048,
+      "bars_times_strategy_slots": 2048,
+      "warmup_wall_ms": 303.693,
+      "p50_wall_ms": 347.02,
+      "p95_wall_ms": 398.118,
+      "peak_rss_bytes_max": 7704576,
+      "aggregate_process_tree_peak_rss_bytes_max": 7532544,
+      "peak_process_count": 1,
+      "successful_fills": 2,
+      "result_hashes_by_account": [
+        "dedb5124db2048c1",
+        "d683ede63bec4511"
+      ],
+      "deterministic_across_repeats": true
+    },
+    {
+      "accounts": 2,
+      "strategies_per_account": 2,
+      "total_strategy_slots": 4,
+      "bars_per_account": 1024,
+      "bars_total": 2048,
+      "bars_times_strategy_slots": 4096,
+      "warmup_wall_ms": 346.629,
+      "p50_wall_ms": 310.318,
+      "p95_wall_ms": 312.136,
+      "peak_rss_bytes_max": 7835648,
+      "aggregate_process_tree_peak_rss_bytes_max": 7700480,
+      "peak_process_count": 1,
+      "successful_fills": 4,
+      "result_hashes_by_account": [
+        "5d7d7da94802c3d7",
+        "02d95aaa187d2480"
+      ],
+      "deterministic_across_repeats": true
+    },
+    {
+      "accounts": 4,
+      "strategies_per_account": 1,
+      "total_strategy_slots": 4,
+      "bars_per_account": 1024,
+      "bars_total": 4096,
+      "bars_times_strategy_slots": 4096,
+      "warmup_wall_ms": 384.616,
+      "p50_wall_ms": 310.964,
+      "p95_wall_ms": 323.211,
+      "peak_rss_bytes_max": 7729152,
+      "aggregate_process_tree_peak_rss_bytes_max": 7585792,
+      "peak_process_count": 1,
+      "successful_fills": 4,
+      "result_hashes_by_account": [
+        "dedb5124db2048c1",
+        "d683ede63bec4511",
+        "5a4d75de1a87420d",
+        "ab9125a5b372e145"
+      ],
+      "deterministic_across_repeats": true
+    },
+    {
+      "accounts": 4,
+      "strategies_per_account": 2,
+      "total_strategy_slots": 8,
+      "bars_per_account": 1024,
+      "bars_total": 4096,
+      "bars_times_strategy_slots": 8192,
+      "warmup_wall_ms": 331.66,
+      "p50_wall_ms": 337.459,
+      "p95_wall_ms": 350.445,
+      "peak_rss_bytes_max": 7962624,
+      "aggregate_process_tree_peak_rss_bytes_max": 7700480,
+      "peak_process_count": 1,
+      "successful_fills": 8,
+      "result_hashes_by_account": [
+        "5d7d7da94802c3d7",
+        "02d95aaa187d2480",
+        "3ef9f6c84edaa4f1",
+        "6c423070331b4562"
+      ],
+      "deterministic_across_repeats": true
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 //! `qx-cli quickstart` 的首跑契约（易用性 P2 第一格 / #260 #261）。
 //!
 //! 三条判据都来自本轮实测，不是设计愿望：
-//! - 一条命令等于 README 那五条入口逐条敲：退出码 0、五句 `[完成]` 按顺序出现、项目里 16 份
+//! - 一条命令等于 README 那五条入口逐条敲：退出码 0、五句 `[完成]` 按顺序出现、项目里 17 份
 //!   文件，且 `result_hash` 与同一输入的直跑链**逐字相等**。quickstart 直调同一批函数，所以这条
 //!   相等性是结构性的——一旦有人把它改成"另起一套实现"，先在这里判红。
 //! - #260 屏幕上印出的程序名必须就是这台机器上敲得动的那个：判据取测试二进制自身的文件名，
@@ -16,10 +16,10 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// `init` 落 10 份 + 首轮回测落 6 份（项目清单与数据集清单、runs 四份产物）；这份分解由
-/// `src/tests/init_onboarding.rs` 的 `init_lands_nine_files_and_the_advertised_backtest_adds_five`
+/// `init` 落 11 份（含 Grafana 面板）+ 首轮回测落 6 份（项目清单、datasets manifest、runs 四份核心产物及事件追溯 sidecar）；这份分解由
+/// `src/tests/init_onboarding.rs` 的 `init_lands_ten_files_and_the_advertised_backtest_adds_six`
 /// 逐文件钉住，两处口径必须一起改。
-const EXPECTED_PROJECT_FILES: usize = 16;
+const EXPECTED_PROJECT_FILES: usize = 17;
 
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -44,11 +44,19 @@ fn program() -> String {
 
 /// 临时目录按用例名与进程号取：集成用例并行跑，共用一个目录会互相踩产物。
 fn temp_base(label: &str) -> PathBuf {
-    let base = std::env::temp_dir().join(format!(
-        "qianxing-quickstart-{label}-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&base);
+    let base = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("仓库根目录")
+        .join("target/qx-cli-test-tmp")
+        .join(format!(
+            "qianxing-quickstart-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
     std::fs::create_dir_all(&base).expect("创建临时运行目录失败");
     base
 }
@@ -221,6 +229,139 @@ fn one_command_lands_the_same_chain_as_the_command_by_command_chain() {
     let _ = std::fs::remove_dir_all(base);
 }
 
+/// A 股首跑用内置样例离线完成同一条项目链，不连接行情源或交易所。
+#[test]
+fn ashare_profile_runs_the_full_offline_quickstart_chain() {
+    let base = temp_base("ashare");
+    let project = base.join("project");
+    let deploy_data = repository_root().join("deploy").join("data");
+    let deploy_before = count_files(&deploy_data);
+    let (code, stdout, stderr) = run(
+        &base,
+        &[
+            "quickstart",
+            &project.to_string_lossy(),
+            "--profile",
+            "ashare",
+        ],
+    );
+    assert_eq!(code, 0, "A 股 quickstart 失败: {stderr}");
+    assert!(
+        stdout.contains("使用 ashare profile"),
+        "缺少 profile 声明:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("profile=ashare")
+            && stdout.contains("bars=6 fills=1")
+            && stdout.contains("instrument=000001.SZSE"),
+        "A 股首跑没有复用 A 股样例回测链:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("network_accessed=false orders_sent=false"),
+        "本地 A 股样例首跑不得访问网络或发送订单:\n{stdout}"
+    );
+    assert_eq!(
+        stdout.matches("[完成] ").count(),
+        5,
+        "A 股 quickstart 必须完成五步:\n{stdout}"
+    );
+    assert_eq!(
+        count_files(&project),
+        16,
+        "A 股首跑落盘份数与当前 init/回测产物不一致"
+    );
+    assert!(
+        !base.join("data").exists(),
+        "A 股 quickstart 把产物写到了启动目录"
+    );
+    assert_eq!(
+        count_files(&deploy_data),
+        deploy_before,
+        "A 股 quickstart 改动了仓库 deploy/data"
+    );
+    assert_eq!(
+        result_hashes(&stdout).len(),
+        1,
+        "A 股首跑应产生单一结果指纹"
+    );
+
+    let steps = advertised_next_steps(&stdout);
+    assert_eq!(steps.len(), 3, "A 股首跑必须提供三条下一步命令");
+    for step in steps {
+        let args = step.split_whitespace().skip(1).collect::<Vec<_>>();
+        let (code, _, stderr) = run(&base, &args);
+        assert_eq!(code, 0, "A 股首跑指路命令跑不通: {step}\n{stderr}");
+    }
+    let _ = std::fs::remove_dir_all(base);
+}
+
+/// 只有已经实现完整首跑链的 profile 才能通过 quickstart 参数校验。
+#[test]
+fn unknown_quickstart_profile_is_rejected_before_writing() {
+    let base = temp_base("unsupported-profile");
+    let project = base.join("project");
+    let (code, stdout, stderr) = run(
+        &base,
+        &[
+            "quickstart",
+            &project.to_string_lossy(),
+            "--profile",
+            "not-a-profile",
+        ],
+    );
+    assert_eq!(code, 2, "未实现完整首跑链的 profile 必须拒绝");
+    assert!(
+        stderr.contains("not-a-profile"),
+        "拒绝信息应由 profile 枚举指出可用值: {stderr}"
+    );
+    assert!(stdout.is_empty(), "参数拒绝前不应开始 quickstart: {stdout}");
+    assert!(!project.exists(), "不支持的 profile 不得创建项目目录");
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
+fn ccxt_quickstart_rejects_invalid_window_before_writing() {
+    let base = temp_base("ccxt-invalid-window");
+    let project = base.join("project");
+    let (code, stdout, stderr) = run(
+        &base,
+        &[
+            "quickstart",
+            &project.to_string_lossy(),
+            "--profile",
+            "ccxt",
+            "--days",
+            "0",
+        ],
+    );
+    assert_eq!(code, 2, "非法窗口必须 fail closed");
+    assert!(
+        !stdout.contains("quickstart 使用"),
+        "参数拒绝前不得开始 quickstart: {stdout}"
+    );
+    assert!(stderr.contains("--days 必须在 1 到 365 之间"), "{stderr}");
+    assert!(!project.exists(), "非法窗口不得创建项目目录");
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
+fn ccxt_only_options_are_rejected_for_offline_quickstart_before_writing() {
+    let base = temp_base("ccxt-option-on-builtin");
+    let project = base.join("project");
+    let (code, stdout, stderr) = run(
+        &base,
+        &["quickstart", &project.to_string_lossy(), "--days", "7"],
+    );
+    assert_eq!(code, 2, "不能静默忽略 CCXT 专属选项");
+    assert!(
+        !stdout.contains("quickstart 使用"),
+        "配置错误前不得开始 quickstart: {stdout}"
+    );
+    assert!(stderr.contains("仅适用于 --profile ccxt"), "{stderr}");
+    assert!(!project.exists(), "profile 不匹配时不得创建项目目录");
+    let _ = std::fs::remove_dir_all(base);
+}
+
 /// 指路的三条命令逐条照抄必须退 0（#261）。
 #[test]
 fn advertised_next_steps_run_as_printed() {
@@ -228,6 +369,10 @@ fn advertised_next_steps_run_as_printed() {
     let project = base.join("project");
     let (code, stdout, stderr) = run(&base, &["quickstart", &project.to_string_lossy()]);
     assert_eq!(code, 0, "quickstart 首跑失败: {stderr}");
+    assert!(
+        !stdout.lines().any(|line| line.starts_with("下一步：")),
+        "quickstart 不应混入内部 init 的单步指路；它会打印自己的完整流程：\n{stdout}"
+    );
     let steps = advertised_next_steps(&stdout);
     assert_eq!(steps.len(), 3, "下一步指路必须是三条:\n{stdout}");
     for step in &steps {
@@ -271,17 +416,21 @@ fn second_run_without_force_stops_at_the_first_step() {
         stderr.contains("[止步] 建项目 失败"),
         "止步文案要点名失败的那一步: {stderr}"
     );
+    let init_command = stderr
+        .lines()
+        .find(|line| line.starts_with("  这一步的原文命令："))
+        .expect("必须回显那一步的原文命令");
+    let expected_init_command = format!("{names} init {}", runtime.display()).replace('\\', "/");
+    let actual_init_command = init_command.replace('\\', "/");
     assert!(
-        stderr.contains(&format!(
-            "这一步的原文命令：{names} init {}",
-            runtime.display()
-        )),
-        "必须回显那一步的原文命令: {stderr}"
+        actual_init_command.contains(&expected_init_command)
+            && actual_init_command.ends_with("--strategy macd"),
+        "必须回显完整的 init 命令（含策略参数）: actual={actual_init_command:?}, expected-prefix={expected_init_command:?}"
     );
     assert!(
-        stderr.contains(&format!(
-            "重跑整条链条：{names} quickstart {}",
-            project.display()
+        stderr.replace('\\', "/").contains(&format!(
+            "确认覆盖项目文件后从头重跑：{names} quickstart {} --force",
+            project.display().to_string().replace('\\', "/")
         )),
         "必须给出重跑整条链条的写法: {stderr}"
     );
@@ -304,5 +453,52 @@ fn second_run_without_force_stops_at_the_first_step() {
         5,
         "--force 重跑的五步不齐:\n{stdout}"
     );
+    let _ = std::fs::remove_dir_all(base);
+}
+
+/// 显式启用 HTML 时，首跑要输出可直接打开的报告和三个配套 SVG，且都在项目目录内。
+#[test]
+fn html_option_writes_the_interactive_report_bundle_without_changing_backtest_identity() {
+    let base = temp_base("html");
+    let project = base.join("project");
+    let (code, stdout, stderr) = run(&base, &["quickstart", &project.to_string_lossy(), "--html"]);
+    assert_eq!(code, 0, "quickstart --html 失败: {stderr}");
+    assert!(
+        stdout.contains("[完成] 复核摘要并生成 HTML 报告：")
+            && stdout.contains(" report ")
+            && stdout.contains("--html"),
+        "报告步骤没有回显实际使用的 HTML 命令:\n{stdout}"
+    );
+    assert_eq!(
+        count_files(&project),
+        EXPECTED_PROJECT_FILES + 4,
+        "HTML 选项应只增加 HTML 和三张 SVG 报告工件"
+    );
+    let html = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("[Report] html="))
+        .map(PathBuf::from)
+        .expect("report --html 应回显 HTML 路径");
+    assert!(html.is_file(), "HTML 报告不存在: {}", html.display());
+    assert!(
+        html.starts_with(&project),
+        "HTML 报告写出项目目录: {}",
+        html.display()
+    );
+    let parent = html.parent().expect("HTML 报告有父目录");
+    let stem = html
+        .file_stem()
+        .expect("HTML 报告有文件名")
+        .to_string_lossy();
+    for suffix in ["equity.svg", "fills.svg", "monthly.svg"] {
+        let asset = parent.join(format!("{stem}.{suffix}"));
+        assert!(asset.is_file(), "缺少报告图表 {}", asset.display());
+        assert!(
+            asset.starts_with(&project),
+            "图表写出项目目录: {}",
+            asset.display()
+        );
+    }
+    assert_eq!(result_hashes(&stdout).len(), 1, "HTML 导出不应重新运行回测");
     let _ = std::fs::remove_dir_all(base);
 }

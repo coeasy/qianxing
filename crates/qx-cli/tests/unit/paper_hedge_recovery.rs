@@ -9,15 +9,18 @@ fn paper_hedge_recovery_fixture(
     tag: &str,
     group_id: &str,
 ) -> (PathBuf, LiveEventPipeline, FileSpreadOrderGroupStore) {
-    let root = std::env::temp_dir().join(format!(
-        "qianxing-cli-paper-hedge-{}-{}-{}",
-        tag,
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join(format!(
+            "qianxing-cli-paper-hedge-{}-{}-{}",
+            tag,
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
     std::fs::create_dir_all(&root).unwrap();
     let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
     let mut first = mk_order(9201, &instrument, Side::Buy, 2);
@@ -59,6 +62,7 @@ fn paper_hedge_recovery_fixture(
             },
         )
         .unwrap();
+    group.record_cancelled("spot").unwrap();
     group.record_cancelled("future").unwrap();
     assert_eq!(group.status, SpreadOrderGroupStatus::HedgeRequired);
     let mut group_store = FileSpreadOrderGroupStore::new(root.join("spread-groups")).unwrap();

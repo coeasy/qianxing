@@ -149,18 +149,21 @@ pub fn publish_multi_builtin_backtest_artifacts(
         )
     })
     .collect::<Result<Vec<_>, String>>()?;
-    let (has_report_analysis, assembly) = prepare_run_evidence_assembly(RunEvidencePreparation {
-        summary_path: &artifacts.composition_summary,
-        summary: &artifacts.composition_summary_json,
-        report_analysis: None,
-        components,
-        build_profile,
-        target_triple,
-        operator,
-    })?;
+    let (has_report_analysis, has_strategy_diagnostics, assembly) =
+        prepare_run_evidence_assembly(RunEvidencePreparation {
+            summary_path: &artifacts.composition_summary,
+            summary: &artifacts.composition_summary_json,
+            report_analysis: None,
+            strategy_diagnostics: None,
+            components,
+            build_profile,
+            target_triple,
+            operator,
+        })?;
     let evidence_bundle = persist_run_evidence_bundle(
         &artifacts.composition_summary,
         has_report_analysis,
+        has_strategy_diagnostics,
         assembly,
     )?;
     Ok(MultiBuiltinPublishedArtifacts {
@@ -191,7 +194,16 @@ fn persist_multi_builtin_artifact_set(
         .config_fingerprint
         .or(fallback_fingerprint.as_deref())
         .ok_or("多腿回测缺少配置指纹")?;
-    let bars: [Vec<Bar>; 2] = [input.primary_frame.into(), input.reference_frame.into()];
+    let bars: [Vec<Bar>; 2] = [
+        input
+            .primary_frame
+            .bars()
+            .map_err(|error| format!("主腿 BarFrame exact OHLCV 无效: {error:?}"))?,
+        input
+            .reference_frame
+            .bars()
+            .map_err(|error| format!("对冲腿 BarFrame exact OHLCV 无效: {error:?}"))?,
+    ];
     let leg_summaries = persist_multi_leg_run_artifacts(MultiLegRunArtifactInput {
         root: input.root,
         code_commit: input.code_commit,

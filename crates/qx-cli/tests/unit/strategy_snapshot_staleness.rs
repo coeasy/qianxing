@@ -37,6 +37,7 @@ fn write_closed_snapshot(path: &Path, close_delta: i128) -> u64 {
         low_raw: vec![100_000_000_000; 3],
         close_raw: vec![100_000_000_000 + close_delta; 3],
         volume_raw: vec![1_000_000_000; 3],
+        exact_ohlcv: None,
     };
     std::fs::write(path, frame.to_json()).expect("写入夹具快照失败");
     frame.digest()
@@ -47,7 +48,7 @@ struct StalenessCase {
     snapshot: PathBuf,
     strategy: StrategyRuntimeConfig,
     queue: ConfiguredJobQueue,
-    /// 队列/租约域时钟（秒），与 `lease_clock(NOW_MS)` 同一个数。
+    /// 队列/租约域时钟（秒），与策略输入的毫秒时间分开控制。
     lease_now: u64,
 }
 
@@ -70,7 +71,7 @@ fn staleness_case(label: &str) -> StalenessCase {
     config.strategy.builtin_reference_bars_snapshot_path = None;
     StalenessCase {
         queue: ConfiguredJobQueue::Files(FileJobQueue::new(dir.join("job-queue"))),
-        lease_now: lease_clock(NOW_MS),
+        lease_now: lease_clock(runtime_timestamp_ms()),
         strategy: config.strategy,
         snapshot,
         dir,
@@ -79,7 +80,7 @@ fn staleness_case(label: &str) -> StalenessCase {
 
 /// 按 worker 的口径把一条实时策略作业放进队列并领取租约：入队 → `available` 取条目 → `claim`。
 /// 指纹走生产生产者 `live_strategy_job`，因此条目缺 `manifest_digest` 那一格不可能是夹具自造。
-fn seed_live_job(case: &StalenessCase, data_fingerprint: u64) -> (QueuedJob, JobLease) {
+fn seed_live_job(case: &StalenessCase, data_fingerprint: u64) -> QueuedJob {
     let (job, run) =
         live_strategy_job(&case.strategy, WORKER_ID, data_fingerprint, NOW_MS, "paper");
     case.queue
@@ -88,18 +89,16 @@ fn seed_live_job(case: &StalenessCase, data_fingerprint: u64) -> (QueuedJob, Job
     let mut pending = case.queue.available(case.lease_now).unwrap();
     assert_eq!(pending.len(), 1, "夹具条目在租约前必须可领取");
     let queued = pending.remove(0);
-    let lease = case
-        .queue
+    case.queue
         .claim(queued.run.run_id, WORKER_ID, case.lease_now, LEASE_SECONDS)
         .expect("领取夹具租约失败");
-    (queued, lease)
+    queued
 }
 
 /// 执行前那一次调用的口径：`digest_now` 用本轮 tick 的毫秒墙钟，`reason` 是 `stale-market-digest`。
 fn gate_before_evaluation(
     case: &StalenessCase,
     queued: &QueuedJob,
-    lease: &JobLease,
     expected_digest: Option<u64>,
 ) -> Result<bool, String> {
     live_strategy_job_is_stale(
@@ -107,8 +106,8 @@ fn gate_before_evaluation(
             queue: &case.queue,
             queued,
             worker_id: WORKER_ID,
-            fencing_token: lease.fencing_token,
-            lease_now: case.lease_now,
+            lease_owner: WORKER_ID,
+            lease_seconds: LEASE_SECONDS,
         },
         &case.strategy,
         expected_digest,
@@ -135,10 +134,10 @@ fn a_changed_snapshot_digest_skips_the_job_and_acks_its_entry() {
     let expected = write_closed_snapshot(&case.snapshot, 0);
     // 策略生成时看到的是收盘于 NOW_MS 的那根 Bar；此刻快照已被行情 worker 换掉。
     write_closed_snapshot(&case.snapshot, 1);
-    let (queued, lease) = seed_live_job(&case, expected);
+    let queued = seed_live_job(&case, expected);
     let run_id = queued.run.run_id;
 
-    let stale = gate_before_evaluation(&case, &queued, &lease, Some(expected))
+    let stale = gate_before_evaluation(&case, &queued, Some(expected))
         .expect("指纹变了应走跳过通道，而不是把队列故障报成闸门故障");
     assert!(stale, "快照指纹变了却没有判过期，等于允许按旧 Bar 下单");
     assert!(
@@ -165,10 +164,10 @@ fn a_changed_snapshot_digest_skips_the_job_and_acks_its_entry() {
 fn an_unchanged_snapshot_digest_lets_the_job_execute() {
     let case = staleness_case("v13r2p13-stale-fresh");
     let expected = write_closed_snapshot(&case.snapshot, 0);
-    let (queued, lease) = seed_live_job(&case, expected);
+    let queued = seed_live_job(&case, expected);
     let run_id = queued.run.run_id;
 
-    let stale = gate_before_evaluation(&case, &queued, &lease, Some(expected))
+    let stale = gate_before_evaluation(&case, &queued, Some(expected))
         .expect("快照与指纹同源时闸门不该报错");
     assert!(!stale, "闭合 Bar 没变却被判过期，实时策略永远不会下单");
     assert!(
@@ -189,10 +188,10 @@ fn an_unchanged_snapshot_digest_lets_the_job_execute() {
 fn a_job_without_an_expected_digest_never_reads_the_snapshot() {
     let case = staleness_case("v13r2p13-stale-non-live");
     std::fs::write(&case.snapshot, "not a BarFrame at all").unwrap();
-    let (queued, lease) = seed_live_job(&case, 0xabcd);
+    let queued = seed_live_job(&case, 0xabcd);
     let run_id = queued.run.run_id;
 
-    let stale = gate_before_evaluation(&case, &queued, &lease, None).expect("非实时作业不该报错");
+    let stale = gate_before_evaluation(&case, &queued, None).expect("非实时作业不该报错");
     assert!(!stale, "没有期望指纹的作业被快照闸门拦下了");
     assert!(
         !queue_record(&case, run_id, "done").exists(),
@@ -208,11 +207,11 @@ fn a_missing_snapshot_is_treated_as_stale() {
     let case = staleness_case("v13r2p13-stale-missing");
     let expected = write_closed_snapshot(&case.snapshot, 0);
     std::fs::remove_file(&case.snapshot).unwrap();
-    let (queued, lease) = seed_live_job(&case, expected);
+    let queued = seed_live_job(&case, expected);
     let run_id = queued.run.run_id;
 
-    let stale = gate_before_evaluation(&case, &queued, &lease, Some(expected))
-        .expect("快照缺失应走跳过通道");
+    let stale =
+        gate_before_evaluation(&case, &queued, Some(expected)).expect("快照缺失应走跳过通道");
     assert!(
         stale,
         "读不到闭合 Bar 却放行，等于让策略在没有行情依据时下真实单"
@@ -232,7 +231,7 @@ fn an_inconsistent_snapshot_instrument_fails_the_worker() {
     let expected = write_closed_snapshot(&case.snapshot, 0);
     let mut config = case.strategy.clone();
     config.instrument = Some("ETHUSDT.BINANCE".into());
-    let (queued, lease) = seed_live_job(&case, expected);
+    let queued = seed_live_job(&case, expected);
     let run_id = queued.run.run_id;
 
     let error = live_strategy_job_is_stale(
@@ -240,8 +239,8 @@ fn an_inconsistent_snapshot_instrument_fails_the_worker() {
             queue: &case.queue,
             queued: &queued,
             worker_id: WORKER_ID,
-            fencing_token: lease.fencing_token,
-            lease_now: case.lease_now,
+            lease_owner: WORKER_ID,
+            lease_seconds: LEASE_SECONDS,
         },
         &config,
         Some(expected),
@@ -265,7 +264,7 @@ fn an_ack_failure_is_reported_with_the_call_sites_message() {
     let case = staleness_case("v13r2p13-stale-ack-failure");
     let expected = write_closed_snapshot(&case.snapshot, 0);
     write_closed_snapshot(&case.snapshot, 2);
-    let (queued, lease) = seed_live_job(&case, expected);
+    let queued = seed_live_job(&case, expected);
     // 租约过期后被第二个 worker 接管：原 worker 的 fencing token 失效，确认必被拒。
     case.queue
         .claim(
@@ -276,7 +275,7 @@ fn an_ack_failure_is_reported_with_the_call_sites_message() {
         )
         .expect("过期租约应可被接管");
 
-    let error = gate_before_evaluation(&case, &queued, &lease, Some(expected))
+    let error = gate_before_evaluation(&case, &queued, Some(expected))
         .expect_err("确认失败的条目不能装作已经跳过");
     assert!(
         error.contains("确认过期实时 Strategy Job 失败"),

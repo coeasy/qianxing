@@ -10,17 +10,23 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import sys
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass, field, is_dataclass
-from importlib.metadata import PackageNotFoundError, version
-from ssl import SSLContext
+from dataclasses import asdict, dataclass, field, is_dataclass, replace
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Any, Generic, Literal, TypedDict, TypeVar
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.parse import urlencode
 
 from qianxing_bridge import native
+from .sdk_diagnostics import (
+    _compare_cli_platform,
+    _normalize_architecture,
+    _probe_qx_cli,
+    _sdk_package_version,
+    doctor as _sdk_doctor,
+)
 
 # 远端客户端的路由表：Python 侧对 qx-api 路由表的**唯一**声明面。
 # 门禁 `client_route_wiring_check` 逐条与 qx-api 的分派表核对——这里写了一个后端不存在的
@@ -28,14 +34,22 @@ from qianxing_bridge import native
 # 调用侧用 `.format(run_id=...)` 填。
 APP_ROUTE_TEMPLATES: dict[str, str] = {
     "application_capabilities": "/app/capabilities",
+    "product_capability_query": "/app/capabilities/query",
     "provider_preflight": "/app/capabilities/providers/preflight",
     "builtin_strategy_catalog": "/app/strategies",
+    "builtin_strategy_recipes": "/app/strategy-recipes",
     "validate_dataset": "/app/validate-dataset",
     "backtest": "/app/backtest",
     "provider_backtest": "/app/provider-backtest",
     "provider_depth_backtest": "/app/provider-depth-backtest",
+    "read_provider_report": "/app/read-provider-report",
+    "read_provider_depth_report": "/app/read-provider-depth-report",
+    "read_multi_account_joint_report": "/app/read-multi-account-joint-report",
+    "read_multi_leg_report": "/app/read-multi-leg-report",
     "multi_account_backtest": "/app/multi-account-backtest",
     "multi_account_backtest_start": "/app/multi-account-backtest/start",
+    "multi_account_joint_backtest": "/app/multi-account-joint-backtest",
+    "multi_account_joint_backtest_start": "/app/multi-account-joint-backtest/start",
     "multi_account_depth_backtest": "/app/multi-account-depth-backtest",
     "multi_account_depth_backtest_start": "/app/multi-account-depth-backtest/start",
     "multi_market_backtest": "/app/multi-market-backtest",
@@ -49,6 +63,7 @@ APP_ROUTE_TEMPLATES: dict[str, str] = {
     "backtest_start": "/app/backtest/start",
     "verify": "/app/verify",
     "verify_depth": "/app/verify-depth",
+    "research_artifacts": "/app/research-artifacts",
     "compare_runs": "/app/compare-runs",
     "plan_risk_parity": "/app/plan-risk-parity",
     "plan_algo_execution": "/app/plan-algo-execution",
@@ -73,6 +88,18 @@ APP_ROUTE_TEMPLATES: dict[str, str] = {
     "run_events": "/app/runs/{run_id}/events",
     "run_cancel": "/app/runs/{run_id}/cancel",
     "live_events": "/events/live",
+    "account_activity": "/account/activity",
+}
+
+_ACCOUNT_READ_PATHS = {
+    "snapshot": "/account/snapshot",
+    "activity": APP_ROUTE_TEMPLATES["account_activity"],
+    "balances": "/account/balances",
+    "positions": "/account/positions",
+    "orders": "/account/orders",
+    "ledger": "/account/ledger",
+    "reconcile_reports": "/reconcile/reports",
+    "portfolio": "/account/portfolio",
 }
 
 
@@ -170,9 +197,14 @@ def _encode_payload(value: Any) -> str:
     )
 
 
-def _invoke(call: Any, value: Any) -> dict[str, Any]:
+def _invoke(call: Any, value: Any, *extra_values: Any) -> dict[str, Any]:
     try:
-        return json.loads(call(_encode_payload(value)))
+        return json.loads(
+            call(
+                _encode_payload(value),
+                *(None if extra is None else _encode_payload(extra) for extra in extra_values),
+            )
+        )
     except Exception as exc:
         raise _translate_native_error(exc) from exc
 
@@ -195,6 +227,29 @@ class BuiltinStrategyInfo:
     description: str
     signal_knobs: tuple[str, ...]
     requires_reference_leg: bool
+
+
+@dataclass(frozen=True)
+class StrategyRecipeParameter:
+    name: str
+    config_key: str | None
+    default_value: int
+    unit: str
+    configurable: bool
+    description: str
+
+
+@dataclass(frozen=True)
+class BuiltinStrategyRecipe:
+    id: str
+    name: str
+    family: str
+    description: str
+    required_inputs: tuple[str, ...]
+    signal_parameters: tuple[StrategyRecipeParameter, ...]
+    cost_inputs: tuple[str, ...]
+    risk_notes: tuple[str, ...]
+    validation_notes: tuple[str, ...]
 
 
 _BUILTIN_STRATEGY_INFO_KEYS = frozenset(
@@ -240,6 +295,104 @@ def _parse_builtin_strategy_catalog(value: Any) -> tuple[BuiltinStrategyInfo, ..
     return tuple(result)
 
 
+_STRATEGY_RECIPE_KEYS = frozenset(
+    {
+        "id", "name", "family", "description", "required_inputs",
+        "signal_parameters", "cost_inputs", "risk_notes", "validation_notes",
+    }
+)
+_STRATEGY_RECIPE_PARAMETER_KEYS = frozenset(
+    {"name", "config_key", "default_value", "unit", "configurable", "description"}
+)
+_STRATEGY_RECIPE_FAMILIES = frozenset(
+    {"trend", "mean_reversion", "breakout", "momentum", "grid", "arbitrage"}
+)
+
+
+def _parse_builtin_strategy_recipes(value: Any) -> tuple[BuiltinStrategyRecipe, ...]:
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"schema_version", "recipes"}
+        or type(value["schema_version"]) is not int
+        or value["schema_version"] != 1
+    ):
+        raise ValueError("strategy recipe catalog has an invalid versioned envelope")
+    entries = value["recipes"]
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("strategy recipe catalog must contain a non-empty recipe array")
+
+    def text_tuple(entry: dict[str, Any], field_name: str, label: str) -> tuple[str, ...]:
+        field_value = entry[field_name]
+        if (
+            not isinstance(field_value, list)
+            or not field_value
+            or any(not isinstance(item, str) or not item.strip() for item in field_value)
+            or len(set(field_value)) != len(field_value)
+        ):
+            raise ValueError(f"{label}.{field_name} must be a non-empty unique string list")
+        return tuple(field_value)
+
+    recipes: list[BuiltinStrategyRecipe] = []
+    names: set[str] = set()
+    ids: set[str] = set()
+    for index, entry in enumerate(entries):
+        label = f"strategy recipe {index}"
+        if not isinstance(entry, dict) or set(entry) != _STRATEGY_RECIPE_KEYS:
+            raise ValueError(f"{label} has an invalid field set")
+        recipe_id, name, family, description = (
+            entry["id"], entry["name"], entry["family"], entry["description"]
+        )
+        if (
+            not isinstance(recipe_id, str) or not recipe_id.strip()
+            or not isinstance(name, str) or not name.strip()
+            or not isinstance(family, str) or family not in _STRATEGY_RECIPE_FAMILIES
+            or not isinstance(description, str) or not description.strip()
+            or name in names or recipe_id in ids
+        ):
+            raise ValueError(f"{label} has invalid or duplicate identity fields")
+        parameters = entry["signal_parameters"]
+        if not isinstance(parameters, list):
+            raise ValueError(f"{label}.signal_parameters must be an array")
+        parsed_parameters: list[StrategyRecipeParameter] = []
+        parameter_names: set[str] = set()
+        for parameter_index, parameter in enumerate(parameters):
+            parameter_label = f"{label}.signal_parameters[{parameter_index}]"
+            if not isinstance(parameter, dict) or set(parameter) != _STRATEGY_RECIPE_PARAMETER_KEYS:
+                raise ValueError(f"{parameter_label} has an invalid field set")
+            config_key = parameter["config_key"]
+            default_value = parameter["default_value"]
+            configurable = parameter["configurable"]
+            if (
+                not isinstance(parameter["name"], str) or not parameter["name"].strip()
+                or (config_key is not None and (not isinstance(config_key, str) or not config_key.strip()))
+                or type(default_value) is not int
+                or not isinstance(parameter["unit"], str) or not parameter["unit"].strip()
+                or type(configurable) is not bool
+                or configurable != (config_key is not None)
+                or not isinstance(parameter["description"], str) or not parameter["description"].strip()
+                or parameter["name"] in parameter_names
+            ):
+                raise ValueError(f"{parameter_label} has invalid values")
+            parameter_names.add(parameter["name"])
+            parsed_parameters.append(StrategyRecipeParameter(**parameter))
+        names.add(name)
+        ids.add(recipe_id)
+        recipes.append(
+            BuiltinStrategyRecipe(
+                id=recipe_id,
+                name=name,
+                family=family,
+                description=description,
+                required_inputs=text_tuple(entry, "required_inputs", label),
+                signal_parameters=tuple(parsed_parameters),
+                cost_inputs=text_tuple(entry, "cost_inputs", label),
+                risk_notes=text_tuple(entry, "risk_notes", label),
+                validation_notes=text_tuple(entry, "validation_notes", label),
+            )
+        )
+    return tuple(recipes)
+
+
 @dataclass(frozen=True)
 class BuiltinStrategySpec:
     kind: Literal[
@@ -274,6 +427,15 @@ def list_builtin_strategies() -> tuple[BuiltinStrategyInfo, ...]:
         raise _translate_native_error(exc) from exc
 
 
+def list_builtin_strategy_recipes() -> tuple[BuiltinStrategyRecipe, ...]:
+    """List versioned strategy recipes derived from the Rust defaults and constraints."""
+    try:
+        value = json.loads(native.app_list_builtin_strategy_recipes())
+        return _parse_builtin_strategy_recipes(value)
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+
+
 @dataclass(frozen=True)
 class ProtectiveExitSpec:
     stop_loss_bps: int | None = None
@@ -302,13 +464,17 @@ class PortfolioStrategySpec:
     priority: int
     reserved_capital_raw: int
     strategy: BuiltinStrategySpec
+    reserved_capital_exact: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "priority": self.priority,
             "reserved_capital_raw": self.reserved_capital_raw,
             "strategy": self.strategy.to_dict(),
         }
+        if self.reserved_capital_exact is not None:
+            result["reserved_capital_exact"] = dict(self.reserved_capital_exact)
+        return result
 
 
 @dataclass(frozen=True)
@@ -320,6 +486,11 @@ class MultiMarketBacktestMarket:
     dataset_manifest_path: str | None = None
     market_spec: TradingInstrumentSpec | dict[str, Any] | None = None
     fee_schedule: MakerTakerFeeSchedule | dict[str, Any] | None = None
+    order_policy: OrderPolicy | dict[str, Any] | None = None
+    margin_model: BacktestMarginConfig | dict[str, Any] | None = None
+    funding_bps: int = 0
+    funding_events: tuple[FundingRateEvent | dict[str, Any], ...] = ()
+    asset_class: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         value: dict[str, Any] = {
@@ -330,10 +501,19 @@ class MultiMarketBacktestMarket:
         }
         if self.dataset_manifest_path is not None:
             value["dataset_manifest_path"] = self.dataset_manifest_path
-        for key in ("market_spec", "fee_schedule"):
+        if self.asset_class is not None:
+            value["asset_class"] = self.asset_class
+        for key in ("market_spec", "fee_schedule", "order_policy", "margin_model"):
             item = getattr(self, key)
             if item is not None:
                 value[key] = item.to_dict() if hasattr(item, "to_dict") else dict(item)
+        if self.funding_bps:
+            value["funding_bps"] = self.funding_bps
+        if self.funding_events:
+            value["funding_events"] = [
+                event.to_dict() if hasattr(event, "to_dict") else dict(event)
+                for event in self.funding_events
+            ]
         return value
 
 
@@ -347,9 +527,16 @@ class MultiMarketBacktestSpec:
     markets: tuple[MultiMarketBacktestMarket, ...]
     seed: int = 0
     schema_version: int = 1
+    initial_cash_exact: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        if self.schema_version not in (1, 2):
+            raise ValueError("MultiMarketBacktestSpec schema_version must be 1 or 2")
+        if (self.schema_version == 1 and self.initial_cash_exact is not None) or (
+            self.schema_version == 2 and self.initial_cash_exact is None
+        ):
+            raise ValueError("initial_cash_exact must be present only for MultiMarketBacktestSpec schema_version=2")
+        value = {
             "schema_version": self.schema_version,
             "run_id": self.run_id,
             "account_id": self.account_id,
@@ -358,6 +545,64 @@ class MultiMarketBacktestSpec:
             "seed": self.seed,
             "output_dir": self.output_dir,
             "markets": [market.to_dict() for market in self.markets],
+        }
+        if self.initial_cash_exact is not None:
+            coefficient = self.initial_cash_exact.get("coefficient")
+            scale = self.initial_cash_exact.get("scale")
+            if (
+                not isinstance(coefficient, str)
+                or not coefficient.isdigit()
+                or int(coefficient) <= 0
+                or coefficient != str(int(coefficient))
+                or not isinstance(scale, int)
+                or isinstance(scale, bool)
+                or not 0 <= scale <= 18
+            ):
+                raise ValueError("initial_cash_exact must contain a positive coefficient and scale 0..18")
+            projected = (
+                int(coefficient) * 10 ** (9 - scale)
+                if scale <= 9
+                else int(coefficient) // 10 ** (scale - 9)
+            )
+            if projected != self.initial_cash_raw:
+                raise ValueError("initial_cash_raw must equal initial_cash_exact's toward-zero 1e-9 projection")
+            value["initial_cash_exact"] = dict(self.initial_cash_exact)
+        return value
+
+
+@dataclass(frozen=True)
+class JointBacktestAccount:
+    exchange_id: str
+    account_id: str
+    initial_cash_raw: int
+    markets: tuple[MultiMarketBacktestMarket, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "exchange_id": self.exchange_id,
+            "account_id": self.account_id,
+            "initial_cash_raw": self.initial_cash_raw,
+            "markets": [market.to_dict() for market in self.markets],
+        }
+
+
+@dataclass(frozen=True)
+class MultiAccountJointBacktestSpec:
+    run_id: str
+    settlement_currency: str
+    output_dir: str
+    accounts: tuple[JointBacktestAccount, ...]
+    seed: int = 0
+    schema_version: int = 1
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "run_id": self.run_id,
+            "settlement_currency": self.settlement_currency,
+            "seed": self.seed,
+            "output_dir": self.output_dir,
+            "accounts": [account.to_dict() for account in self.accounts],
         }
 
 
@@ -376,6 +621,8 @@ class MultiMarketDepthBacktestMarket:
     data_tier: str | None = None
     dataset_manifest_path: str | None = None
     queue_position_model: QueuePositionDisabled | QueuePositionFifoVolumeEstimate | dict[str, Any] | None = None
+    funding_bps: int = 0
+    funding_events: tuple[FundingRateEvent | dict[str, Any], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         value: dict[str, Any] = {
@@ -401,6 +648,13 @@ class MultiMarketDepthBacktestMarket:
             value["order_policy"] = self.order_policy.to_dict() if hasattr(self.order_policy, "to_dict") else dict(self.order_policy)
         if self.data_tier is not None:
             value["data_tier"] = self.data_tier
+        if self.funding_bps:
+            value["funding_bps"] = self.funding_bps
+        if self.funding_events:
+            value["funding_events"] = [
+                event.to_dict() if hasattr(event, "to_dict") else dict(event)
+                for event in self.funding_events
+            ]
         return value
 
 
@@ -413,9 +667,42 @@ class MultiMarketDepthBacktestSpec:
     output_dir: str
     markets: tuple[MultiMarketDepthBacktestMarket, ...]
     schema_version: int = 1
+    initial_cash_exact: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        if self.schema_version not in {1, 2}:
+            raise ValueError("MultiMarketDepthBacktestSpec schema_version must be 1 or 2")
+        if (self.schema_version == 1 and self.initial_cash_exact is not None) or (
+            self.schema_version == 2 and self.initial_cash_exact is None
+        ):
+            raise ValueError("initial_cash_exact must be present only for MultiMarketDepthBacktestSpec schema_version=2")
+        if self.initial_cash_exact is None:
+            if self.initial_cash_raw <= 0:
+                raise ValueError("initial_cash_raw must be positive for schema_version=1")
+        else:
+            exact = self.initial_cash_exact
+            coefficient = exact.get("coefficient")
+            scale = exact.get("scale")
+            if (
+                set(exact) != {"coefficient", "scale"}
+                or not isinstance(coefficient, str)
+                or not coefficient.isascii()
+                or not coefficient.isdecimal()
+                or str(int(coefficient)) != coefficient
+                or int(coefficient) <= 0
+                or isinstance(scale, bool)
+                or not isinstance(scale, int)
+                or not 0 <= scale <= 18
+            ):
+                raise ValueError("initial_cash_exact must contain a positive coefficient and scale 0..18")
+            projected = (
+                int(coefficient) * 10 ** (9 - scale)
+                if scale <= 9
+                else int(coefficient) // 10 ** (scale - 9)
+            )
+            if projected != self.initial_cash_raw:
+                raise ValueError("initial_cash_raw must equal initial_cash_exact's toward-zero 1e-9 projection")
+        value = {
             "schema_version": self.schema_version,
             "run_id": self.run_id,
             "account_id": self.account_id,
@@ -424,6 +711,9 @@ class MultiMarketDepthBacktestSpec:
             "output_dir": self.output_dir,
             "markets": [market.to_dict() for market in self.markets],
         }
+        if self.initial_cash_exact is not None:
+            value["initial_cash_exact"] = dict(self.initial_cash_exact)
+        return value
 
 
 @dataclass(frozen=True)
@@ -455,15 +745,21 @@ class PortfolioBacktestConfig:
     primary_priority: int
     primary_reserved_capital_raw: int
     additional_strategies: tuple[PortfolioStrategySpec, ...]
+    primary_reserved_capital_exact: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "primary_priority": self.primary_priority,
             "primary_reserved_capital_raw": self.primary_reserved_capital_raw,
             "additional_strategies": [
                 member.to_dict() for member in self.additional_strategies
             ],
         }
+        if self.primary_reserved_capital_exact is not None:
+            result["primary_reserved_capital_exact"] = dict(
+                self.primary_reserved_capital_exact
+            )
+        return result
 
 
 @dataclass(frozen=True)
@@ -627,6 +923,7 @@ class BacktestSpec:
     strategy: BuiltinStrategySpec
     seed: int = 0
     schema_version: int = 1
+    initial_cash_exact: dict[str, Any] | None = None
     protective_exit: ProtectiveExitSpec | dict[str, Any] | None = None
     account_id: str | None = None
     market_spec: TradingInstrumentSpec | dict[str, Any] | None = None
@@ -639,8 +936,15 @@ class BacktestSpec:
     max_bar_volume_participation_bps: int | None = None
     risk_rules: BacktestRiskRules | dict[str, Any] | None = None
     allow_short: bool | None = None
+    asset_class: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        if self.schema_version not in (1, 2):
+            raise ValueError("BacktestSpec schema_version must be 1 or 2")
+        if self.initial_cash_exact is not None and self.schema_version != 2:
+            raise ValueError("initial_cash_exact requires BacktestSpec schema_version=2")
+        if self.schema_version == 2 and self.initial_cash_exact is None:
+            raise ValueError("BacktestSpec schema_version=2 requires initial_cash_exact")
         value = {key: item for key, item in asdict(self).items() if item is not None}
         value["strategy"] = self.strategy.to_dict()
         if isinstance(self.protective_exit, ProtectiveExitSpec):
@@ -697,6 +1001,8 @@ class MultiAccountBacktestResult:
     spec_fingerprint: str
     runs: tuple[MultiAccountRunResult, ...]
     summary: dict[str, Any]
+    run_manifest: dict[str, Any] | None = None
+    schema_version: int = 1
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "MultiAccountBacktestResult":
@@ -706,6 +1012,8 @@ class MultiAccountBacktestResult:
             spec_fingerprint=value["spec_fingerprint"],
             runs=tuple(MultiAccountRunResult.from_dict(item) for item in value["runs"]),
             summary=dict(value["summary"]),
+            run_manifest=(dict(value["run_manifest"]) if value.get("run_manifest") is not None else None),
+            schema_version=int(value.get("schema_version", 1)),
         )
 
 
@@ -748,6 +1056,9 @@ class MultiAccountDepthBacktestResult:
     spec_fingerprint: str
     runs: tuple[MultiAccountDepthRunResult, ...]
     summary: dict[str, Any]
+    run_manifest: dict[str, Any] | None = None
+    schema_version: int = 1
+    result_kind: str = "multi_account_depth"
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "MultiAccountDepthBacktestResult":
@@ -757,6 +1068,9 @@ class MultiAccountDepthBacktestResult:
             spec_fingerprint=value["spec_fingerprint"],
             runs=tuple(MultiAccountDepthRunResult.from_dict(item) for item in value["runs"]),
             summary=dict(value["summary"]),
+            run_manifest=(dict(value["run_manifest"]) if value.get("run_manifest") is not None else None),
+            schema_version=int(value.get("schema_version", 1)),
+            result_kind=str(value.get("result_kind", "multi_account_depth")),
         )
 
 
@@ -869,6 +1183,9 @@ class ExperimentParameterSpace:
         "period",
         "threshold_bps",
         "quantity_raw",
+        "target_notional_raw",
+        "target_available_margin_bps",
+        "target_volatility_bps",
         "target_kelly_fraction_bps",
         "market_making_spread_bps",
         "market_making_quote_qty_raw",
@@ -883,13 +1200,39 @@ class ExperimentParameterSpace:
 
 
 @dataclass(frozen=True)
+class CallbackParameterSpace:
+    """Numeric parameter domain passed to a user strategy factory."""
+
+    name: str
+    values: tuple[int, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"name": self.name, "values": list(self.values)}
+
+
+@dataclass(frozen=True)
+class ExperimentParameterRange:
+    """Inclusive stepped integer domain used by adaptive single-strategy search."""
+
+    name: str
+    min: int
+    max: int
+    step: int = 1
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"name": self.name, "min": self.min, "max": self.max, "step": self.step}
+
+
+@dataclass(frozen=True)
 class ExperimentSplitPlan:
-    """Training/test split in bar indices; walk-forward windows are bounded by Rust."""
+    """Training/test split in bar indices with optional purge/embargo gaps."""
 
     train_bars: int
     test_bars: int
     walk_forward: bool = False
     step_bars: int = 0
+    purge_bars: int = 0
+    embargo_bars: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -897,7 +1240,193 @@ class ExperimentSplitPlan:
             "test_bars": self.test_bars,
             "walk_forward": self.walk_forward,
             "step_bars": self.step_bars,
+            **({"purge_bars": self.purge_bars} if self.purge_bars else {}),
+            **({"embargo_bars": self.embargo_bars} if self.embargo_bars else {}),
         }
+
+
+@dataclass(frozen=True)
+class ExperimentEarlyPruningPlan:
+    min_training_bars: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"min_training_bars": self.min_training_bars}
+
+
+@dataclass(frozen=True)
+class ExperimentSearchPlan:
+    algorithm: Literal["random", "tpe", "tpe_kde", "pareto_tpe"]
+    seed: int
+    budget: int
+    max_training_drawdown_bps: int | None = None
+    fold_local_search: bool = False
+    continuous_parameter_space: tuple[ExperimentParameterRange, ...] = ()
+    early_pruning: ExperimentEarlyPruningPlan | None = None
+    robustness_subwindows: int | None = None
+    minimum_training_robustness_score_bps: int | None = None
+    neighborhood_radius: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        value = {"algorithm": self.algorithm, "seed": self.seed, "budget": self.budget}
+        if self.max_training_drawdown_bps is not None:
+            value["max_training_drawdown_bps"] = self.max_training_drawdown_bps
+        if self.fold_local_search:
+            value["fold_local_search"] = True
+        if self.neighborhood_radius is not None:
+            value["neighborhood_radius"] = self.neighborhood_radius
+        if self.continuous_parameter_space:
+            value["continuous_parameter_space"] = [
+                dimension.to_dict() for dimension in self.continuous_parameter_space
+            ]
+        if self.early_pruning is not None:
+            value["early_pruning"] = self.early_pruning.to_dict()
+        if self.robustness_subwindows is not None:
+            value["robustness_subwindows"] = self.robustness_subwindows
+        if self.minimum_training_robustness_score_bps is not None:
+            value["minimum_training_robustness_score_bps"] = self.minimum_training_robustness_score_bps
+        return value
+
+
+@dataclass(frozen=True)
+class ExecutionCostSensitivityScenario:
+    name: str
+    fill_model: Literal["next_bar_open", "best_price", "one_tick_slippage"]
+    execution_cost_rules: BacktestExecutionCostRules | dict[str, Any] | None = None
+    ashare_rules: AshareBacktestRules | dict[str, Any] | None = None
+    max_training_return_degradation_bps: int | None = None
+    max_neighborhood_training_return_degradation_bps: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        rules = self.execution_cost_rules
+        value = {"name": self.name, "fill_model": self.fill_model}
+        if rules is not None:
+            value["execution_cost_rules"] = rules.to_dict() if hasattr(rules, "to_dict") else dict(rules)
+        if self.ashare_rules is not None:
+            value["ashare_rules"] = dict(self.ashare_rules)
+        if self.max_training_return_degradation_bps is not None:
+            value["max_training_return_degradation_bps"] = self.max_training_return_degradation_bps
+        if self.max_neighborhood_training_return_degradation_bps is not None:
+            value["max_neighborhood_training_return_degradation_bps"] = (
+                self.max_neighborhood_training_return_degradation_bps
+            )
+        return value
+
+
+@dataclass(frozen=True)
+class ExperimentSearchTrial:
+    ordinal: int
+    proposal: str
+    parameters: dict[str, int]
+    training_score_bps: int | None
+    training_max_drawdown_bps: int | None = None
+    training_robustness_score_bps: int | None = None
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "ExperimentSearchTrial":
+        return cls(
+            ordinal=value["ordinal"],
+            proposal=value["proposal"],
+            parameters={key: int(item) for key, item in value["parameters"].items()},
+            training_score_bps=value.get("training_score_bps"),
+            training_max_drawdown_bps=value.get("training_max_drawdown_bps"),
+            training_robustness_score_bps=value.get("training_robustness_score_bps"),
+        )
+
+
+@dataclass(frozen=True)
+class ExperimentSearchReport:
+    algorithm: Literal["random", "tpe", "tpe_kde", "pareto_tpe"]
+    seed: int
+    budget: int
+    trials: tuple[ExperimentSearchTrial, ...]
+    objective: Literal["return", "pareto_return_drawdown"] = "return"
+    neighborhood: "ExperimentNeighborhoodReport | None" = None
+    max_training_drawdown_bps: int | None = None
+    early_pruning: ExperimentEarlyPruningPlan | None = None
+    robustness_subwindows: int | None = None
+    minimum_training_robustness_score_bps: int | None = None
+    cost_robustness_passed: bool | None = None
+    neighborhood_cost_robustness_passed: bool | None = None
+    fold_searches: tuple["ExperimentFoldSearchReport", ...] = ()
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "ExperimentSearchReport":
+        return cls(
+            algorithm=value["algorithm"],
+            seed=value["seed"],
+            budget=value["budget"],
+            trials=tuple(ExperimentSearchTrial.from_dict(item) for item in value["trials"]),
+            objective=value.get("objective", "return"),
+            neighborhood=(
+                ExperimentNeighborhoodReport.from_dict(value["neighborhood"])
+                if value.get("neighborhood") is not None
+                else None
+            ),
+            max_training_drawdown_bps=value.get("max_training_drawdown_bps"),
+            early_pruning=(
+                ExperimentEarlyPruningPlan(**value["early_pruning"])
+                if value.get("early_pruning") is not None
+                else None
+            ),
+            robustness_subwindows=value.get("robustness_subwindows"),
+            minimum_training_robustness_score_bps=value.get("minimum_training_robustness_score_bps"),
+            cost_robustness_passed=value.get("cost_robustness_passed"),
+            neighborhood_cost_robustness_passed=value.get("neighborhood_cost_robustness_passed"),
+            fold_searches=tuple(
+                ExperimentFoldSearchReport.from_dict(item)
+                for item in value.get("fold_searches", ())
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class ExperimentNeighborhoodReport:
+    center_ordinal: int
+    center_parameters: dict[str, int]
+    radius: int
+    possible_neighbors: int
+    evaluated_neighbors: int
+    successful_neighbors: int
+    failed_neighbors: int
+    mean_training_score_bps: int | None
+    min_training_score_bps: int | None
+    max_training_score_bps: int | None
+    assessment: Literal[
+        "incomplete_neighborhood",
+        "no_neighbors",
+        "no_successful_neighbors",
+        "stable_positive",
+        "fragile_positive",
+        "drawdown_budget_exceeded",
+        "drawdown_budget_unverified",
+        "no_positive_training_edge",
+    ] | None = None
+    drawdown_budget_bps: int | None = None
+    center_drawdown_bps: int | None = None
+    max_neighbor_drawdown_bps: int | None = None
+    drawdown_budget_exceeded_neighbors: int = 0
+    drawdown_budget_unverified_neighbors: int = 0
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "ExperimentNeighborhoodReport":
+        return cls(
+            center_ordinal=value["center_ordinal"],
+            center_parameters={key: int(item) for key, item in value["center_parameters"].items()},
+            radius=value["radius"],
+            possible_neighbors=value["possible_neighbors"],
+            evaluated_neighbors=value["evaluated_neighbors"],
+            successful_neighbors=value["successful_neighbors"],
+            failed_neighbors=value["failed_neighbors"],
+            mean_training_score_bps=value.get("mean_training_score_bps"),
+            min_training_score_bps=value.get("min_training_score_bps"),
+            max_training_score_bps=value.get("max_training_score_bps"),
+            assessment=value.get("assessment"),
+            drawdown_budget_bps=value.get("drawdown_budget_bps"),
+            center_drawdown_bps=value.get("center_drawdown_bps"),
+            max_neighbor_drawdown_bps=value.get("max_neighbor_drawdown_bps"),
+            drawdown_budget_exceeded_neighbors=value.get("drawdown_budget_exceeded_neighbors", 0),
+            drawdown_budget_unverified_neighbors=value.get("drawdown_budget_unverified_neighbors", 0),
+        )
 
 
 @dataclass(frozen=True)
@@ -909,6 +1438,8 @@ class RunExperimentSpec:
     split_plan: ExperimentSplitPlan | None = None
     baselines: tuple[Literal["buy-and-hold", "zero-signal", "none"], ...] = ()
     strategy_kinds: tuple[str, ...] = ()
+    search: ExperimentSearchPlan | None = None
+    cost_sensitivity: tuple[ExecutionCostSensitivityScenario, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         value = {
@@ -925,6 +1456,10 @@ class RunExperimentSpec:
             value["baselines"] = list(self.baselines)
         if self.strategy_kinds:
             value["strategy_kinds"] = sorted(self.strategy_kinds)
+        if self.search is not None:
+            value["search"] = self.search.to_dict()
+        if self.cost_sensitivity:
+            value["cost_sensitivity"] = [scenario.to_dict() for scenario in self.cost_sensitivity]
         return value
 
 
@@ -953,9 +1488,12 @@ class RunMultiMarketExperimentSpec:
     experiment_id: str
     target_strategy_id: str
     base: MultiMarketBacktestSpec
-    parameter_space: tuple[ExperimentParameterSpace, ...]
+    parameter_space: tuple[ExperimentParameterSpace, ...] = ()
     schema_version: int = 1
     strategy_kinds: tuple[str, ...] = ()
+    callback_parameter_space: tuple[CallbackParameterSpace, ...] = ()
+    split_plan: ExperimentSplitPlan | None = None
+    search: ExperimentSearchPlan | None = None
 
     def to_dict(self) -> dict[str, Any]:
         value = {
@@ -967,6 +1505,14 @@ class RunMultiMarketExperimentSpec:
         }
         if self.strategy_kinds:
             value["strategy_kinds"] = sorted(self.strategy_kinds)
+        if self.callback_parameter_space:
+            value["callback_parameter_space"] = [
+                dimension.to_dict() for dimension in self.callback_parameter_space
+            ]
+        if self.split_plan is not None:
+            value["split_plan"] = self.split_plan.to_dict()
+        if self.search is not None:
+            value["search"] = self.search.to_dict()
         return value
 
 
@@ -975,10 +1521,10 @@ class RunMultiMarketDepthExperimentSpec:
     experiment_id: str
     target_strategy_id: str
     base: MultiMarketDepthBacktestSpec
-    parameter_space: tuple[ExperimentParameterSpace, ...]
+    parameter_space: tuple[ExperimentParameterSpace, ...] = ()
     schema_version: int = 1
     strategy_kinds: tuple[str, ...] = ()
-    callback_parameter_space: tuple[ExperimentParameterSpace, ...] = ()
+    callback_parameter_space: tuple[CallbackParameterSpace, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         value = {
@@ -1062,12 +1608,28 @@ class RunDepthExperimentSpec:
 
 
 @dataclass(frozen=True)
+class ExperimentCandidatePruning:
+    processed_bars: int
+    observed_max_drawdown_bps: int
+    max_training_drawdown_bps: int
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "ExperimentCandidatePruning":
+        return cls(
+            processed_bars=value["processed_bars"],
+            observed_max_drawdown_bps=value["observed_max_drawdown_bps"],
+            max_training_drawdown_bps=value["max_training_drawdown_bps"],
+        )
+
+
+@dataclass(frozen=True)
 class ExperimentCandidateResult:
     ordinal: int
     parameters: dict[str, int]
     outcome: BacktestOutcome | None
     error: str | None
     strategy_kind: str | None = None
+    pruning: ExperimentCandidatePruning | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ExperimentCandidateResult":
@@ -1078,6 +1640,172 @@ class ExperimentCandidateResult:
             outcome=BacktestOutcome.from_dict(raw_outcome) if raw_outcome is not None else None,
             error=value.get("error"),
             strategy_kind=value.get("strategy_kind"),
+            pruning=(
+                ExperimentCandidatePruning.from_dict(value["pruning"])
+                if value.get("pruning") is not None
+                else None
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class ExperimentFoldSearchReport:
+    fold: int
+    seed: int
+    train_range: tuple[int, int]
+    test_range: tuple[int, int]
+    trials: tuple[ExperimentSearchTrial, ...]
+    candidates: tuple[ExperimentCandidateResult, ...]
+    selected_ordinal: int | None
+    selected_run_manifest: str | None
+    neighborhood: ExperimentNeighborhoodReport | None = None
+    cost_sensitivity: tuple["ExecutionCostSensitivityResult", ...] = ()
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "ExperimentFoldSearchReport":
+        return cls(
+            fold=value["fold"],
+            seed=value["seed"],
+            train_range=tuple(value["train_range"]),
+            test_range=tuple(value["test_range"]),
+            trials=tuple(ExperimentSearchTrial.from_dict(item) for item in value["trials"]),
+            candidates=tuple(ExperimentCandidateResult.from_dict(item) for item in value["candidates"]),
+            selected_ordinal=value.get("selected_ordinal"),
+            selected_run_manifest=value.get("selected_run_manifest"),
+            neighborhood=(
+                ExperimentNeighborhoodReport.from_dict(value["neighborhood"])
+                if value.get("neighborhood") is not None
+                else None
+            ),
+            cost_sensitivity=tuple(
+                ExecutionCostSensitivityResult.from_dict(item)
+                for item in value.get("cost_sensitivity", ())
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class ExecutionCostSensitivityFoldDelta:
+    fold: int
+    train_range: tuple[int, int]
+    test_range: tuple[int, int]
+    training_return_delta_bps: int
+    training_drawdown_delta_bps: int
+    out_of_sample_return_delta_bps: int
+    out_of_sample_drawdown_delta_bps: int
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "ExecutionCostSensitivityFoldDelta":
+        return cls(
+            fold=value["fold"],
+            train_range=tuple(value["train_range"]),
+            test_range=tuple(value["test_range"]),
+            training_return_delta_bps=value["training_return_delta_bps"],
+            training_drawdown_delta_bps=value["training_drawdown_delta_bps"],
+            out_of_sample_return_delta_bps=value["out_of_sample_return_delta_bps"],
+            out_of_sample_drawdown_delta_bps=value["out_of_sample_drawdown_delta_bps"],
+        )
+
+
+@dataclass(frozen=True)
+class ExecutionCostSensitivityNeighborResult:
+    ordinal: int
+    parameters: dict[str, int]
+    fold_deltas: tuple[ExecutionCostSensitivityFoldDelta, ...]
+    cost_robustness_passed: bool
+    outcome: BacktestOutcome | None
+    error: str | None
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "ExecutionCostSensitivityNeighborResult":
+        raw_outcome = value.get("outcome")
+        return cls(
+            ordinal=value["ordinal"],
+            parameters={key: int(item) for key, item in value["parameters"].items()},
+            fold_deltas=tuple(
+                ExecutionCostSensitivityFoldDelta.from_dict(item)
+                for item in value.get("fold_deltas", ())
+            ),
+            cost_robustness_passed=value["cost_robustness_passed"],
+            outcome=BacktestOutcome.from_dict(raw_outcome) if raw_outcome is not None else None,
+            error=value.get("error"),
+        )
+
+
+@dataclass(frozen=True)
+class ExecutionCostSensitivityNeighborhoodResult:
+    radius: int
+    possible_neighbors: int
+    evaluated_neighbors: int
+    successful_neighbors: int
+    passed_neighbors: int
+    complete: bool
+    passed: bool
+    candidates: tuple[ExecutionCostSensitivityNeighborResult, ...]
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "ExecutionCostSensitivityNeighborhoodResult":
+        return cls(
+            radius=value["radius"],
+            possible_neighbors=value["possible_neighbors"],
+            evaluated_neighbors=value["evaluated_neighbors"],
+            successful_neighbors=value["successful_neighbors"],
+            passed_neighbors=value["passed_neighbors"],
+            complete=value["complete"],
+            passed=value["passed"],
+            candidates=tuple(
+                ExecutionCostSensitivityNeighborResult.from_dict(item)
+                for item in value.get("candidates", ())
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class ExecutionCostSensitivityResult:
+    selected_ordinal: int
+    name: str
+    fill_model: str
+    return_delta_bps: int | None
+    drawdown_delta_bps: int | None
+    outcome: BacktestOutcome | None
+    error: str | None
+    execution_cost_rules: dict[str, Any] | None = None
+    ashare_rules: dict[str, Any] | None = None
+    fold_deltas: tuple[ExecutionCostSensitivityFoldDelta, ...] = ()
+    max_training_return_degradation_bps: int | None = None
+    cost_robustness_passed: bool | None = None
+    max_neighborhood_training_return_degradation_bps: int | None = None
+    neighborhood_cost_robustness: ExecutionCostSensitivityNeighborhoodResult | None = None
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "ExecutionCostSensitivityResult":
+        raw_outcome = value.get("outcome")
+        return cls(
+            selected_ordinal=value["selected_ordinal"],
+            name=value["name"],
+            fill_model=value["fill_model"],
+            return_delta_bps=value.get("return_delta_bps"),
+            drawdown_delta_bps=value.get("drawdown_delta_bps"),
+            outcome=BacktestOutcome.from_dict(raw_outcome) if raw_outcome is not None else None,
+            error=value.get("error"),
+            execution_cost_rules=value.get("execution_cost_rules"),
+            ashare_rules=value.get("ashare_rules"),
+            fold_deltas=tuple(
+                ExecutionCostSensitivityFoldDelta.from_dict(item)
+                for item in value.get("fold_deltas", ())
+            ),
+            max_training_return_degradation_bps=value.get("max_training_return_degradation_bps"),
+            cost_robustness_passed=value.get("cost_robustness_passed"),
+            max_neighborhood_training_return_degradation_bps=value.get(
+                "max_neighborhood_training_return_degradation_bps"
+            ),
+            neighborhood_cost_robustness=(
+                ExecutionCostSensitivityNeighborhoodResult.from_dict(
+                    value["neighborhood_cost_robustness"]
+                )
+                if value.get("neighborhood_cost_robustness") is not None
+                else None
+            ),
         )
 
 
@@ -1090,7 +1818,12 @@ class ExperimentFoldReport:
     selected_parameters: dict[str, int]
     in_sample_return_bps: int
     out_of_sample_return_bps: int
+    selected_training_robustness_score_bps: int | None = None
+    selected_training_max_drawdown_bps: int | None = None
+    max_training_drawdown_bps: int | None = None
     selected_strategy_kind: str | None = None
+    purge_range: tuple[int, int] | None = None
+    embargo_range: tuple[int, int] | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ExperimentFoldReport":
@@ -1102,8 +1835,27 @@ class ExperimentFoldReport:
             selected_parameters=value["selected_parameters"],
             in_sample_return_bps=value["in_sample_return_bps"],
             out_of_sample_return_bps=value["out_of_sample_return_bps"],
+            selected_training_robustness_score_bps=value.get("selected_training_robustness_score_bps"),
+            selected_training_max_drawdown_bps=value.get("selected_training_max_drawdown_bps"),
+            max_training_drawdown_bps=value.get("max_training_drawdown_bps"),
             selected_strategy_kind=value.get("selected_strategy_kind"),
+            purge_range=tuple(value["purge_range"]) if value.get("purge_range") else None,
+            embargo_range=tuple(value["embargo_range"]) if value.get("embargo_range") else None,
         )
+
+
+@dataclass(frozen=True)
+class ExperimentCrossFoldRobustness:
+    folds_evaluated: int
+    positive_training_folds: int
+    minimum_training_return_bps: int
+    worst_training_drawdown_bps: int
+    positive_out_of_sample_folds: int
+    minimum_out_of_sample_return_bps: int
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "ExperimentCrossFoldRobustness":
+        return cls(**value)
 
 
 @dataclass(frozen=True)
@@ -1112,6 +1864,7 @@ class ExperimentOutOfSampleReport:
     in_sample_return_bps: int
     out_of_sample_return_bps: int
     degradation_bps: int
+    cross_fold_robustness: ExperimentCrossFoldRobustness | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ExperimentOutOfSampleReport":
@@ -1120,6 +1873,11 @@ class ExperimentOutOfSampleReport:
             in_sample_return_bps=value["in_sample_return_bps"],
             out_of_sample_return_bps=value["out_of_sample_return_bps"],
             degradation_bps=value["degradation_bps"],
+            cross_fold_robustness=(
+                ExperimentCrossFoldRobustness.from_dict(value["cross_fold_robustness"])
+                if value.get("cross_fold_robustness") is not None
+                else None
+            ),
         )
 
 
@@ -1150,8 +1908,18 @@ class RunExperimentResult:
     candidates: tuple[ExperimentCandidateResult, ...]
     comparison: CompareRunsResult | None
     artifact_path: str
+    canonical_run_spec_json: str | None = None
+    canonical_run_spec_fingerprint: str | None = None
+    input_data_fingerprint: str | None = None
+    result_hash: str | None = None
+    run_manifest: str | None = None
+    run_record: str | None = None
+    artifact_locations: dict[str, str] | None = None
+    pruned_candidates: int = 0
     out_of_sample: ExperimentOutOfSampleReport | None = None
     baselines: tuple[ExperimentBaselineReport, ...] = ()
+    search: ExperimentSearchReport | None = None
+    cost_sensitivity: tuple[ExecutionCostSensitivityResult, ...] = ()
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "RunExperimentResult":
@@ -1164,6 +1932,14 @@ class RunExperimentResult:
             succeeded_candidates=value["succeeded_candidates"],
             failed_candidates=value["failed_candidates"],
             spec_fingerprint=value["spec_fingerprint"],
+            canonical_run_spec_json=value.get("canonical_run_spec_json"),
+            canonical_run_spec_fingerprint=value.get("canonical_run_spec_fingerprint"),
+            input_data_fingerprint=value.get("input_data_fingerprint"),
+            result_hash=value.get("result_hash"),
+            run_manifest=value.get("run_manifest"),
+            run_record=value.get("run_record"),
+            artifact_locations=value.get("artifact_locations"),
+            pruned_candidates=value.get("pruned_candidates", 0),
             candidates=tuple(
                 ExperimentCandidateResult.from_dict(item) for item in value["candidates"]
             ),
@@ -1176,6 +1952,15 @@ class RunExperimentResult:
             ),
             baselines=tuple(
                 ExperimentBaselineReport.from_dict(item) for item in value.get("baselines", ())
+            ),
+            search=(
+                ExperimentSearchReport.from_dict(value["search"])
+                if value.get("search") is not None
+                else None
+            ),
+            cost_sensitivity=tuple(
+                ExecutionCostSensitivityResult.from_dict(item)
+                for item in value.get("cost_sensitivity", ())
             ),
         )
 
@@ -1261,9 +2046,20 @@ class DepthBacktestSpec:
     account_base_source: str | None = None
     signal_source: str | None = None
     signal_declared_unused: str | None = None
+    funding_bps: int = 0
+    funding_events: tuple[FundingRateEvent | dict[str, Any], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         payload = {**asdict(self), "strategy": self.strategy.to_dict()}
+        if self.funding_bps == 0:
+            payload.pop("funding_bps", None)
+        if self.funding_events:
+            payload["funding_events"] = [
+                event.to_dict() if hasattr(event, "to_dict") else dict(event)
+                for event in self.funding_events
+            ]
+        else:
+            payload.pop("funding_events", None)
         if isinstance(self.market_making, MarketMakingSpec):
             payload["market_making"] = self.market_making.to_dict()
         if isinstance(self.portfolio, PortfolioBacktestConfig):
@@ -1318,6 +2114,7 @@ class DepthBacktestOutcome:
     account_id: str | None = None
     snapshots: int = 0
     manifest_digest: str = ""
+    manifest_run_id: str | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "DepthBacktestOutcome":
@@ -1366,6 +2163,13 @@ class RunDepthExperimentResult:
     candidates: tuple[DepthExperimentCandidateResult, ...]
     ranking: tuple[DepthExperimentRankedCandidate, ...]
     artifact_path: str
+    canonical_run_spec_json: str | None = None
+    canonical_run_spec_fingerprint: str | None = None
+    input_data_fingerprint: str | None = None
+    result_hash: str | None = None
+    run_manifest: str | None = None
+    run_record: str | None = None
+    artifact_locations: dict[str, str] | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "RunDepthExperimentResult":
@@ -1380,6 +2184,13 @@ class RunDepthExperimentResult:
             candidates=tuple(DepthExperimentCandidateResult.from_dict(item) for item in value["candidates"]),
             ranking=tuple(DepthExperimentRankedCandidate(**item) for item in value["ranking"]),
             artifact_path=value["artifact_path"],
+            canonical_run_spec_json=value.get("canonical_run_spec_json"),
+            canonical_run_spec_fingerprint=value.get("canonical_run_spec_fingerprint"),
+            input_data_fingerprint=value.get("input_data_fingerprint"),
+            result_hash=value.get("result_hash"),
+            run_manifest=value.get("run_manifest"),
+            run_record=value.get("run_record"),
+            artifact_locations=value.get("artifact_locations"),
         )
 
 
@@ -1421,16 +2232,25 @@ class TradingInstrumentSpec:
 
 @dataclass(frozen=True)
 class FundingRateEvent:
-    """Historical derivative funding rate applied at its UTC 8-hour settlement."""
+    """Historical derivative funding rate at an exchange-declared settlement time."""
 
     instrument: InstrumentId | dict[str, str]
     settlement_ts: int
     rate_bps: int
+    funding_interval_ms: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
         if isinstance(self.instrument, InstrumentId):
             value["instrument"] = self.instrument.to_dict()
+        if self.funding_interval_ms is None:
+            value.pop("funding_interval_ms", None)
+        elif (
+            isinstance(self.funding_interval_ms, bool)
+            or not isinstance(self.funding_interval_ms, int)
+            or not 60_000 <= self.funding_interval_ms <= 86_400_000
+        ):
+            raise ValueError("funding_interval_ms must be between 60000 and 86400000")
         return value
 
 
@@ -1444,6 +2264,8 @@ class MultiLegBacktestSpec:
     reference_initial_cash_raw: int
     output_dir: str
     strategy: BuiltinStrategySpec
+    primary_initial_cash_exact: dict[str, Any] | None = None
+    reference_initial_cash_exact: dict[str, Any] | None = None
     seed: int = 0
     primary_market_spec: TradingInstrumentSpec | dict[str, Any] | None = None
     reference_market_spec: TradingInstrumentSpec | dict[str, Any] | None = None
@@ -1461,8 +2283,30 @@ class MultiLegBacktestSpec:
     primary_dataset_manifest_path: str | None = None
     reference_dataset_manifest_path: str | None = None
 
+    def with_initial_cash_exact(
+        self, primary: str | int | Decimal, reference: str | int | Decimal
+    ) -> "MultiLegBacktestSpec":
+        """Return a v2 spec with exact leg principals and toward-zero raw projections."""
+        primary_wire, primary_raw = _multi_leg_exact_cash(primary)
+        reference_wire, reference_raw = _multi_leg_exact_cash(reference)
+        if primary_raw < 0 or reference_raw < 0:
+            raise ValueError("exact multi-leg principal raw projection must be non-negative")
+        _validate_multi_leg_exact_cash_total(primary_wire, reference_wire)
+        return replace(
+            self,
+            schema_version=2,
+            primary_initial_cash_raw=primary_raw,
+            reference_initial_cash_raw=reference_raw,
+            primary_initial_cash_exact=primary_wire,
+            reference_initial_cash_exact=reference_wire,
+        )
+
     def to_dict(self) -> dict[str, Any]:
         payload = {**asdict(self), "strategy": self.strategy.to_dict()}
+        if self.primary_initial_cash_exact is None:
+            payload.pop("primary_initial_cash_exact")
+        if self.reference_initial_cash_exact is None:
+            payload.pop("reference_initial_cash_exact")
         if self.funding_events:
             payload["funding_events"] = [
                 event.to_dict() if isinstance(event, FundingRateEvent) else dict(event)
@@ -1477,6 +2321,47 @@ class MultiLegBacktestSpec:
         if self.reference_dataset_manifest_path is None:
             payload.pop("reference_dataset_manifest_path")
         return payload
+
+
+def _multi_leg_exact_cash(value: str | int | Decimal) -> tuple[dict[str, Any], int]:
+    try:
+        decimal = value if isinstance(value, Decimal) else Decimal(str(value))
+    except (InvalidOperation, ValueError) as error:
+        raise ValueError("exact multi-leg principal must be a decimal value") from error
+    if not decimal.is_finite() or decimal <= 0:
+        raise ValueError("exact multi-leg principal must be finite and positive")
+    sign, digits, exponent = decimal.as_tuple()
+    coefficient = int("".join(str(digit) for digit in digits) or "0")
+    if sign:
+        coefficient = -coefficient
+    scale = max(-exponent, 0)
+    if exponent > 0:
+        coefficient *= 10**exponent
+    while scale and coefficient % 10 == 0:
+        coefficient //= 10
+        scale -= 1
+    if scale > 18 or coefficient <= 0 or coefficient > (1 << 127) - 1:
+        raise ValueError("exact multi-leg principal is outside supported decimal range")
+    raw = coefficient * 10 ** (9 - scale) if scale <= 9 else coefficient // 10 ** (scale - 9)
+    if raw > (1 << 127) - 1:
+        raise ValueError("exact multi-leg principal raw projection is outside i128 range")
+    return {"coefficient": str(coefficient), "scale": scale}, raw
+
+
+def _validate_multi_leg_exact_cash_total(
+    primary: Mapping[str, Any], reference: Mapping[str, Any]
+) -> None:
+    scale = max(int(primary["scale"]), int(reference["scale"]))
+    total = int(primary["coefficient"]) * 10 ** (scale - int(primary["scale"]))
+    total += int(reference["coefficient"]) * 10 ** (scale - int(reference["scale"]))
+    while scale and total % 10 == 0:
+        total //= 10
+        scale -= 1
+    if scale > 18 or total <= 0 or total > (1 << 127) - 1:
+        raise ValueError("combined exact multi-leg principal is outside supported decimal range")
+    raw = total * 10 ** (9 - scale) if scale <= 9 else total // 10 ** (scale - 9)
+    if raw > (1 << 127) - 1:
+        raise ValueError("combined exact multi-leg principal raw projection is outside i128 range")
 
 
 @dataclass(frozen=True)
@@ -1539,6 +2424,13 @@ class RunMultiLegExperimentResult:
     candidates: tuple[MultiLegExperimentCandidateResult, ...]
     ranking: tuple[MultiLegExperimentRankedCandidate, ...]
     artifact_path: str
+    canonical_run_spec_json: str | None = None
+    canonical_run_spec_fingerprint: str | None = None
+    input_data_fingerprint: str | None = None
+    result_hash: str | None = None
+    run_manifest: str | None = None
+    run_record: str | None = None
+    artifact_locations: dict[str, str] | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "RunMultiLegExperimentResult":
@@ -1556,6 +2448,13 @@ class RunMultiLegExperimentResult:
             ),
             ranking=tuple(MultiLegExperimentRankedCandidate(**item) for item in value["ranking"]),
             artifact_path=value["artifact_path"],
+            canonical_run_spec_json=value.get("canonical_run_spec_json"),
+            canonical_run_spec_fingerprint=value.get("canonical_run_spec_fingerprint"),
+            input_data_fingerprint=value.get("input_data_fingerprint"),
+            result_hash=value.get("result_hash"),
+            run_manifest=value.get("run_manifest"),
+            run_record=value.get("run_record"),
+            artifact_locations=value.get("artifact_locations"),
         )
 
 
@@ -1590,6 +2489,58 @@ class MultiMarketExperimentRankedCandidate:
 
 
 @dataclass(frozen=True)
+class MultiMarketExperimentFoldCandidateFailure:
+    fold: int
+    ordinal: int
+    error: str
+
+
+@dataclass(frozen=True)
+class MultiMarketExperimentFoldSearchReport:
+    fold: int
+    seed: int
+    train_range: tuple[int, int]
+    test_range: tuple[int, int]
+    trials: tuple[ExperimentSearchTrial, ...]
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "MultiMarketExperimentFoldSearchReport":
+        return cls(
+            fold=value["fold"],
+            seed=value["seed"],
+            train_range=tuple(value["train_range"]),
+            test_range=tuple(value["test_range"]),
+            trials=tuple(ExperimentSearchTrial.from_dict(item) for item in value["trials"]),
+        )
+
+
+@dataclass(frozen=True)
+class MultiMarketExperimentSearchReport:
+    algorithm: Literal["random", "tpe", "tpe_kde", "pareto_tpe"]
+    objective: Literal["return", "pareto_return_drawdown"]
+    seed: int
+    budget: int
+    fold_local_search: bool
+    fold_searches: tuple[MultiMarketExperimentFoldSearchReport, ...]
+    max_training_drawdown_bps: int | None = None
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "MultiMarketExperimentSearchReport":
+        return cls(
+            algorithm=value["algorithm"],
+            objective=value["objective"],
+            seed=value["seed"],
+            budget=value["budget"],
+            max_training_drawdown_bps=value.get("max_training_drawdown_bps"),
+            fold_local_search=value["fold_local_search"],
+            fold_searches=tuple(
+                MultiMarketExperimentFoldSearchReport.from_dict(item)
+                for item in value["fold_searches"]
+            ),
+        )
+
+
+@dataclass(frozen=True)
 class RunMultiMarketExperimentResult:
     schema_version: int
     experiment_id: str
@@ -1602,6 +2553,16 @@ class RunMultiMarketExperimentResult:
     candidates: tuple[MultiMarketExperimentCandidateResult, ...]
     ranking: tuple[MultiMarketExperimentRankedCandidate, ...]
     artifact_path: str
+    out_of_sample: ExperimentOutOfSampleReport | None = None
+    fold_candidate_failures: tuple[MultiMarketExperimentFoldCandidateFailure, ...] = ()
+    search: MultiMarketExperimentSearchReport | None = None
+    canonical_run_spec_json: str | None = None
+    canonical_run_spec_fingerprint: str | None = None
+    input_data_fingerprint: str | None = None
+    result_hash: str | None = None
+    run_manifest: str | None = None
+    run_record: str | None = None
+    artifact_locations: dict[str, str] | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "RunMultiMarketExperimentResult":
@@ -1616,7 +2577,28 @@ class RunMultiMarketExperimentResult:
             failed_candidates=value["failed_candidates"],
             candidates=tuple(MultiMarketExperimentCandidateResult.from_dict(item) for item in value["candidates"]),
             ranking=tuple(MultiMarketExperimentRankedCandidate(**item) for item in value["ranking"]),
+            out_of_sample=(
+                ExperimentOutOfSampleReport.from_dict(value["out_of_sample"])
+                if value.get("out_of_sample") is not None
+                else None
+            ),
+            fold_candidate_failures=tuple(
+                MultiMarketExperimentFoldCandidateFailure(**item)
+                for item in value.get("fold_candidate_failures", ())
+            ),
+            search=(
+                MultiMarketExperimentSearchReport.from_dict(value["search"])
+                if value.get("search") is not None
+                else None
+            ),
             artifact_path=value["artifact_path"],
+            canonical_run_spec_json=value.get("canonical_run_spec_json"),
+            canonical_run_spec_fingerprint=value.get("canonical_run_spec_fingerprint"),
+            input_data_fingerprint=value.get("input_data_fingerprint"),
+            result_hash=value.get("result_hash"),
+            run_manifest=value.get("run_manifest"),
+            run_record=value.get("run_record"),
+            artifact_locations=value.get("artifact_locations"),
         )
 
 
@@ -1663,6 +2645,13 @@ class RunMultiMarketDepthExperimentResult:
     candidates: tuple[MultiMarketDepthExperimentCandidateResult, ...]
     ranking: tuple[MultiMarketDepthExperimentRankedCandidate, ...]
     artifact_path: str
+    canonical_run_spec_json: str | None = None
+    canonical_run_spec_fingerprint: str | None = None
+    input_data_fingerprint: str | None = None
+    result_hash: str | None = None
+    run_manifest: str | None = None
+    run_record: str | None = None
+    artifact_locations: dict[str, str] | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "RunMultiMarketDepthExperimentResult":
@@ -1678,1201 +2667,68 @@ class RunMultiMarketDepthExperimentResult:
             candidates=tuple(MultiMarketDepthExperimentCandidateResult.from_dict(item) for item in value["candidates"]),
             ranking=tuple(MultiMarketDepthExperimentRankedCandidate(**item) for item in value["ranking"]),
             artifact_path=value["artifact_path"],
+            canonical_run_spec_json=value.get("canonical_run_spec_json"),
+            canonical_run_spec_fingerprint=value.get("canonical_run_spec_fingerprint"),
+            input_data_fingerprint=value.get("input_data_fingerprint"),
+            result_hash=value.get("result_hash"),
+            run_manifest=value.get("run_manifest"),
+            run_record=value.get("run_record"),
+            artifact_locations=value.get("artifact_locations"),
         )
 
 
-@dataclass(frozen=True)
-class TradeCommand:
-    """Existing Rust control-plane command contract; no Python execution logic is added."""
 
-    command_id: int
-    request_id: str
-    operator_id: str
-    reason: str
-    kind: Literal[
-        "SubmitOrder", "PauseStrategy", "ResumeStrategy", "ChangeRiskLimit",
-        "CancelOrder", "ReconcileAccount", "RetryJob", "SwitchVenue",
-    ]
-    target: str
-    payload: dict[str, str]
-    permission: Literal["ReadOnly", "Research", "Trading", "Admin"] = "Trading"
-    dry_run: bool = False
 
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
 
 
-class _HttpJsonClient:
-    """Shared HTTP transport for the Rust API facades; contains no domain logic."""
 
-    def __init__(
-        self,
-        base_url: str,
-        *,
-        headers: Mapping[str, str] | None = None,
-        ssl_context: SSLContext | None = None,
-        timeout: float = 30.0,
-    ):
-        parsed = urlsplit(base_url)
-        if parsed.scheme not in ("http", "https") or not parsed.netloc or parsed.query or parsed.fragment:
-            raise ValueError("base_url must be an http(s) origin/path without query or fragment")
-        if not math.isfinite(timeout) or timeout <= 0:
-            raise ValueError("timeout must be finite and positive")
-        request_headers = dict(headers or {})
-        for name, value in request_headers.items():
-            if (
-                not isinstance(name, str)
-                or not name.strip()
-                or not isinstance(value, str)
-                or "\r" in name
-                or "\n" in name
-                or "\r" in value
-                or "\n" in value
-            ):
-                raise ValueError("headers must contain valid string names and values")
-            if name.casefold() == "content-type":
-                raise ValueError("Content-Type is managed by the Qianxing API client")
-        self.base_url = base_url.rstrip("/")
-        self.headers = request_headers
-        self.ssl_context = ssl_context
-        self.timeout = timeout
 
-    def _request_json(
-        self,
-        path: str,
-        *,
-        method: str,
-        payload: Any = None,
-    ) -> dict[str, Any]:
-        value = self._request_json_value(path, method=method, payload=payload)
-        if not isinstance(value, dict):
-            raise QianxingError("Rust API returned a non-object JSON document")
-        return value
-
-    def _request_json_value(
-        self,
-        path: str,
-        *,
-        method: str,
-        payload: Any = None,
-    ) -> Any:
-        data = None if payload is None else _encode_payload(payload).encode("utf-8")
-        request = Request(
-            f"{self.base_url}{path}",
-            data=data,
-            headers=(
-                {**self.headers, "Content-Type": "application/json"}
-                if data is not None
-                else self.headers
-            ),
-            method=method,
-        )
-        try:
-            with urlopen(request, timeout=self.timeout, context=self.ssl_context) as response:
-                body = response.read().decode("utf-8")
-                value = json.loads(body) if body else {}
-                return value
-        except HTTPError as exc:
-            raw = exc.read().decode("utf-8", errors="replace")
-            try:
-                document = json.loads(raw)
-            except ValueError:
-                document = {"message": raw, "status": exc.code}
-            if isinstance(document, dict):
-                category = document.get("category")
-                if category in _APP_ERRORS:
-                    raise _APP_ERRORS[category](document.get("message", raw), payload=document) from exc
-                message = document.get("message", document.get("error", raw))
-                raise QianxingError(str(message), payload=document) from exc
-            raise QianxingError(raw, payload={"status": exc.code}) from exc
-        except (URLError, TimeoutError, OSError) as exc:
-            raise QianxingError(f"Rust API request failed: {exc}") from exc
-
-
-class TradeWorkflowClient(_HttpJsonClient):
-    """Thin HTTP client for the Rust API's authenticated Paper/Live control workflows."""
-
-    def __init__(
-        self,
-        base_url: str,
-        workflow: Literal["paper", "live"],
-        *,
-        headers: Mapping[str, str] | None = None,
-        ssl_context: SSLContext | None = None,
-        timeout: float = 30.0,
-    ):
-        if workflow not in ("paper", "live"):
-            raise ValueError("workflow must be 'paper' or 'live'")
-        if workflow == "live" and urlsplit(base_url).scheme != "https":
-            raise ValueError("LiveClient requires HTTPS for every command request")
-        super().__init__(
-            base_url, headers=headers, ssl_context=ssl_context, timeout=timeout
-        )
-        self.workflow = workflow
-
-    def submit(self, command: TradeCommand | dict[str, Any]) -> dict[str, Any]:
-        """Submit through qx-api; Rust authenticates, validates, persists, and enqueues it."""
-        command_document = command.to_dict() if isinstance(command, TradeCommand) else command
-        # 工作流 → 路由键写成两个字面量分支。原写法 `APP_ROUTE_TEMPLATES[f"{self.workflow}_commands"]`
-        # 把「工作流名」与「路由键名」用一条没写在任何地方的命名约定绑在一起：两个键在源码里
-        # 没有字面量读者（门禁核不出它们到底有没有被用上），键改名时也只会拿到运行时 KeyError。
-        route = (
-            APP_ROUTE_TEMPLATES["paper_commands"]
-            if self.workflow == "paper"
-            else APP_ROUTE_TEMPLATES["live_commands"]
-        )
-        return self._request_json(
-            route,
-            method="POST",
-            payload={"schema_version": 1, "workflow": self.workflow, "command": command_document},
-        )
-
-    async def async_submit(self, command: TradeCommand | dict[str, Any]) -> dict[str, Any]:
-        """Submit through the Rust workflow without blocking the event loop.
-
-        Cancelling this coroutine does not undo a request already sent to the server; callers
-        must retain the command ``request_id`` and query the audit/run state after uncertainty.
-        """
-        return await asyncio.to_thread(self.submit, command)
-
-
-class PaperClient(TradeWorkflowClient):
-    def __init__(
-        self,
-        base_url: str,
-        *,
-        headers: Mapping[str, str] | None = None,
-        ssl_context: SSLContext | None = None,
-        timeout: float = 30.0,
-    ):
-        super().__init__(
-            base_url, "paper", headers=headers, ssl_context=ssl_context, timeout=timeout
-        )
-
-
-class LiveClient(TradeWorkflowClient):
-    def __init__(
-        self,
-        base_url: str,
-        *,
-        headers: Mapping[str, str] | None = None,
-        ssl_context: SSLContext | None = None,
-        timeout: float = 30.0,
-    ):
-        super().__init__(
-            base_url, "live", headers=headers, ssl_context=ssl_context, timeout=timeout
-        )
-
-
-class RunHandle(Generic[_ResultT]):
-    """Cooperative Rust worker handle for Bar, multi-leg, depth, and experiment runs."""
-
-    def __init__(self, native_handle: Any, result_type: type[_ResultT]):
-        self._native = native_handle
-        self._result_type = result_type
-
-    @property
-    def run_id(self) -> str:
-        return str(self._native.run_id)
-
-    @property
-    def status(self) -> str:
-        return str(self._native.status)
-
-    def cancel(self) -> None:
-        """Request cooperative cancellation at the next Rust engine boundary."""
-        self._native.cancel()
-
-    def wait(self, timeout_ms: int | None = DEFAULT_RUN_WAIT_MS) -> str:
-        """Wait for a terminal state or timeout; a timeout does not cancel the run.
-
-        The default is finite (``DEFAULT_RUN_WAIT_MS``): plan §9 wants ``wait()``
-        bounded unless the caller *explicitly* asks to wait forever, which is
-        spelled ``timeout_ms=None``. Cancellation stays cooperative either way —
-        ``cancel()`` from another thread ends the wait.
-        """
-        if timeout_ms is not None and timeout_ms < 0:
-            raise ValueError("timeout_ms must be non-negative")
-        return str(self._native.wait(timeout_ms))
-
-    def events(self, after_seq: int = 0) -> list["RunEvent"]:
-        """Read lifecycle events from the Rust run worker after an exclusive cursor."""
-        if isinstance(after_seq, bool) or not isinstance(after_seq, int) or after_seq < 0:
-            raise ValueError("after_seq must be a non-negative integer")
-        try:
-            return [
-                RunEvent.from_dict(item)
-                for item in json.loads(self._native.events_json(after_seq))
-            ]
-        except Exception as exc:
-            raise _translate_native_error(exc) from exc
-
-    def result(self) -> _ResultT | None:
-        """Take the outcome once. Return None while running or after cancellation."""
-        try:
-            encoded = self._native.result_json()
-        except Exception as exc:
-            raise _translate_native_error(exc) from exc
-        if encoded is None:
-            return None
-        return self._result_type.from_dict(json.loads(encoded))
-
-
-@dataclass(frozen=True)
-class RunEvent:
-    seq: int
-    run_id: str
-    kind: Literal["started", "cancellation_requested", "succeeded", "cancelled", "failed"]
-    status: Literal["running", "cancelling", "succeeded", "cancelled", "failed"]
-
-    @classmethod
-    def from_dict(cls, value: dict[str, Any]) -> "RunEvent":
-        return cls(**value)
-
-
-class AsyncRunHandle(Generic[_ResultT]):
-    """Asyncio view over the same cooperative Rust run handle."""
-
-    def __init__(self, handle: RunHandle[_ResultT]):
-        self._handle = handle
-
-    @property
-    def run_id(self) -> str:
-        return self._handle.run_id
-
-    async def async_status(self) -> str:
-        return await asyncio.to_thread(lambda: self._handle.status)
-
-    async def async_cancel(self) -> None:
-        await asyncio.to_thread(self._handle.cancel)
-
-    async def async_wait(self, timeout: float | None = DEFAULT_RUN_WAIT_MS / 1000) -> str:
-        if timeout is not None and (not math.isfinite(timeout) or timeout < 0):
-            raise ValueError("timeout must be finite and non-negative, or None")
-        timeout_ms = None if timeout is None else math.ceil(timeout * 1000)
-        return await asyncio.to_thread(self._handle.wait, timeout_ms)
-
-    async def async_result(self) -> _ResultT | None:
-        return await asyncio.to_thread(self._handle.result)
-
-    async def async_events(self, after_seq: int = 0) -> list[RunEvent]:
-        return await asyncio.to_thread(self._handle.events, after_seq)
-
-
-class AsyncCoreClient:
-    """Non-blocking asyncio facade over local Rust application use cases.
-
-    All requests and result types are delegated to the synchronous functions above;
-    Python only moves the blocking native calls off the event loop.
-    """
-
-    async def _start(self, method: Any, spec: Any) -> AsyncRunHandle[Any]:
-        task = asyncio.create_task(asyncio.to_thread(method, spec))
-        try:
-            return AsyncRunHandle(await asyncio.shield(task))
-        except asyncio.CancelledError:
-            # Thread cancellation cannot interrupt PyO3/Rust work. Once the handle exists,
-            # request cooperative Rust cancellation before returning cancellation to caller.
-            try:
-                handle = await task
-                await asyncio.to_thread(handle.cancel)
-            except Exception:
-                pass
-            raise
-
-    async def async_validate_dataset(self, spec: DatasetSpec | dict[str, Any]) -> DatasetVerdict:
-        return await asyncio.to_thread(validate_dataset, spec)
-
-    async def async_run_backtest(self, spec: BacktestSpec | dict[str, Any]) -> BacktestOutcome:
-        return await asyncio.to_thread(run_backtest, spec)
-
-    async def async_start_backtest(self, spec: BacktestSpec | dict[str, Any]) -> AsyncRunHandle[BacktestOutcome]:
-        return await self._start(start_backtest, spec)
-
-    async def async_start_backtest_with_strategy(
-        self,
-        spec: BacktestSpec | dict[str, Any],
-        strategy: Any,
-        *,
-        strategy_id: str,
-        strategy_version: str,
-        source_sha256: str,
-    ) -> AsyncRunHandle[BacktestOutcome]:
-        def start(value: Any) -> RunHandle[BacktestOutcome]:
-            return start_backtest_with_strategy(
-                value,
-                strategy,
-                strategy_id=strategy_id,
-                strategy_version=strategy_version,
-                source_sha256=source_sha256,
-            )
-
-        return await self._start(start, spec)
-
-    async def async_run_backtest_with_strategy_slots(
-        self,
-        spec: BacktestSpec | dict[str, Any],
-        strategies: Sequence[Mapping[str, Any]],
-    ) -> BacktestOutcome:
-        return await asyncio.to_thread(run_backtest_with_strategy_slots, spec, strategies)
-
-    async def async_start_backtest_with_strategy_slots(
-        self,
-        spec: BacktestSpec | dict[str, Any],
-        strategies: Sequence[Mapping[str, Any]],
-    ) -> AsyncRunHandle[BacktestOutcome]:
-        def start(value: Any) -> RunHandle[BacktestOutcome]:
-            return start_backtest_with_strategy_slots(value, strategies)
-
-        return await self._start(start, spec)
-
-    async def async_verify_run(self, outcome: BacktestOutcome | dict[str, Any]) -> VerificationResult:
-        return await asyncio.to_thread(verify_run, outcome)
-
-    async def async_compare_runs(self, spec: CompareRunsSpec | dict[str, Any]) -> CompareRunsResult:
-        return await asyncio.to_thread(compare_runs, spec)
-
-    async def async_run_experiment(self, spec: RunExperimentSpec | dict[str, Any]) -> RunExperimentResult:
-        return await asyncio.to_thread(run_experiment, spec)
-
-    async def async_run_experiment_with_strategy(
-        self,
-        spec: RunExperimentSpec | dict[str, Any],
-        strategy_factory: Any,
-        *,
-        strategy_id: str,
-        strategy_version: str,
-        source_sha256: str,
-    ) -> RunExperimentResult:
-        return await asyncio.to_thread(
-            run_experiment_with_strategy,
-            spec,
-            strategy_factory,
-            strategy_id=strategy_id,
-            strategy_version=strategy_version,
-            source_sha256=source_sha256,
-        )
-
-    async def async_start_experiment(self, spec: RunExperimentSpec | dict[str, Any]) -> AsyncRunHandle[RunExperimentResult]:
-        return await self._start(start_experiment, spec)
-
-    async def async_start_experiment_with_strategy(
-        self,
-        spec: RunExperimentSpec | dict[str, Any],
-        strategy_factory: Any,
-        *,
-        strategy_id: str,
-        strategy_version: str,
-        source_sha256: str,
-    ) -> AsyncRunHandle[RunExperimentResult]:
-        def start(value: Any) -> RunHandle[RunExperimentResult]:
-            return start_experiment_with_strategy(
-                value,
-                strategy_factory,
-                strategy_id=strategy_id,
-                strategy_version=strategy_version,
-                source_sha256=source_sha256,
-            )
-
-        return await self._start(start, spec)
-
-    async def async_run_depth_backtest(self, spec: DepthBacktestSpec | dict[str, Any]) -> DepthBacktestOutcome:
-        return await asyncio.to_thread(run_depth_backtest, spec)
-
-    async def async_start_depth_backtest(self, spec: DepthBacktestSpec | dict[str, Any]) -> AsyncRunHandle[DepthBacktestOutcome]:
-        return await self._start(start_depth_backtest, spec)
-
-    async def async_run_depth_backtest_with_strategy(
-        self,
-        spec: DepthBacktestSpec | dict[str, Any],
-        strategy: Any,
-        *,
-        strategy_id: str,
-        strategy_version: str,
-        source_sha256: str,
-    ) -> DepthBacktestOutcome:
-        return await asyncio.to_thread(
-            run_depth_backtest_with_strategy,
-            spec,
-            strategy,
-            strategy_id=strategy_id,
-            strategy_version=strategy_version,
-            source_sha256=source_sha256,
-        )
-
-    async def async_start_depth_backtest_with_strategy(
-        self,
-        spec: DepthBacktestSpec | dict[str, Any],
-        strategy: Any,
-        *,
-        strategy_id: str,
-        strategy_version: str,
-        source_sha256: str,
-    ) -> AsyncRunHandle[DepthBacktestOutcome]:
-        def start(value: Any) -> RunHandle[DepthBacktestOutcome]:
-            return start_depth_backtest_with_strategy(
-                value,
-                strategy,
-                strategy_id=strategy_id,
-                strategy_version=strategy_version,
-                source_sha256=source_sha256,
-            )
-
-        return await self._start(start, spec)
-
-    async def async_run_depth_backtest_with_strategy_slots(
-        self,
-        spec: DepthBacktestSpec | dict[str, Any],
-        strategies: Sequence[Mapping[str, Any]],
-    ) -> DepthBacktestOutcome:
-        return await asyncio.to_thread(run_depth_backtest_with_strategy_slots, spec, strategies)
-
-    async def async_start_depth_backtest_with_strategy_slots(
-        self,
-        spec: DepthBacktestSpec | dict[str, Any],
-        strategies: Sequence[Mapping[str, Any]],
-    ) -> AsyncRunHandle[DepthBacktestOutcome]:
-        def start(value: Any) -> RunHandle[DepthBacktestOutcome]:
-            return start_depth_backtest_with_strategy_slots(value, strategies)
-
-        return await self._start(start, spec)
-
-    async def async_run_multi_leg_backtest_with_strategy(
-        self, spec: MultiLegBacktestSpec | dict[str, Any], strategy: Any, *,
-        strategy_id: str, strategy_version: str, source_sha256: str,
-    ) -> MultiLegBacktestOutcome:
-        return await asyncio.to_thread(
-            run_multi_leg_backtest_with_strategy, spec, strategy,
-            strategy_id=strategy_id, strategy_version=strategy_version,
-            source_sha256=source_sha256,
-        )
-
-    async def async_run_multi_leg_experiment_with_strategy(
-        self, spec: RunMultiLegExperimentSpec | dict[str, Any], strategy_factory: Any, *,
-        strategy_id: str, strategy_version: str, source_sha256: str,
-    ) -> RunMultiLegExperimentResult:
-        return await asyncio.to_thread(
-            run_multi_leg_experiment_with_strategy, spec, strategy_factory,
-            strategy_id=strategy_id, strategy_version=strategy_version,
-            source_sha256=source_sha256,
-        )
-
-    async def async_start_multi_leg_experiment_with_strategy(
-        self, spec: RunMultiLegExperimentSpec | dict[str, Any], strategy_factory: Any, *,
-        strategy_id: str, strategy_version: str, source_sha256: str,
-    ) -> AsyncRunHandle[RunMultiLegExperimentResult]:
-        def start(value: Any) -> RunHandle[RunMultiLegExperimentResult]:
-            return start_multi_leg_experiment_with_strategy(
-                value, strategy_factory, strategy_id=strategy_id,
-                strategy_version=strategy_version, source_sha256=source_sha256,
-            )
-        return await self._start(start, spec)
-
-    async def async_start_multi_leg_backtest_with_strategy(
-        self, spec: MultiLegBacktestSpec | dict[str, Any], strategy: Any, *,
-        strategy_id: str, strategy_version: str, source_sha256: str,
-    ) -> AsyncRunHandle[MultiLegBacktestOutcome]:
-        def start(value: Any) -> RunHandle[MultiLegBacktestOutcome]:
-            return start_multi_leg_backtest_with_strategy(
-                value, strategy, strategy_id=strategy_id,
-                strategy_version=strategy_version, source_sha256=source_sha256,
-            )
-        return await self._start(start, spec)
-
-    async def async_verify_depth_run(self, outcome: DepthBacktestOutcome | dict[str, Any]) -> VerificationResult:
-        return await asyncio.to_thread(verify_depth_run, outcome)
-
-    async def async_run_depth_experiment(self, spec: RunDepthExperimentSpec | dict[str, Any]) -> RunDepthExperimentResult:
-        return await asyncio.to_thread(run_depth_experiment, spec)
-
-    async def async_start_depth_experiment(self, spec: RunDepthExperimentSpec | dict[str, Any]) -> AsyncRunHandle[RunDepthExperimentResult]:
-        return await self._start(start_depth_experiment, spec)
-
-    async def async_run_depth_experiment_with_strategy(
-        self,
-        spec: RunDepthExperimentSpec | dict[str, Any],
-        strategy_factory: Any,
-        *,
-        strategy_id: str,
-        strategy_version: str,
-        source_sha256: str,
-    ) -> RunDepthExperimentResult:
-        return await asyncio.to_thread(
-            run_depth_experiment_with_strategy,
-            spec,
-            strategy_factory,
-            strategy_id=strategy_id,
-            strategy_version=strategy_version,
-            source_sha256=source_sha256,
-        )
-
-    async def async_start_depth_experiment_with_strategy(
-        self,
-        spec: RunDepthExperimentSpec | dict[str, Any],
-        strategy_factory: Any,
-        *,
-        strategy_id: str,
-        strategy_version: str,
-        source_sha256: str,
-    ) -> AsyncRunHandle[RunDepthExperimentResult]:
-        def start(value: Any) -> RunHandle[RunDepthExperimentResult]:
-            return start_depth_experiment_with_strategy(
-                value,
-                strategy_factory,
-                strategy_id=strategy_id,
-                strategy_version=strategy_version,
-                source_sha256=source_sha256,
-            )
-
-        return await self._start(start, spec)
-
-    async def async_run_multi_leg_backtest(self, spec: MultiLegBacktestSpec | dict[str, Any]) -> MultiLegBacktestOutcome:
-        return await asyncio.to_thread(run_multi_leg_backtest, spec)
-
-    async def async_run_multi_market_backtest(
-        self, spec: MultiMarketBacktestSpec | dict[str, Any]
-    ) -> MultiMarketBacktestOutcome:
-        return await asyncio.to_thread(run_multi_market_backtest, spec)
-
-    async def async_start_multi_market_backtest(
-        self, spec: MultiMarketBacktestSpec | dict[str, Any]
-    ) -> AsyncRunHandle[MultiMarketBacktestOutcome]:
-        return await self._start(start_multi_market_backtest, spec)
-
-    async def async_run_multi_market_depth_backtest(
-        self, spec: MultiMarketDepthBacktestSpec | dict[str, Any]
-    ) -> MultiMarketDepthBacktestOutcome:
-        return await asyncio.to_thread(run_multi_market_depth_backtest, spec)
-
-    async def async_start_multi_market_depth_backtest(
-        self, spec: MultiMarketDepthBacktestSpec | dict[str, Any]
-    ) -> AsyncRunHandle[MultiMarketDepthBacktestOutcome]:
-        return await self._start(start_multi_market_depth_backtest, spec)
-
-    async def async_run_multi_market_depth_backtest_with_strategy_slots(
-        self,
-        spec: MultiMarketDepthBacktestSpec | dict[str, Any],
-        strategies: Sequence[Mapping[str, Any]],
-    ) -> MultiMarketDepthBacktestOutcome:
-        return await asyncio.to_thread(
-            run_multi_market_depth_backtest_with_strategy_slots, spec, strategies
-        )
-
-    async def async_start_multi_market_depth_backtest_with_strategy_slots(
-        self,
-        spec: MultiMarketDepthBacktestSpec | dict[str, Any],
-        strategies: Sequence[Mapping[str, Any]],
-    ) -> AsyncRunHandle[MultiMarketDepthBacktestOutcome]:
-        def start(value: Any) -> RunHandle[MultiMarketDepthBacktestOutcome]:
-            return start_multi_market_depth_backtest_with_strategy_slots(value, strategies)
-        return await self._start(start, spec)
-
-    async def async_run_multi_market_experiment(self, spec: RunMultiMarketExperimentSpec | dict[str, Any]) -> RunMultiMarketExperimentResult:
-        return await asyncio.to_thread(run_multi_market_experiment, spec)
-
-    async def async_start_multi_market_experiment(self, spec: RunMultiMarketExperimentSpec | dict[str, Any]) -> AsyncRunHandle[RunMultiMarketExperimentResult]:
-        return await self._start(start_multi_market_experiment, spec)
-
-    async def async_run_multi_market_depth_experiment(
-        self, spec: RunMultiMarketDepthExperimentSpec | dict[str, Any]
-    ) -> RunMultiMarketDepthExperimentResult:
-        return await asyncio.to_thread(run_multi_market_depth_experiment, spec)
-
-    async def async_start_multi_market_depth_experiment(
-        self, spec: RunMultiMarketDepthExperimentSpec | dict[str, Any]
-    ) -> AsyncRunHandle[RunMultiMarketDepthExperimentResult]:
-        return await self._start(start_multi_market_depth_experiment, spec)
-
-    async def async_run_multi_market_depth_experiment_with_strategy(
-        self, spec: RunMultiMarketDepthExperimentSpec | dict[str, Any], strategy_factory: Any, *,
-        strategy_id: str, strategy_version: str, source_sha256: str,
-    ) -> RunMultiMarketDepthExperimentResult:
-        return await asyncio.to_thread(
-            run_multi_market_depth_experiment_with_strategy, spec, strategy_factory,
-            strategy_id=strategy_id, strategy_version=strategy_version,
-            source_sha256=source_sha256,
-        )
-
-    async def async_start_multi_market_depth_experiment_with_strategy(
-        self, spec: RunMultiMarketDepthExperimentSpec | dict[str, Any], strategy_factory: Any, *,
-        strategy_id: str, strategy_version: str, source_sha256: str,
-    ) -> AsyncRunHandle[RunMultiMarketDepthExperimentResult]:
-        def start(value: Any) -> RunHandle[RunMultiMarketDepthExperimentResult]:
-            return start_multi_market_depth_experiment_with_strategy(
-                value, strategy_factory, strategy_id=strategy_id,
-                strategy_version=strategy_version, source_sha256=source_sha256,
-            )
-        return await self._start(start, spec)
-
-    async def async_run_multi_market_experiment_with_strategy(
-        self, spec: RunMultiMarketExperimentSpec | dict[str, Any], strategy_factory: Any, *,
-        strategy_id: str, strategy_version: str, source_sha256: str,
-    ) -> RunMultiMarketExperimentResult:
-        return await asyncio.to_thread(
-            run_multi_market_experiment_with_strategy, spec, strategy_factory,
-            strategy_id=strategy_id, strategy_version=strategy_version,
-            source_sha256=source_sha256,
-        )
-
-    async def async_start_multi_market_experiment_with_strategy(
-        self, spec: RunMultiMarketExperimentSpec | dict[str, Any], strategy_factory: Any, *,
-        strategy_id: str, strategy_version: str, source_sha256: str,
-    ) -> AsyncRunHandle[RunMultiMarketExperimentResult]:
-        def start(value: Any) -> RunHandle[RunMultiMarketExperimentResult]:
-            return start_multi_market_experiment_with_strategy(
-                value, strategy_factory, strategy_id=strategy_id,
-                strategy_version=strategy_version, source_sha256=source_sha256,
-            )
-        return await self._start(start, spec)
-
-    async def async_run_multi_account_backtest(
-        self, spec: MultiAccountBacktestSpec | dict[str, Any]
-    ) -> MultiAccountBacktestResult:
-        return await asyncio.to_thread(run_multi_account_backtest, spec)
-
-    async def async_start_multi_account_backtest(
-        self, spec: MultiAccountBacktestSpec | dict[str, Any]
-    ) -> AsyncRunHandle[MultiAccountBacktestResult]:
-        return await self._start(start_multi_account_backtest, spec)
-
-    async def async_run_multi_account_depth_backtest(
-        self, spec: MultiAccountDepthBacktestSpec | dict[str, Any]
-    ) -> MultiAccountDepthBacktestResult:
-        return await asyncio.to_thread(run_multi_account_depth_backtest, spec)
-
-    async def async_start_multi_account_depth_backtest(
-        self, spec: MultiAccountDepthBacktestSpec | dict[str, Any]
-    ) -> AsyncRunHandle[MultiAccountDepthBacktestResult]:
-        return await self._start(start_multi_account_depth_backtest, spec)
-
-    async def async_start_multi_leg_backtest(self, spec: MultiLegBacktestSpec | dict[str, Any]) -> AsyncRunHandle[MultiLegBacktestOutcome]:
-        return await self._start(start_multi_leg_backtest, spec)
-
-    async def async_run_multi_leg_experiment(self, spec: RunMultiLegExperimentSpec | dict[str, Any]) -> RunMultiLegExperimentResult:
-        return await asyncio.to_thread(run_multi_leg_experiment, spec)
-
-    async def async_start_multi_leg_experiment(self, spec: RunMultiLegExperimentSpec | dict[str, Any]) -> AsyncRunHandle[RunMultiLegExperimentResult]:
-        return await self._start(start_multi_leg_experiment, spec)
-
-
-class RemoteRunHandle(Generic[_ResultT]):
-    """Bounded HTTP lifecycle handle backed by the Rust API run registry."""
-
-    def __init__(
-        self,
-        client: "AppClient",
-        run_id: str,
-        result_type: type[_ResultT] | None = None,
-    ):
-        if not run_id or any(not (char.isascii() and (char.isalnum() or char in "-_.")) for char in run_id):
-            raise ValueError("run_id must contain only ASCII letters, digits, '.', '_' or '-'")
-        self._client = client
-        self.run_id = run_id
-        self._result_type = result_type
-
-    def document(self) -> dict[str, Any]:
-        return self._client._request_json(
-            APP_ROUTE_TEMPLATES["run_status"].format(run_id=self.run_id), method="GET"
-        )
-
-    async def async_document(self) -> dict[str, Any]:
-        """Read the same Rust run document without blocking the caller's event loop."""
-        return await asyncio.to_thread(self.document)
-
-    def events(self, after_seq: int = 0) -> list[dict[str, Any]]:
-        if isinstance(after_seq, bool) or not isinstance(after_seq, int) or after_seq < 0:
-            raise ValueError("after_seq must be a non-negative integer")
-        route = APP_ROUTE_TEMPLATES["run_events"].format(run_id=self.run_id)
-        return self._client._request_json(f"{route}?after_seq={after_seq}", method="GET")
-
-    async def async_events(self, after_seq: int = 0) -> list[dict[str, Any]]:
-        return await asyncio.to_thread(self.events, after_seq)
-
-    @property
-    def status(self) -> str:
-        return str(self.document().get("status", "unknown"))
-
-    async def async_status(self) -> str:
-        return str((await self.async_document()).get("status", "unknown"))
-
-    def cancel(self) -> dict[str, Any]:
-        return self._client._request_json(
-            APP_ROUTE_TEMPLATES["run_cancel"].format(run_id=self.run_id),
-            method="POST",
-            payload={},
-        )
-
-    async def async_cancel(self) -> dict[str, Any]:
-        return await asyncio.to_thread(self.cancel)
-
-    def wait(self, timeout: float = 30.0, poll_interval: float = 0.25) -> str:
-        if (
-            not math.isfinite(timeout)
-            or not math.isfinite(poll_interval)
-            or timeout <= 0
-            or poll_interval <= 0
-        ):
-            raise ValueError("timeout and poll_interval must be finite and positive")
-        deadline = time.monotonic() + timeout
-        while True:
-            status = self.status
-            if status in {"succeeded", "cancelled", "failed"}:
-                return status
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return status
-            time.sleep(min(poll_interval, remaining))
-
-    async def async_wait(self, timeout: float = 30.0, poll_interval: float = 0.25) -> str:
-        """Await terminal Rust status with the same finite bounds as ``wait``."""
-        if (
-            not math.isfinite(timeout)
-            or not math.isfinite(poll_interval)
-            or timeout <= 0
-            or poll_interval <= 0
-        ):
-            raise ValueError("timeout and poll_interval must be finite and positive")
-        deadline = time.monotonic() + timeout
-        while True:
-            status = await self.async_status()
-            if status in {"succeeded", "cancelled", "failed"}:
-                return status
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return status
-            await asyncio.sleep(min(poll_interval, remaining))
-
-    def result(self) -> _ResultT | dict[str, Any] | None:
-        document = self.document()
-        return self._result_from_document(document)
-
-    async def async_result(self) -> _ResultT | dict[str, Any] | None:
-        return self._result_from_document(await self.async_document())
-
-    def _result_from_document(self, document: dict[str, Any]) -> _ResultT | dict[str, Any] | None:
-        status = document.get("status")
-        if status == "failed":
-            error = document["error"]
-            if not isinstance(error, dict):
-                raise InternalInvariantError(
-                    "Rust API reported a failed run without an error document",
-                    payload={"run_id": self.run_id, "status": status},
-                )
-            error_type = _APP_ERRORS.get(error.get("category"), AppError)
-            raise error_type(error.get("message", "Rust run failed"), payload=error)
-        if status != "succeeded":
-            return None
-        result = document.get("result")
-        if not isinstance(result, dict):
-            raise InternalInvariantError(
-                "Rust API reported a successful run without a result document",
-                payload={"run_id": self.run_id, "status": status},
-            )
-        if self._result_type is not None:
-            return self._result_type.from_dict(result)
-        return result
-
-
-class AppClient(_HttpJsonClient):
-    """HTTP facade over the same Rust API use cases exposed by the native SDK."""
-
-    def _post(self, route: str, spec: Any) -> dict[str, Any]:
-        return self._request_json(route, method="POST", payload=spec)
-
-    def application_capabilities(self) -> dict[str, Any]:
-        """Discover Rust use cases; venue/provider readiness remains runtime-specific."""
-        value = self._request_json_value(
-            APP_ROUTE_TEMPLATES["application_capabilities"], method="GET"
-        )
-        if (
-            not isinstance(value, dict)
-            or value.get("schema_version") != 1
-            or value.get("execution_backend") != "shared-rust"
-            or value.get("runtime_preflight_required") is not True
-            or not isinstance(value.get("capabilities"), list)
-            or not isinstance(value.get("limitations"), list)
-        ):
-            raise QianxingError(
-                "Rust API returned an invalid application capability catalog",
-                payload={"category": "INTERNAL_INVARIANT"},
-            )
-        return value
-
-    async def async_application_capabilities(self) -> dict[str, Any]:
-        return await asyncio.to_thread(self.application_capabilities)
-
-    def provider_preflight(self, data_request: Mapping[str, Any]) -> dict[str, Any]:
-        """Check a data request against configured Rust Providers without I/O."""
-        return self._post(APP_ROUTE_TEMPLATES["provider_preflight"], data_request)
-
-    async def async_provider_preflight(self, data_request: Mapping[str, Any]) -> dict[str, Any]:
-        return await asyncio.to_thread(self.provider_preflight, data_request)
-
-    def list_builtin_strategies(self) -> tuple[BuiltinStrategyInfo, ...]:
-        """Fetch the same Rust-owned strategy catalog used by local SDK calls."""
-        value = self._request_json_value(
-            APP_ROUTE_TEMPLATES["builtin_strategy_catalog"], method="GET"
-        )
-        try:
-            return _parse_builtin_strategy_catalog(value)
-        except (TypeError, ValueError) as exc:
-            raise QianxingError(
-                "Rust API returned an invalid built-in strategy catalog",
-                payload={"category": "INTERNAL_INVARIANT"},
-            ) from exc
-
-    async def async_list_builtin_strategies(self) -> tuple[BuiltinStrategyInfo, ...]:
-        return await asyncio.to_thread(self.list_builtin_strategies)
-
-    def get_live_events(self, after_seq: int | None = None) -> list[dict[str, Any]]:
-        if after_seq is not None and (
-            isinstance(after_seq, bool)
-            or not isinstance(after_seq, int)
-            or after_seq < 0
-            or after_seq > (1 << 64) - 1
-        ):
-            raise ValueError("after_seq must be a u64 sequence or None")
-        route = APP_ROUTE_TEMPLATES["live_events"]
-        if after_seq is not None:
-            route = f"{route}?after={after_seq}"
-        events = self._request_json_value(route, method="GET")
-        if not isinstance(events, list) or any(not isinstance(event, dict) for event in events):
-            raise QianxingError("Rust API returned an invalid live event page")
-        return events
-
-    async def async_get_live_events(self, after_seq: int | None = None) -> list[dict[str, Any]]:
-        return await asyncio.to_thread(self.get_live_events, after_seq)
-
-    def _start(self, route: str, spec: Any, result_type: type[_ResultT]) -> RemoteRunHandle[_ResultT]:
-        document = self._post(route, spec)
-        run_id = document.get("run_id")
-        if not isinstance(run_id, str):
-            raise QianxingError("Rust API start response omitted run_id", payload=document)
-        return RemoteRunHandle(self, run_id, result_type)
-
-    async def _async_start(self, method: Any, spec: Any) -> RemoteRunHandle[Any]:
-        task = asyncio.create_task(asyncio.to_thread(method, spec))
-        try:
-            return await asyncio.shield(task)
-        except asyncio.CancelledError:
-            # The HTTP request itself cannot be interrupted once urllib has sent it. If the
-            # server accepted the run, request cooperative cancellation before propagating the
-            # caller's cancellation so a detached worker is not silently left behind.
-            try:
-                handle = await task
-                await handle.async_cancel()
-            except Exception:
-                pass
-            raise
-
-    def validate_dataset(self, spec: DatasetSpec | dict[str, Any]) -> DatasetVerdict:
-        return DatasetVerdict.from_dict(self._post(APP_ROUTE_TEMPLATES["validate_dataset"], spec))
-
-    def run_backtest(self, spec: BacktestSpec | dict[str, Any]) -> BacktestOutcome:
-        return BacktestOutcome.from_dict(self._post(APP_ROUTE_TEMPLATES["backtest"], spec))
-
-    def run_provider_backtest_with_manifest(
-        self, spec: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Run the shared Rust Provider selection, freeze and backtest workflow remotely."""
-        return self._post(APP_ROUTE_TEMPLATES["provider_backtest"], spec)
-
-    def run_provider_depth_backtest(self, spec: Mapping[str, Any]) -> dict[str, Any]:
-        """Fetch Provider Quote snapshots and run the shared Rust depth backtest."""
-        return self._post(APP_ROUTE_TEMPLATES["provider_depth_backtest"], spec)
-
-    def start_backtest(self, spec: BacktestSpec | dict[str, Any]) -> RemoteRunHandle[BacktestOutcome]:
-        return self._start(APP_ROUTE_TEMPLATES["backtest_start"], spec, BacktestOutcome)
-
-    def verify_run(self, outcome: BacktestOutcome | dict[str, Any]) -> VerificationResult:
-        return VerificationResult.from_dict(self._post(APP_ROUTE_TEMPLATES["verify"], outcome))
-
-    def compare_runs(self, spec: CompareRunsSpec | dict[str, Any]) -> CompareRunsResult:
-        return CompareRunsResult.from_dict(self._post(APP_ROUTE_TEMPLATES["compare_runs"], spec))
-
-    def plan_risk_parity(self, spec: RiskParitySpec | dict[str, Any]) -> RiskParityResult:
-        return RiskParityResult.from_dict(
-            self._post(APP_ROUTE_TEMPLATES["plan_risk_parity"], spec)
-        )
-
-    def plan_algo_execution(self, spec: dict[str, Any]) -> dict[str, Any]:
-        return self._post(APP_ROUTE_TEMPLATES["plan_algo_execution"], spec)
-
-    def plan_capital_allocation(self, spec: dict[str, Any]) -> dict[str, Any]:
-        return self._post(APP_ROUTE_TEMPLATES["plan_capital_allocation"], spec)
-
-    def start_paper_algo_execution(self, request: dict[str, Any]) -> dict[str, Any]:
-        """Persist a shared Rust TWAP/VWAP parent for the configured Paper worker."""
-        return self._post(APP_ROUTE_TEMPLATES["paper_algo_start"], request)
-
-    def get_paper_algo_execution(self, parent_id: str) -> dict[str, Any]:
-        return self._post(APP_ROUTE_TEMPLATES["paper_algo_get"], {"parent_id": parent_id})
-
-    def cancel_paper_algo_execution(self, parent_id: str) -> dict[str, Any]:
-        return self._post(APP_ROUTE_TEMPLATES["paper_algo_cancel"], {"parent_id": parent_id})
-
-    def list_paper_algo_executions(
-        self, *, after_parent_id: str | None = None, limit: int = 100
-    ) -> dict[str, Any]:
-        return self._post(
-            APP_ROUTE_TEMPLATES["paper_algo_list"],
-            {"after_parent_id": after_parent_id, "limit": limit},
-        )
-
-    def run_experiment(self, spec: RunExperimentSpec | dict[str, Any]) -> RunExperimentResult:
-        return RunExperimentResult.from_dict(
-            self._post(APP_ROUTE_TEMPLATES["run_experiment"], spec)
-        )
-
-    def start_experiment(self, spec: RunExperimentSpec | dict[str, Any]) -> RemoteRunHandle[RunExperimentResult]:
-        return self._start(APP_ROUTE_TEMPLATES["run_experiment_start"], spec, RunExperimentResult)
-
-    def run_depth_backtest(self, spec: DepthBacktestSpec | dict[str, Any]) -> DepthBacktestOutcome:
-        return DepthBacktestOutcome.from_dict(
-            self._post(APP_ROUTE_TEMPLATES["depth_backtest"], spec)
-        )
-
-    def start_depth_backtest(self, spec: DepthBacktestSpec | dict[str, Any]) -> RemoteRunHandle[DepthBacktestOutcome]:
-        return self._start(APP_ROUTE_TEMPLATES["depth_backtest_start"], spec, DepthBacktestOutcome)
-
-    def verify_depth_run(self, outcome: DepthBacktestOutcome | dict[str, Any]) -> VerificationResult:
-        return VerificationResult.from_dict(
-            self._post(APP_ROUTE_TEMPLATES["verify_depth"], outcome)
-        )
-
-    def run_depth_experiment(self, spec: RunDepthExperimentSpec | dict[str, Any]) -> RunDepthExperimentResult:
-        return RunDepthExperimentResult.from_dict(
-            self._post(APP_ROUTE_TEMPLATES["depth_experiment"], spec)
-        )
-
-    def start_depth_experiment(self, spec: RunDepthExperimentSpec | dict[str, Any]) -> RemoteRunHandle[RunDepthExperimentResult]:
-        return self._start(
-            APP_ROUTE_TEMPLATES["depth_experiment_start"], spec, RunDepthExperimentResult
-        )
-
-    def run_multi_leg_backtest(self, spec: MultiLegBacktestSpec | dict[str, Any]) -> MultiLegBacktestOutcome:
-        return MultiLegBacktestOutcome.from_dict(
-            self._post(APP_ROUTE_TEMPLATES["multi_leg_backtest"], spec)
-        )
-
-    def run_multi_market_backtest(
-        self, spec: MultiMarketBacktestSpec | dict[str, Any]
-    ) -> MultiMarketBacktestOutcome:
-        return MultiMarketBacktestOutcome.from_dict(
-            self._post(APP_ROUTE_TEMPLATES["multi_market_backtest"], spec)
-        )
-
-    def start_multi_market_backtest(
-        self, spec: MultiMarketBacktestSpec | dict[str, Any]
-    ) -> RemoteRunHandle[MultiMarketBacktestOutcome]:
-        return self._start(
-            APP_ROUTE_TEMPLATES["multi_market_backtest_start"], spec, MultiMarketBacktestOutcome
-        )
-
-    def run_multi_market_depth_backtest(
-        self, spec: MultiMarketDepthBacktestSpec | dict[str, Any]
-    ) -> MultiMarketDepthBacktestOutcome:
-        return MultiMarketDepthBacktestOutcome.from_dict(
-            self._post(APP_ROUTE_TEMPLATES["multi_market_depth_backtest"], spec)
-        )
-
-    def start_multi_market_depth_backtest(
-        self, spec: MultiMarketDepthBacktestSpec | dict[str, Any]
-    ) -> RemoteRunHandle[MultiMarketDepthBacktestOutcome]:
-        return self._start(
-            APP_ROUTE_TEMPLATES["multi_market_depth_backtest_start"],
-            spec,
-            MultiMarketDepthBacktestOutcome,
-        )
-
-    def run_multi_market_experiment(self, spec: RunMultiMarketExperimentSpec | dict[str, Any]) -> RunMultiMarketExperimentResult:
-        return RunMultiMarketExperimentResult.from_dict(
-            self._post(APP_ROUTE_TEMPLATES["multi_market_experiment"], spec)
-        )
-
-    def start_multi_market_experiment(self, spec: RunMultiMarketExperimentSpec | dict[str, Any]) -> RemoteRunHandle[RunMultiMarketExperimentResult]:
-        return self._start(
-            APP_ROUTE_TEMPLATES["multi_market_experiment_start"], spec, RunMultiMarketExperimentResult
-        )
-
-    def run_multi_market_depth_experiment(
-        self, spec: RunMultiMarketDepthExperimentSpec | dict[str, Any]
-    ) -> RunMultiMarketDepthExperimentResult:
-        return RunMultiMarketDepthExperimentResult.from_dict(
-            self._post(APP_ROUTE_TEMPLATES["multi_market_depth_experiment"], spec)
-        )
-
-    def start_multi_market_depth_experiment(
-        self, spec: RunMultiMarketDepthExperimentSpec | dict[str, Any]
-    ) -> RemoteRunHandle[RunMultiMarketDepthExperimentResult]:
-        return self._start(
-            APP_ROUTE_TEMPLATES["multi_market_depth_experiment_start"],
-            spec,
-            RunMultiMarketDepthExperimentResult,
-        )
-
-    def run_multi_account_backtest(
-        self, spec: MultiAccountBacktestSpec | dict[str, Any]
-    ) -> MultiAccountBacktestResult:
-        return MultiAccountBacktestResult.from_dict(
-            self._post(APP_ROUTE_TEMPLATES["multi_account_backtest"], spec)
-        )
-
-    def start_multi_account_backtest(
-        self, spec: MultiAccountBacktestSpec | dict[str, Any]
-    ) -> RemoteRunHandle[MultiAccountBacktestResult]:
-        return self._start(
-            APP_ROUTE_TEMPLATES["multi_account_backtest_start"],
-            spec,
-            MultiAccountBacktestResult,
-        )
-
-    def run_multi_account_depth_backtest(
-        self, spec: MultiAccountDepthBacktestSpec | dict[str, Any]
-    ) -> MultiAccountDepthBacktestResult:
-        return MultiAccountDepthBacktestResult.from_dict(
-            self._post(APP_ROUTE_TEMPLATES["multi_account_depth_backtest"], spec)
-        )
-
-    def start_multi_account_depth_backtest(
-        self, spec: MultiAccountDepthBacktestSpec | dict[str, Any]
-    ) -> RemoteRunHandle[MultiAccountDepthBacktestResult]:
-        return self._start(
-            APP_ROUTE_TEMPLATES["multi_account_depth_backtest_start"],
-            spec,
-            MultiAccountDepthBacktestResult,
-        )
-
-    def start_multi_leg_backtest(self, spec: MultiLegBacktestSpec | dict[str, Any]) -> RemoteRunHandle[MultiLegBacktestOutcome]:
-        return self._start(
-            APP_ROUTE_TEMPLATES["multi_leg_backtest_start"], spec, MultiLegBacktestOutcome
-        )
-
-    def run_multi_leg_experiment(self, spec: RunMultiLegExperimentSpec | dict[str, Any]) -> RunMultiLegExperimentResult:
-        return RunMultiLegExperimentResult.from_dict(
-            self._post(APP_ROUTE_TEMPLATES["multi_leg_experiment"], spec)
-        )
-
-    def start_multi_leg_experiment(self, spec: RunMultiLegExperimentSpec | dict[str, Any]) -> RemoteRunHandle[RunMultiLegExperimentResult]:
-        return self._start(
-            APP_ROUTE_TEMPLATES["multi_leg_experiment_start"],
-            spec,
-            RunMultiLegExperimentResult,
-        )
-
-    # Async facade methods deliberately delegate to the synchronous typed methods above.
-    # This keeps schemas, error translation, and Rust routes single-sourced.
-    async def async_validate_dataset(self, spec: DatasetSpec | dict[str, Any]) -> DatasetVerdict:
-        return await asyncio.to_thread(self.validate_dataset, spec)
-
-    async def async_run_backtest(self, spec: BacktestSpec | dict[str, Any]) -> BacktestOutcome:
-        return await asyncio.to_thread(self.run_backtest, spec)
-
-    async def async_start_backtest(self, spec: BacktestSpec | dict[str, Any]) -> RemoteRunHandle[BacktestOutcome]:
-        return await self._async_start(self.start_backtest, spec)
-
-    async def async_verify_run(self, outcome: BacktestOutcome | dict[str, Any]) -> VerificationResult:
-        return await asyncio.to_thread(self.verify_run, outcome)
-
-    async def async_compare_runs(self, spec: CompareRunsSpec | dict[str, Any]) -> CompareRunsResult:
-        return await asyncio.to_thread(self.compare_runs, spec)
-
-    async def async_plan_risk_parity(self, spec: RiskParitySpec | dict[str, Any]) -> RiskParityResult:
-        return await asyncio.to_thread(self.plan_risk_parity, spec)
-
-    async def async_run_experiment(self, spec: RunExperimentSpec | dict[str, Any]) -> RunExperimentResult:
-        return await asyncio.to_thread(self.run_experiment, spec)
-
-    async def async_start_experiment(self, spec: RunExperimentSpec | dict[str, Any]) -> RemoteRunHandle[RunExperimentResult]:
-        return await self._async_start(self.start_experiment, spec)
-
-    async def async_run_depth_backtest(self, spec: DepthBacktestSpec | dict[str, Any]) -> DepthBacktestOutcome:
-        return await asyncio.to_thread(self.run_depth_backtest, spec)
-
-    async def async_start_depth_backtest(self, spec: DepthBacktestSpec | dict[str, Any]) -> RemoteRunHandle[DepthBacktestOutcome]:
-        return await self._async_start(self.start_depth_backtest, spec)
-
-    async def async_verify_depth_run(self, outcome: DepthBacktestOutcome | dict[str, Any]) -> VerificationResult:
-        return await asyncio.to_thread(self.verify_depth_run, outcome)
-
-    async def async_run_depth_experiment(self, spec: RunDepthExperimentSpec | dict[str, Any]) -> RunDepthExperimentResult:
-        return await asyncio.to_thread(self.run_depth_experiment, spec)
-
-    async def async_start_depth_experiment(self, spec: RunDepthExperimentSpec | dict[str, Any]) -> RemoteRunHandle[RunDepthExperimentResult]:
-        return await self._async_start(self.start_depth_experiment, spec)
-
-    async def async_run_multi_leg_backtest(self, spec: MultiLegBacktestSpec | dict[str, Any]) -> MultiLegBacktestOutcome:
-        return await asyncio.to_thread(self.run_multi_leg_backtest, spec)
-
-    async def async_run_multi_market_backtest(
-        self, spec: MultiMarketBacktestSpec | dict[str, Any]
-    ) -> MultiMarketBacktestOutcome:
-        return await asyncio.to_thread(self.run_multi_market_backtest, spec)
-
-    async def async_start_multi_market_backtest(
-        self, spec: MultiMarketBacktestSpec | dict[str, Any]
-    ) -> RemoteRunHandle[MultiMarketBacktestOutcome]:
-        return await self._async_start(self.start_multi_market_backtest, spec)
-
-    async def async_run_multi_market_depth_backtest(
-        self, spec: MultiMarketDepthBacktestSpec | dict[str, Any]
-    ) -> MultiMarketDepthBacktestOutcome:
-        return await asyncio.to_thread(self.run_multi_market_depth_backtest, spec)
-
-    async def async_start_multi_market_depth_backtest(
-        self, spec: MultiMarketDepthBacktestSpec | dict[str, Any]
-    ) -> RemoteRunHandle[MultiMarketDepthBacktestOutcome]:
-        return await self._async_start(self.start_multi_market_depth_backtest, spec)
-
-    async def async_run_multi_market_experiment(self, spec: RunMultiMarketExperimentSpec | dict[str, Any]) -> RunMultiMarketExperimentResult:
-        return await asyncio.to_thread(self.run_multi_market_experiment, spec)
-
-    async def async_start_multi_market_experiment(self, spec: RunMultiMarketExperimentSpec | dict[str, Any]) -> RemoteRunHandle[RunMultiMarketExperimentResult]:
-        return await self._async_start(self.start_multi_market_experiment, spec)
-
-    async def async_run_multi_market_depth_experiment(
-        self, spec: RunMultiMarketDepthExperimentSpec | dict[str, Any]
-    ) -> RunMultiMarketDepthExperimentResult:
-        return await asyncio.to_thread(self.run_multi_market_depth_experiment, spec)
-
-    async def async_start_multi_market_depth_experiment(
-        self, spec: RunMultiMarketDepthExperimentSpec | dict[str, Any]
-    ) -> RemoteRunHandle[RunMultiMarketDepthExperimentResult]:
-        return await self._async_start(self.start_multi_market_depth_experiment, spec)
-
-    async def async_run_multi_account_backtest(
-        self, spec: MultiAccountBacktestSpec | dict[str, Any]
-    ) -> MultiAccountBacktestResult:
-        return await asyncio.to_thread(self.run_multi_account_backtest, spec)
-
-    async def async_start_multi_account_backtest(
-        self, spec: MultiAccountBacktestSpec | dict[str, Any]
-    ) -> RemoteRunHandle[MultiAccountBacktestResult]:
-        return await self._async_start(self.start_multi_account_backtest, spec)
-
-    async def async_run_multi_account_depth_backtest(
-        self, spec: MultiAccountDepthBacktestSpec | dict[str, Any]
-    ) -> MultiAccountDepthBacktestResult:
-        return await asyncio.to_thread(self.run_multi_account_depth_backtest, spec)
-
-    async def async_start_multi_account_depth_backtest(
-        self, spec: MultiAccountDepthBacktestSpec | dict[str, Any]
-    ) -> RemoteRunHandle[MultiAccountDepthBacktestResult]:
-        return await self._async_start(self.start_multi_account_depth_backtest, spec)
-
-    async def async_start_multi_leg_backtest(self, spec: MultiLegBacktestSpec | dict[str, Any]) -> RemoteRunHandle[MultiLegBacktestOutcome]:
-        return await self._async_start(self.start_multi_leg_backtest, spec)
-
-    async def async_run_multi_leg_experiment(self, spec: RunMultiLegExperimentSpec | dict[str, Any]) -> RunMultiLegExperimentResult:
-        return await asyncio.to_thread(self.run_multi_leg_experiment, spec)
-
-    async def async_start_multi_leg_experiment(self, spec: RunMultiLegExperimentSpec | dict[str, Any]) -> RemoteRunHandle[RunMultiLegExperimentResult]:
-        return await self._async_start(self.start_multi_leg_experiment, spec)
 
 
 def validate_dataset(spec: DatasetSpec | dict[str, Any]) -> DatasetVerdict:
     """Validate a local Bar dataset using the shared Rust application use case."""
     return DatasetVerdict.from_dict(_invoke(native.app_validate_dataset, spec))
+
+
+def validate_strategy_execution_preflight_v1(
+    strategy_manifest: Mapping[str, Any],
+    execution_spec: Mapping[str, Any],
+    *,
+    purpose: Literal["run", "search", "diagnose"],
+    target_strategy_id: str | None = None,
+    split_plan: Mapping[str, Any] | None = None,
+    require_dataset_snapshots: bool = False,
+) -> dict[str, Any]:
+    """Preflight a file strategy through the shared Rust application boundary.
+
+    The result includes the Rust-validated Bar identities and row counts. Complete manifests fail
+    closed on parameter, market, data-level, and warmup mismatches; partial manifests preserve
+    the historical strategy behavior and explicitly report that no dataset checks were made.
+    """
+    return _invoke(
+        native.app_validate_strategy_execution_preflight_v1,
+        {
+            "schema_version": 1,
+            "strategy_manifest": strategy_manifest,
+            "execution_spec": execution_spec,
+            "purpose": purpose,
+            "target_strategy_id": target_strategy_id,
+            "split_plan": split_plan,
+            "require_dataset_snapshots": require_dataset_snapshots,
+        },
+    )
+
+
+def validate_strategy_project_v1(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate and canonicalize a project manifest through the Rust spec contract."""
+    return _invoke(native.app_validate_strategy_project_v1, dict(manifest))
+
+
+def plan_strategy_runtime_v1(
+    runtime: Mapping[str, Any], worker_id: str | None = None
+) -> dict[str, Any]:
+    """Validate runtime config and select the same Strategy instance as the Rust worker."""
+    return _invoke(native.app_plan_strategy_runtime_v1, {"runtime": dict(runtime), "worker_id": worker_id})
 
 
 def run_backtest(spec: BacktestSpec | dict[str, Any]) -> BacktestOutcome:
@@ -2980,6 +2836,107 @@ def verify_run(outcome: BacktestOutcome | dict[str, Any]) -> VerificationResult:
     return VerificationResult.from_dict(_invoke(native.app_verify_run, value))
 
 
+def read_run_report_v1(outcome: BacktestOutcome | dict[str, Any]) -> dict[str, Any]:
+    """Read the shared, versioned bounded report core for a verified Bar run."""
+    value = asdict(outcome) if isinstance(outcome, BacktestOutcome) else outcome
+    return _invoke(native.app_read_run_report_v1, value)
+
+
+def read_depth_run_report_v1(
+    outcome: DepthBacktestOutcome | dict[str, Any],
+) -> dict[str, Any]:
+    """Read the shared, versioned bounded report core for a verified Depth run."""
+    value = asdict(outcome) if isinstance(outcome, DepthBacktestOutcome) else outcome
+    return _invoke(native.app_read_depth_run_report_v1, value)
+
+
+def read_provider_run_report_v1(outcome: Any) -> dict[str, Any]:
+    """Read a Provider Bar outcome and verify its outer manifest against shared run identity."""
+    value = asdict(outcome) if is_dataclass(outcome) else outcome
+    return _invoke(native.app_read_provider_backtest_report_v1, value)
+
+
+def read_provider_depth_run_report_v1(outcome: Any) -> dict[str, Any]:
+    """Read a Provider depth outcome and recompute its frozen input fingerprint."""
+    value = asdict(outcome) if is_dataclass(outcome) else outcome
+    return _invoke(native.app_read_provider_depth_backtest_report_v1, value)
+
+
+def read_multi_account_report_v1(
+    outcome: MultiAccountBacktestResult | MultiAccountDepthBacktestResult | dict[str, Any],
+) -> dict[str, Any]:
+    """Read the shared bounded Bar/Depth report for an independently funded account batch."""
+    return _invoke(native.app_read_multi_account_report_v1, outcome)
+
+
+def read_multi_account_joint_report_v1(
+    outcome: MultiAccountJointBacktestOutcome | dict[str, Any],
+    *,
+    joint_account_event_pages: dict[str, dict[str, dict[str, int]]] | None = None,
+) -> dict[str, Any]:
+    """Read verified joint-account facts with independent exchange/account event pages."""
+    if isinstance(outcome, dict) and "outcome" in outcome:
+        unknown = set(outcome) - {"outcome", "joint_account_event_pages"}
+        if unknown or joint_account_event_pages is not None:
+            raise ValueError("joint report wrapper contains unknown fields or duplicate page options")
+        joint_account_event_pages = outcome.get("joint_account_event_pages")
+        outcome = outcome["outcome"]
+    options = (
+        None
+        if joint_account_event_pages is None
+        else {"joint_account_event_pages": joint_account_event_pages}
+    )
+    return _invoke(native.app_read_multi_account_joint_report_v1, outcome, options)
+
+
+def read_multi_leg_report_facts_v1(
+    outcome: MultiLegBacktestOutcome | dict[str, Any],
+) -> dict[str, Any]:
+    """Read replay-verified ledger and per-leg accounting facts for a multi-leg run."""
+    return _invoke(native.app_read_multi_leg_report_facts_v1, outcome)
+
+
+def read_multi_leg_research_report_v1(
+    request: dict[str, Any],
+) -> dict[str, Any]:
+    """Read a complete bounded multi-leg report.
+
+    The request is a versioned object containing ``outcome`` and an optional event ``page``.
+    Equity/fill panels, execution assumptions, and run/data identities are verified together.
+    """
+    return _invoke(native.app_read_multi_leg_research_report_v1, request)
+
+
+def read_multi_leg_event_report_page_v1(request: dict[str, Any]) -> dict[str, Any]:
+    """Replay and verify a bounded page from a multi-leg Bar EventLog."""
+    return _invoke(native.app_read_multi_leg_event_report_page_v1, request)
+
+
+def read_multi_market_event_report_page_v1(request: dict[str, Any]) -> dict[str, Any]:
+    """Replay and verify a bounded page from a multi-market EventLog.
+
+    The request binds the event trace to its expected count, RunManifest digest, replay ledger,
+    strategy-to-market mapping, and optional page. The reader validates the complete trace before
+    returning the requested rows.
+    """
+    return _invoke(native.app_read_multi_market_event_report_page_v1, request)
+
+
+def read_multi_market_depth_event_report_page_v1(request: dict[str, Any]) -> dict[str, Any]:
+    """Read and replay-verify a bounded multi-market L1/L2 event page."""
+    return _invoke(native.app_read_multi_market_depth_event_report_page_v1, request)
+
+
+def read_multi_market_research_report_v1(request: dict[str, Any]) -> dict[str, Any]:
+    """Read a fully verified, bounded shared-account multi-market Bar report."""
+    return _invoke(native.app_read_multi_market_research_report_v1, request)
+
+
+def read_multi_market_depth_research_report_v1(request: dict[str, Any]) -> dict[str, Any]:
+    """Read a fully verified, bounded shared-account multi-market L1/L2 report."""
+    return _invoke(native.app_read_multi_market_depth_research_report_v1, request)
+
+
 def compare_runs(spec: CompareRunsSpec | dict[str, Any]) -> CompareRunsResult:
     """Rank completed runs from identical market data using the shared Rust use case."""
     return CompareRunsResult.from_dict(_invoke(native.app_compare_runs, spec))
@@ -3007,6 +2964,13 @@ def plan_algo_execution(spec: dict[str, Any]) -> dict[str, Any]:
 def run_experiment(spec: RunExperimentSpec | dict[str, Any]) -> RunExperimentResult:
     """Run a bounded Cartesian grid through Rust backtests and return their Rust comparison."""
     return RunExperimentResult.from_dict(_invoke(native.app_run_experiment, spec))
+
+
+def _prepare_quick_research_spec(
+    spec: RunExperimentSpec | RunMultiMarketExperimentSpec | dict[str, Any],
+) -> dict[str, Any]:
+    """Validate the guided OOS preset and apply the single-market baseline default in Rust."""
+    return _invoke(native.app_prepare_quick_research_spec_v1, spec)
 
 
 def run_experiment_with_strategy(
@@ -3277,10 +3241,57 @@ class MultiMarketBacktestOutcome:
         return cls(**value)
 
 
+@dataclass(frozen=True)
+class JointAccountBacktestResult:
+    exchange_id: str
+    account_id: str
+    initial_cash_raw: int
+    outcome: MultiMarketBacktestOutcome
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "JointAccountBacktestResult":
+        return cls(
+            exchange_id=value["exchange_id"],
+            account_id=value["account_id"],
+            initial_cash_raw=value["initial_cash_raw"],
+            outcome=MultiMarketBacktestOutcome.from_dict(value["outcome"]),
+        )
+
+
+@dataclass(frozen=True)
+class MultiAccountJointBacktestOutcome:
+    run_id: str
+    settlement_currency: str
+    spec_fingerprint: str
+    accounts_total: int
+    markets_total: int
+    initial_cash_raw: int
+    final_equity_raw: int
+    return_bps: int
+    max_drawdown_bps: int
+    successful_fills: int
+    equity_path: str
+    fills_path: str
+    artifact_path: str
+    accounts: tuple[JointAccountBacktestResult, ...]
+    run_manifest_path: str | None = None
+    result_hash: str | None = None
+    run_record: str | None = None
+    artifact_locations: dict[str, str] | None = None
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "MultiAccountJointBacktestOutcome":
+        payload = dict(value)
+        payload["accounts"] = tuple(
+            JointAccountBacktestResult.from_dict(item) for item in value["accounts"]
+        )
+        return cls(**payload)
+
+
 def run_multi_market_backtest(
     spec: MultiMarketBacktestSpec | dict[str, Any],
 ) -> MultiMarketBacktestOutcome:
-    """Run 3..32 markets through one deterministic Rust account ledger and event engine."""
+    """Run 1..32 markets through one deterministic Rust account ledger and event engine."""
     return MultiMarketBacktestOutcome.from_dict(
         _invoke(native.app_run_multi_market_backtest, spec)
     )
@@ -3484,6 +3495,25 @@ def run_multi_account_backtest(
     )
 
 
+def run_multi_account_joint_backtest(
+    spec: MultiAccountJointBacktestSpec | dict[str, Any],
+) -> MultiAccountJointBacktestOutcome:
+    """Run independently funded exchange portfolios and publish combined research artifacts."""
+    return MultiAccountJointBacktestOutcome.from_dict(
+        _invoke(native.app_run_multi_account_joint_backtest, spec)
+    )
+
+
+def start_multi_account_joint_backtest(
+    spec: MultiAccountJointBacktestSpec | dict[str, Any],
+) -> RunHandle[MultiAccountJointBacktestOutcome]:
+    try:
+        native_handle = native.app_start_multi_account_joint_backtest(_encode_payload(spec))
+    except Exception as exc:
+        raise _translate_native_error(exc) from exc
+    return RunHandle(native_handle, MultiAccountJointBacktestOutcome)
+
+
 def start_multi_account_backtest(
     spec: MultiAccountBacktestSpec | dict[str, Any],
 ) -> RunHandle[MultiAccountBacktestResult]:
@@ -3595,45 +3625,46 @@ def start_multi_leg_experiment_with_strategy(
     return RunHandle(native_handle, RunMultiLegExperimentResult)
 
 
+
+
+
+
+
+
+
+
+
+
+
 def doctor() -> dict[str, Any]:
-    """Report which native application entry points are available in this install."""
-    extension_available = native.available()
-    app_available = native.app_available()
-    try:
-        package_version = version("qianxing")
-    except PackageNotFoundError:
-        package_version = "0.2.0"
-    return {
-        "package": "qianxing",
-        "version": package_version,
-        "native_extension_available": extension_available,
-        "application_use_cases_available": app_available,
-        "implemented_use_cases": (
-            [
-                "dataset.validate.bar.v1",
-                "backtest.bar.v1",
-                "backtest.bar.run-handle.v1",
-                "run.verify.v1",
-                "backtest.compare.v1",
-                "portfolio.risk-parity.plan.v1",
-                "experiment.grid.bar.v1",
-                "experiment.grid.bar.run-handle.v1",
-                "experiment.grid.multi-leg.bar.v1",
-                "experiment.grid.multi-leg.bar.run-handle.v1",
-                "experiment.grid.depth.tick-orderbook.v1",
-                "experiment.grid.depth.tick-orderbook.run-handle.v1",
-                "backtest.depth.l1.v1",
-                "backtest.depth.l2.v1",
-                "backtest.depth.run-handle.v1",
-                "run.verify.depth.v1",
-                "backtest.multi-leg.bar.v1",
-                "backtest.multi-leg.bar.run-handle.v1",
-            ]
-            if app_available
-            else []
-        ),
-        "remote_workflows": ["control.paper.v1", "control.live.v1"],
-        "limitations": [
-            "Paper/Live submission requires a running qx-api service with matching workers; Live additionally requires authenticated operator policy.",
-        ],
-    }
+    """Report the installed SDK/native/CLI compatibility through the diagnostics service."""
+    return _sdk_doctor()
+
+def __getattr__(name: str) -> Any:
+    """Load client implementations lazily while preserving ``qianxing.app`` imports."""
+    if name in {"AppClient", "RemoteRunHandle"}:
+        from .client_remote import AppClient, RemoteRunHandle
+
+        globals().update(AppClient=AppClient, RemoteRunHandle=RemoteRunHandle)
+        return globals()[name]
+    if name in {"TradeCommand", "TradeWorkflowClient", "PaperClient", "LiveClient"}:
+        from .client_trading import LiveClient, PaperClient, TradeCommand, TradeWorkflowClient
+
+        globals().update(
+            TradeCommand=TradeCommand,
+            TradeWorkflowClient=TradeWorkflowClient,
+            PaperClient=PaperClient,
+            LiveClient=LiveClient,
+        )
+        return globals()[name]
+    if name == "AsyncCoreClient":
+        from .client_local import AsyncCoreClient, AsyncRunHandle, RunEvent, RunHandle
+
+        globals().update(
+            AsyncCoreClient=AsyncCoreClient,
+            AsyncRunHandle=AsyncRunHandle,
+            RunEvent=RunEvent,
+            RunHandle=RunHandle,
+        )
+        return AsyncCoreClient
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

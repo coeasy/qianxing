@@ -70,6 +70,7 @@ pub(crate) fn run_binance_submit_order(
                     &pipeline_storage,
                     &settlement_currency,
                     path,
+                    &config.environment,
                     now,
                     |worker| {
                         let auth = load_binance_worker_auth(worker)?;

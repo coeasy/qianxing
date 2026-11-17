@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "kind": "linux_wheel_release_preflight",
+  "acceptance_id": "linux-wheel-release-preflight-current-worktree-2026-11-08",
+  "generated_at_utc": "2026-11-08T06:04:53Z",
+  "source": {
+    "head_commit": "4a70e85093906d1fc114970ec6349121dbcaa9f6",
+    "working_tree_changes_included": true,
+    "release_artifact": false
+  },
+  "environment": {
+    "platform": "Ubuntu 24.04",
+    "kernel": "Linux 6.8.0-142-generic x86_64",
+    "python": "3.12.3",
+    "rust": "1.98.1 (48a229cea 2026-09-01)",
+    "wheel_tag": "cp310-abi3-manylinux_2_34_x86_64"
+  },
+  "artifact": {
+    "path": ".tmp-release-prep/linux-wheel/dist/qianxing-0.3.0-cp310-abi3-manylinux_2_34_x86_64.whl",
+    "size_bytes": 23007155,
+    "sha256": "0c5a3a3e885ac651fb293a7c048c75bbd65c0aa76180f5790a9b1e8181e54488"
+  },
+  "checks": [
+    {
+      "command": "cargo test --locked -p qx-service backtest_bindings:: -j 2",
+      "result": "passed",
+      "passed": 8,
+      "failed": 0
+    },
+    {
+      "command": "cargo test --locked -p qx-cli --bin qx-cli deploy_template_coverage -j 2",
+      "result": "passed",
+      "passed": 3,
+      "failed": 0
+    },
+    {
+      "command": "cargo test --locked -p qx-cli --test backtest_contracts builtin_signal_from_config -j 2",
+      "result": "passed",
+      "passed": 7,
+      "failed": 0
+    },
+    {
+      "command": "bash tools/build_python_wheel.sh with absolute OUTPUT_DIRECTORY",
+      "result": "passed",
+      "exit_code": 0
+    },
+    {
+      "command": "python tools/check_python_wheel.py <wheel-directory>",
+      "result": "passed",
+      "stable_abi": "cp310-abi3",
+      "payloads": [
+        "qianxing_bridge/_qianxing_native.abi3.so",
+        "qianxing/_bin/qx-cli"
+      ]
+    },
+    {
+      "command": "pip install --no-index --no-deps <wheel> into a fresh venv; run tools/python_wheel_smoke.py from /tmp",
+      "result": "passed",
+      "smoke_summary": "strategies=17 rows=70 fills=1 ashare_fills=1 classic_selection=13/13 parameter_grid=4/4 accounts=2 account_overflow_preflight=True depth_account_overflow_preflight=True multileg=1/2 depth_fills=1 custom_fills=1 run_handle=succeeded verified=True"
+    }
+  ],
+  "limitations": [
+    "The wheel was built from a dirty working tree and is an unpublished local candidate, not a release artifact.",
+    "This evidence does not cover a clean tagged build, macOS wheels, PyPI upload, or GitHub Release publication.",
+    "PostgreSQL live integration tests still require a configured QX_TEST_POSTGRES_DSN and database instance."
+  ]
+}

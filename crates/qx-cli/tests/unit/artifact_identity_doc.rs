@@ -92,7 +92,7 @@ const PACKAGING_STEPS: [(&str, &str, [&str; 3]); 2] = [
         [
             "-m pip --version",
             "-m maturin --version",
-            "-m pip wheel --no-deps --no-build-isolation",
+            "-m maturin build --release --locked",
         ],
     ),
     (
@@ -101,7 +101,7 @@ const PACKAGING_STEPS: [(&str, &str, [&str; 3]); 2] = [
         [
             "-m pip --version",
             "-m maturin --version",
-            "-m pip wheel --no-deps --no-build-isolation",
+            "-m maturin build --release --locked",
         ],
     ),
 ];

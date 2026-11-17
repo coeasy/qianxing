@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "kind": "multi-leg-exact-principal-v2",
+  "generated_at_utc": "2026-10-26T17:43:45Z",
+  "environment": {
+    "os": "Windows 11",
+    "architecture": "x86_64",
+    "rust_mode": "offline"
+  },
+  "behavior": {
+    "schema_v1": "raw principal behavior and artifact v5 compatibility retained",
+    "schema_v2": "per-leg exact principal with toward-zero 1e-9 raw projections",
+    "primary_principal_exact": "0.0000000002",
+    "reference_principal_exact": "0.0000000002",
+    "combined_principal_exact": "0.0000000004",
+    "per_leg_raw_projection": "0",
+    "combined_raw_projection": "0",
+    "artifact_version": 6,
+    "exact_equity_initial_and_final": "0.0000000004",
+    "interactive_report_principal": "0.0000000004",
+    "experiment_base_schema": "accepts MultiLegBacktestSpec v1/v2"
+  },
+  "validation": [
+    {"command":"cargo test -p qx-app --test multi_leg_backtest","passed":12,"failed":0},
+    {"command":"cargo test -p qx-app --test multi_leg_experiment","passed":9,"failed":0},
+    {"command":"cargo test -p qx-app --test spec_contract","passed":17,"failed":0},
+    {"command":"python -m unittest python.tests.test_sdk_layering","passed":39,"failed":0},
+    {"command":"cargo test -p qx-api -p qx-sdk -p qx-cli --no-run","passed":true},
+    {"command":"Draft 2020-12 schema check: MultiLeg v1/v2 input, artifact v4/v5/v6, research report v1, and experiment v1","passed":7,"failed":0},
+    {"command":"rustfmt --edition 2021 --config skip_children=true --check on changed Rust files","passed":true},
+    {"command":"python tools/check_architecture.py --fast","passed":228,"failed":0,"shards":4,"duplicates":0,"wall_seconds":121.05},
+    {"command":"git diff --check on changed paths","passed":true}
+  ],
+  "limitations": [
+    "This is local offline implementation evidence; no release was published and no external provider or sandbox was contacted.",
+    "The full workspace test suite, full Python suite, and cross-platform release matrix were not run.",
+    "Cross-currency collateral conversion, independent per-leg buying-power reservations, generic restore/export, complete cross-language golden coverage, and real sandbox/capacity acceptance remain open."
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "kind": "supplier-public-readonly-market-data-attempt",
+  "observed_at_utc": "2026-10-22T17:00:35Z",
+  "venue": "binance",
+  "network": "mainnet",
+  "instrument": "BTC/USDT.BINANCE",
+  "timeframe": "1m",
+  "requested_start_ms": 1792684811832,
+  "requested_end_ms": 1792688411835,
+  "commands": [
+    "ccxt-market-spec",
+    "ccxt-fetch-ohlcv"
+  ],
+  "outcome": "timeout",
+  "process_exit_code": 2,
+  "worker_timeout_ms": 12000,
+  "binary_sha256": "de77ce7c6c0257c425b80a3193ed3143492b89050f89b643fdba03c452672226",
+  "config_sha256": "9b16c899454e081a2820d7991796a56f05f2b57f42a518d0cc2789ee1bce44c8",
+  "market_spec_saved": false,
+  "ohlcv_saved": false,
+  "credentials_present": false,
+  "orders_sent": false,
+  "sandbox_tested_flip_allowed": false,
+  "detail": "CCXT public market-spec worker timed out after 12000 ms before producing a response; OHLCV retrieval was not attempted. No order was submitted."
+}

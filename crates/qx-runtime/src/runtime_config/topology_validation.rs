@@ -2,6 +2,7 @@
 
 use super::*;
 use qx_core::VenueFamily;
+use std::collections::BTreeSet;
 
 impl RuntimeConfig {
     pub fn validate(&self) -> Result<(), String> {
@@ -45,10 +46,34 @@ impl RuntimeConfig {
         if self.api.transport == ApiTransport::Plaintext && self.is_production() {
             return Err("production 环境禁止使用明文 API".into());
         }
-        // 「非 production」不等于「可以暴露到可路由地址」：名单里的 paper/sandbox/testnet
-        // 都是合法的非生产写法，而明文面不带身份认证 —— policy 为 None 时
-        // `qx-api` 直接把请求体里的 `permission` 当授予档位（lib.rs 的 submit_command），
-        // 于是可路由 bind 就是一个无鉴权的下单/控制入口。这条闸门按地址判，不按措辞判。
+        if self.api.transport == ApiTransport::Plaintext
+            && !self.environment.eq_ignore_ascii_case("paper")
+        {
+            return Err(
+                "明文 API 仅允许 paper 环境；sandbox/testnet/production 必须使用 mTLS 并配置 Operator 证书"
+                    .into(),
+            );
+        }
+        if self.api.transport == ApiTransport::Plaintext
+            && self.environment.eq_ignore_ascii_case("paper")
+            && self.workers.iter().any(|worker| {
+                worker.enabled
+                    && matches!(
+                        worker.role,
+                        WorkerRole::Execution | WorkerRole::SpreadRecovery
+                    )
+                    && qx_core::VenueFamily::parse_option(worker.venue_id.as_deref())
+                        != Some(qx_core::VenueFamily::Paper)
+            })
+        {
+            return Err(
+                "paper 明文 API 只允许启用 venue_id=paper 的 Execution/SpreadRecovery worker；真实 sandbox/testnet worker 必须使用 mTLS"
+                    .into(),
+            );
+        }
+        // 明文面只允许回环上的 paper 模拟。sandbox/testnet/production 需要 mTLS 身份；
+        // paper 的无认证服务仅开放固定 Trading 权限的 Paper workflow，并拒绝通用控制路由。
+        // 地址闸门仍独立保留，防止未来新环境/新路由绕过当前环境分类。
         if self.api.transport == ApiTransport::Plaintext && !api_bind.ip().is_loopback() {
             return Err(format!(
                 "明文 API 只能绑定回环地址，当前 bind={} 不是；请改用 transport=mtls 并配置 Operator 证书",
@@ -61,6 +86,74 @@ impl RuntimeConfig {
         for (operator_id, operator) in &self.api.operators {
             if operator_id.trim().is_empty() || operator.certificate.trim().is_empty() {
                 return Err("Operator 配置必须包含 id 和 certificate".into());
+            }
+        }
+        if self.api.strategy_deployment_nodes.len() > 1024 {
+            return Err("api.strategy_deployment_nodes 最多允许 1024 个注册节点".into());
+        }
+        if !self.api.strategy_deployment_nodes.is_empty()
+            && self.api.transport != ApiTransport::Mtls
+        {
+            return Err("strategy deployment node aggregation requires mTLS API transport".into());
+        }
+        let mut registered_node_ids = BTreeSet::new();
+        let mut registered_node_operators = BTreeSet::new();
+        for node in &self.api.strategy_deployment_nodes {
+            let valid_identity = |value: &str| {
+                !value.trim().is_empty()
+                    && value.len() <= 128
+                    && value == value.trim()
+                    && !value.chars().any(char::is_control)
+            };
+            if !valid_identity(&node.node_id)
+                || !valid_identity(&node.operator_id)
+                || node.freshness_window_ms == 0
+                || node.freshness_window_ms > 30 * 24 * 60 * 60 * 1000
+                || !registered_node_ids.insert(node.node_id.as_str())
+                || !registered_node_operators.insert(node.operator_id.as_str())
+            {
+                return Err(
+                    "strategy deployment node registration is invalid or duplicated".into(),
+                );
+            }
+            if !self
+                .api
+                .operators
+                .get(&node.operator_id)
+                .is_some_and(|operator| operator.permission == Permission::ReadOnly)
+            {
+                return Err(format!(
+                    "strategy deployment node {} must map to a ReadOnly mTLS operator",
+                    node.node_id
+                ));
+            }
+        }
+        if let Some(publisher) = &self.api.strategy_deployment_publisher {
+            let valid_server_host = !publisher.server_host.is_empty()
+                && publisher.server_host.len() <= 253
+                && publisher.server_host.split('.').all(|label| {
+                    !label.is_empty()
+                        && label.len() <= 63
+                        && label.as_bytes()[0].is_ascii_alphanumeric()
+                        && label.as_bytes()[label.len() - 1].is_ascii_alphanumeric()
+                        && label
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                });
+            if !valid_server_host
+                || publisher.server_host != publisher.server_host.trim()
+                || publisher.server_port == 0
+                || publisher.interval_ms < 1_000
+                || publisher.interval_ms > 30 * 24 * 60 * 60 * 1000
+                || [
+                    publisher.server_ca.as_str(),
+                    publisher.client_certificate_chain.as_str(),
+                    publisher.client_private_key.as_str(),
+                ]
+                .iter()
+                .any(|path| path.trim().is_empty())
+            {
+                return Err("strategy deployment publisher configuration is invalid".into());
             }
         }
         super::api_provider_validation::validate_api_data_providers(&self.api.data_providers)?;
@@ -269,6 +362,14 @@ impl RuntimeConfig {
         if self.scheduler.tick_interval_ms == 0 || self.scheduler.tick_interval_ms > 300_000 {
             return Err("Scheduler tick_interval_ms 必须在 1..=300000 内".into());
         }
+        if self.scheduler.max_pending_jobs == 0
+            || self.scheduler.max_pending_jobs > qx_storage::DEFAULT_MAX_PENDING_JOBS
+        {
+            return Err(format!(
+                "Scheduler max_pending_jobs 必须在 1..={} 内",
+                qx_storage::DEFAULT_MAX_PENDING_JOBS
+            ));
+        }
         self.validate_accounts()?;
         self.validate_strategy_config(&self.strategy, "Strategy", false)?;
         let mut strategy_ids = std::collections::BTreeSet::new();
@@ -329,25 +430,25 @@ impl RuntimeConfig {
                     return Err(format!(
                         "{} {field} 不能配置在 {:?} 角色；该角色的运行路径不会读取它",
                         worker.id, worker.role
-                    ))
+                    ));
                 }
                 RoleFieldStatus::Missing { field } => {
                     return Err(format!(
                         "{} {:?} 角色必须配置 {field}",
                         worker.id, worker.role
-                    ))
+                    ));
                 }
                 RoleFieldStatus::CredentialSource => {
                     return Err(format!(
                         "{} 必须且只能配置一份有效的 credential_env 或 credential_files",
                         worker.id
-                    ))
+                    ));
                 }
                 RoleFieldStatus::PaperCashOnRealVenue => {
                     return Err(format!(
                         "{} paper_initial_cash_raw 只能配置在 Paper worker",
                         worker.id
-                    ))
+                    ));
                 }
             }
             if worker
@@ -402,7 +503,7 @@ impl RuntimeConfig {
                         != Some(VenueFamily::Paper))
             {
                 return Err(format!(
-                        "{} Execution/SpreadRecovery worker 必须配置 instrument_spec_path；仅非 production 的 Paper smoke 允许兼容省略",
+                    "{} Execution/SpreadRecovery worker 必须配置 instrument_spec_path；仅非 production 的 Paper smoke 允许兼容省略",
                     worker.id
                 ));
             }

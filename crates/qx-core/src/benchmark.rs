@@ -75,8 +75,8 @@ fn benchmark_relative_metrics_by(
     let mut active = Vec::with_capacity(portfolio.len() - 1);
     let mut mean = 0.0;
     let mut squared_deviation = 0.0;
-    let mut benchmark_start = 0.0;
-    let mut benchmark_end = 0.0;
+    let mut benchmark_start = 0_i128;
+    let mut benchmark_end = 0_i128;
     let mut previous_pair = None;
     for (index, portfolio_row) in portfolio.iter().enumerate() {
         let benchmark_row = benchmark_at(index);
@@ -90,12 +90,20 @@ fn benchmark_relative_metrics_by(
             return Err(format!("基准对照权益与收盘价必须为正数: index={index}"));
         }
         if index == 0 {
-            benchmark_start = benchmark_row.1 as f64;
+            benchmark_start = benchmark_row.1;
         }
-        benchmark_end = benchmark_row.1 as f64;
+        benchmark_end = benchmark_row.1;
         if let Some((previous_portfolio, previous_benchmark)) = previous_pair {
-            let portfolio_return = portfolio_row.1 as f64 / previous_portfolio as f64 - 1.0;
-            let benchmark_return = benchmark_row.1 as f64 / previous_benchmark as f64 - 1.0;
+            let portfolio_delta = portfolio_row
+                .1
+                .checked_sub(previous_portfolio)
+                .ok_or_else(|| format!("组合权益周期变化溢出: index={index}"))?;
+            let benchmark_delta = benchmark_row
+                .1
+                .checked_sub(previous_benchmark)
+                .ok_or_else(|| format!("基准价格周期变化溢出: index={index}"))?;
+            let portfolio_return = portfolio_delta as f64 / previous_portfolio as f64;
+            let benchmark_return = benchmark_delta as f64 / previous_benchmark as f64;
             let value = (portfolio_return - benchmark_return) * 10_000.0;
             let count = (active.len() + 1) as f64;
             let delta = value - mean;
@@ -105,7 +113,11 @@ fn benchmark_relative_metrics_by(
         }
         previous_pair = Some((portfolio_row.1, benchmark_row.1));
     }
-    let benchmark_return_bps = ((benchmark_end / benchmark_start - 1.0) * 10_000.0).round() as i64;
+    let benchmark_delta = benchmark_end
+        .checked_sub(benchmark_start)
+        .ok_or_else(|| "基准累计价格变化溢出".to_string())?;
+    let benchmark_return_bps =
+        ((benchmark_delta as f64 / benchmark_start as f64) * 10_000.0).round() as i64;
     let active_return_bps = portfolio_return_bps
         .checked_sub(benchmark_return_bps)
         .ok_or_else(|| "组合超额收益 bps 溢出".to_string())?;
@@ -158,5 +170,24 @@ mod tests {
         assert!(benchmark_relative_metrics(&portfolio, &[(1, 100), (3, 110)], 1).is_err());
         assert!(benchmark_relative_metrics(&portfolio, &[(1, 100)], 1).is_err());
         assert!(benchmark_relative_metrics(&[(1, 100), (2, 0)], &[(1, 100), (2, 110)], 1).is_err());
+    }
+
+    #[test]
+    fn aligned_period_returns_preserve_sub_float_ulp_changes_in_large_raw_values() {
+        let metrics = benchmark_relative_metrics(
+            &[
+                (1, 1_000_000_000_000_000_000),
+                (2, 1_000_000_000_000_000_001),
+            ],
+            &[
+                (1, 1_000_000_000_000_000_000),
+                (2, 1_000_000_000_000_000_000),
+            ],
+            0,
+        )
+        .unwrap();
+
+        assert!(metrics.mean_active_return_bps.unwrap() > 0.0);
+        assert!(metrics.active_returns_bps[0] > 0.0);
     }
 }

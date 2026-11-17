@@ -1,0 +1,7 @@
+$ python benchmarks/run_prepared_evaluation_capacity.py --binary target/release/qx-cli.exe --iterations 25 --crash-repeats 5 --out maturity/evidence/prepared-evaluation-capacity-2026-10-29.json
+exit_code=0
+
+[stdout]
+{"crash_recovery_count": 7, "crash_recovery_samples": 35, "largest_journal_bytes": 7083209, "out": "maturity\\evidence\\prepared-evaluation-capacity-2026-10-29.json", "result_sha256": "e7191a7ecbfdc9fda8ab02e0439b6a387f6fd8a27aa54891a8d1f9a509c424be", "workload_count": 8}
+
+[stderr]

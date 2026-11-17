@@ -1,0 +1,142 @@
+$ podman exec qianxing-linux-test sh -lc set -eu; export PATH=/usr/local/cargo/bin:$PATH; cd /workspace/qianxing-07505ae; CARGO_TARGET_DIR=/target/linux-07505ae CARGO_BUILD_JOBS=1 QX_PYTHON=python3 cargo test --workspace --all-targets --locked --offline
+exit_code=125
+
+[stdout]
+
+[stderr]
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling syn v3.0.4
+   Compiling serde_core v1.0.229
+   Compiling zmij v1.0.23
+   Compiling serde v1.0.229
+   Compiling serde_derive v1.0.229
+   Compiling serde_json v1.0.151
+   Compiling memchr v2.8.3
+   Compiling itoa v1.0.18
+   Compiling qx-core v0.4.0 (/workspace/qianxing-07505ae/crates/qx-core)
+   Compiling cfg-if v1.0.4
+   Compiling shlex v2.0.1
+   Compiling find-msvc-tools v0.1.11
+   Compiling cc v1.4.4
+   Compiling libc v0.2.189
+   Compiling ring v0.17.14
+   Compiling getrandom v0.2.17
+   Compiling untrusted v0.9.0
+   Compiling qx-guanxing v0.4.0 (/workspace/qianxing-07505ae/crates/qx-guanxing)
+   Compiling memmap2 v0.9.11
+   Compiling libloading v0.8.9
+   Compiling qx-datastruct v0.4.0 (/workspace/qianxing-07505ae/crates/qx-datastruct)
+   Compiling qx-strategy v0.4.0 (/workspace/qianxing-07505ae/crates/qx-strategy)
+   Compiling qx-risk v0.4.0 (/workspace/qianxing-07505ae/crates/qx-risk)
+   Compiling qx-data v0.4.0 (/workspace/qianxing-07505ae/crates/qx-data)
+   Compiling qx-zhenlu v0.4.0 (/workspace/qianxing-07505ae/crates/qx-zhenlu)
+   Compiling qx-control v0.4.0 (/workspace/qianxing-07505ae/crates/qx-control)
+   Compiling syn v2.0.119
+   Compiling zerocopy v0.8.56
+   Compiling zerocopy-derive v0.8.56
+   Compiling qx-spec v0.4.0 (/workspace/qianxing-07505ae/crates/qx-spec)
+   Compiling qx-xingban v0.4.0 (/workspace/qianxing-07505ae/crates/qx-xingban)
+   Compiling qx-provider v0.4.0 (/workspace/qianxing-07505ae/crates/qx-provider)
+   Compiling version_check v0.9.5
+   Compiling generic-array v0.14.7
+   Compiling typenum v1.20.1
+   Compiling once_cell v1.21.4
+   Compiling qx-app v0.4.0 (/workspace/qianxing-07505ae/crates/qx-app)
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling ahash v0.8.12
+   Compiling cpufeatures v0.2.17
+   Compiling sha2 v0.10.9
+   Compiling vcpkg v0.2.15
+   Compiling pkg-config v0.3.34
+   Compiling libsqlite3-sys v0.30.1
+   Compiling qx-scheduler v0.4.0 (/workspace/qianxing-07505ae/crates/qx-scheduler)
+   Compiling hashbrown v0.14.5
+   Compiling qx-protocol v0.4.0 (/workspace/qianxing-07505ae/crates/qx-protocol)
+   Compiling hashlink v0.9.1
+   Compiling smallvec v1.16.0
+   Compiling bitflags v2.13.1
+   Compiling fallible-iterator v0.3.0
+   Compiling fallible-streaming-iterator v0.1.9
+   Compiling rusqlite v0.32.1
+   Compiling qx-storage v0.4.0 (/workspace/qianxing-07505ae/crates/qx-storage)
+   Compiling qx-execution v0.4.0 (/workspace/qianxing-07505ae/crates/qx-execution)
+   Compiling qx-factor v0.4.0 (/workspace/qianxing-07505ae/crates/qx-factor)
+   Compiling qx-runtime v0.4.0 (/workspace/qianxing-07505ae/crates/qx-runtime)
+   Compiling heck v0.5.0
+   Compiling crossbeam-utils v0.8.23
+   Compiling crossbeam-epoch v0.9.21
+   Compiling utf8parse v0.2.2
+   Compiling anstyle-parse v1.0.0
+   Compiling anstyle-query v1.1.5
+   Compiling zeroize v1.9.0
+   Compiling autocfg v1.5.1
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling crossbeam-deque v0.8.8
+   Compiling anstyle v1.0.14
+   Compiling colorchoice v1.0.5
+   Compiling anstream v1.0.0
+   Compiling num-traits v0.2.19
+   Compiling rustls-pki-types v1.15.1
+   Compiling rayon-core v1.13.0
+   Compiling clap_lex v1.1.1
+   Compiling either v1.18.0
+   Compiling strsim v0.11.1
+   Compiling clap_builder v4.6.7
+   Compiling clap_derive v4.6.7
+   Compiling half v2.7.1
+   Compiling alloca v0.4.0
+   Compiling ciborium-io v0.2.2
+   Compiling regex-syntax v0.8.11
+   Compiling plotters-backend v0.3.7
+   Compiling rustls v0.23.43
+   Compiling plotters-svg v0.3.7
+   Compiling regex-automata v0.4.18
+   Compiling ciborium-ll v0.2.2
+   Compiling clap v4.6.7
+   Compiling itertools v0.13.0
+   Compiling rustls-webpki v0.103.15
+   Compiling subtle v2.6.1
+   Compiling same-file v1.0.6
+   Compiling cast v0.3.0
+   Compiling criterion-plot v0.8.2
+   Compiling walkdir v2.5.0
+   Compiling rayon v1.12.0
+   Compiling plotters v0.3.7
+   Compiling ciborium v0.2.2
+   Compiling regex v1.13.1
+   Compiling page_size v0.6.0
+   Compiling tinytemplate v1.2.1
+   Compiling anes v0.1.6
+   Compiling oorandom v11.1.5
+   Compiling criterion v0.8.2
+   Compiling qx-api v0.4.0 (/workspace/qianxing-07505ae/crates/qx-api)
+   Compiling qx-process-io v0.4.0 (/workspace/qianxing-07505ae/crates/qx-process-io)
+   Compiling webpki-roots v1.0.9
+   Compiling qx-genglu v0.4.0 (/workspace/qianxing-07505ae/crates/qx-genglu)
+   Compiling qx-adapter v0.4.0 (/workspace/qianxing-07505ae/crates/qx-adapter)
+   Compiling crc32fast v1.5.2
+   Compiling thiserror v2.0.20
+   Compiling qx-orchestrator v0.4.0 (/workspace/qianxing-07505ae/crates/qx-orchestrator)
+   Compiling thiserror-impl v2.0.20
+   Compiling equivalent v1.0.2
+   Compiling hashbrown v0.17.1
+   Compiling zip v2.4.2
+   Compiling indexmap v2.14.2
+   Compiling qx-cli v0.4.0 (/workspace/qianxing-07505ae/crates/qx-cli)
+   Compiling displaydoc v0.2.7
+   Compiling qx-service v0.4.0 (/workspace/qianxing-07505ae/crates/qx-service)
+   Compiling qx-plugin v0.4.0 (/workspace/qianxing-07505ae/crates/qx-plugin)
+   Compiling target-lexicon v0.13.5
+   Compiling pyo3-build-config v0.29.2
+   Compiling pyo3-ffi v0.29.2
+   Compiling qx-sdk v0.4.0 (/workspace/qianxing-07505ae/crates/qx-sdk)
+   Compiling contract-tests v0.4.0 (/workspace/qianxing-07505ae/crates/contract-tests)
+   Compiling pyo3 v0.29.2
+   Compiling pyo3-macros-backend v0.29.2
+   Compiling pyo3-macros v0.29.2
+   Compiling qx-python v0.4.0 (/workspace/qianxing-07505ae/crates/qx-python)
+Error: Get "http://d/v6.1.4/libpod/exec/9fe9b416fc12616549fa2dc4655b33d4829850792a68fe5b46bc08b61689083c/json": EOF

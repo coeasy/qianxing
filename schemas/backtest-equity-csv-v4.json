@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/backtest-equity-csv-v4.json",
+  "title": "Qianxing Two-Leg Combined Backtest Equity CSV row v4",
+  "description": "Indexed independently funded two-leg equity row. Per-leg raw columns remain 1e-9 compatibility projections; equity_raw is their legacy combined projection and equity_exact is the scale-aware combined account equity.",
+  "type": "object",
+  "required": [
+    "index",
+    "ts",
+    "primary_equity_raw",
+    "reference_equity_raw",
+    "equity_raw",
+    "equity_exact"
+  ],
+  "properties": {
+    "index": {"type": "string", "pattern": "^[0-9]+$"},
+    "ts": {"type": "string", "pattern": "^[0-9]+$"},
+    "primary_equity_raw": {"type": "string", "pattern": "^-?[0-9]+$"},
+    "reference_equity_raw": {"type": "string", "pattern": "^-?[0-9]+$"},
+    "equity_raw": {"type": "string", "pattern": "^-?[0-9]+$"},
+    "equity_exact": {"type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]*[1-9])?$"}
+  },
+  "additionalProperties": false
+}

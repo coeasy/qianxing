@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "ccxt_native_oco_amend_cancel_serialization_local_validation",
+  "recorded_at_utc": "2026-11-13",
+  "source_revision": "f23e692c37bb928dde798a755c5e8c0e47280187",
+  "environment": {
+    "os": "Windows 11",
+    "rustc": "1.98.1 (48a229cea 2026-09-01)",
+    "temporary_directory": "target/qianxing-test-temp"
+  },
+  "commands": [
+    {
+      "argv": ["cargo", "test", "--locked", "--quiet", "-p", "qx-service", "--", "--test-threads=1"],
+      "environment": "TEMP and TMP point to target/qianxing-test-temp",
+      "exit_code": 0,
+      "selected_tests": 135,
+      "passed": 135,
+      "failed": 0,
+      "result": "passed"
+    },
+    {
+      "argv": ["cargo", "fmt", "--all", "--", "--check"],
+      "exit_code": 0,
+      "result": "passed"
+    },
+    {
+      "argv": ["git", "diff", "--check"],
+      "exit_code": 0,
+      "result": "passed"
+    }
+  ],
+  "coverage": [
+    "CCXT OCO child amendment acquires the shared account admission lock before inspecting group membership or writing the durable amendment overlay, and keeps that lock through OMS/EventLog confirmation.",
+    "CCXT single-child cancellation and untriggered native OCO group cancellation use the same account admission lock, so amendment and cancellation cannot both pass stale group-state checks concurrently.",
+    "The prepared amendment executor exposes a lock-held entry point while preserving the existing self-locking entry point for other connectors."
+  ],
+  "scope_limitations": [
+    "This is local Windows service test evidence; it does not establish exchange-side atomicity or behavior under an actual venue race.",
+    "No private exchange API was called and no order was changed.",
+    "Binance group amendment and OKX/Bitget Sandbox lifecycle acceptance remain unverified."
+  ]
+}

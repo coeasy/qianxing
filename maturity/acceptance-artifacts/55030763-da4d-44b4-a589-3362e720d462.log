@@ -1,0 +1,28 @@
+$ podman exec qianxing-linux-test sh -lc set -eu; export PATH=/usr/local/cargo/bin:$PATH; cd /workspace/qianxing-07505ae; CARGO_TARGET_DIR=/target CARGO_BUILD_JOBS=1 QX_PYTHON=python3 cargo build -p qx-python --locked --offline
+exit_code=0
+
+[stdout]
+
+[stderr]
+   Compiling qx-core v0.4.0 (/workspace/qianxing-07505ae/crates/qx-core)
+   Compiling qx-guanxing v0.4.0 (/workspace/qianxing-07505ae/crates/qx-guanxing)
+   Compiling qx-datastruct v0.4.0 (/workspace/qianxing-07505ae/crates/qx-datastruct)
+   Compiling qx-data v0.4.0 (/workspace/qianxing-07505ae/crates/qx-data)
+   Compiling qx-risk v0.4.0 (/workspace/qianxing-07505ae/crates/qx-risk)
+   Compiling qx-zhenlu v0.4.0 (/workspace/qianxing-07505ae/crates/qx-zhenlu)
+   Compiling pyo3-ffi v0.29.2
+   Compiling qx-control v0.4.0 (/workspace/qianxing-07505ae/crates/qx-control)
+   Compiling qx-strategy v0.4.0 (/workspace/qianxing-07505ae/crates/qx-strategy)
+   Compiling pyo3 v0.29.2
+   Compiling qx-spec v0.4.0 (/workspace/qianxing-07505ae/crates/qx-spec)
+   Compiling qx-protocol v0.4.0 (/workspace/qianxing-07505ae/crates/qx-protocol)
+   Compiling qx-scheduler v0.4.0 (/workspace/qianxing-07505ae/crates/qx-scheduler)
+   Compiling qx-app v0.4.0 (/workspace/qianxing-07505ae/crates/qx-app)
+   Compiling qx-storage v0.4.0 (/workspace/qianxing-07505ae/crates/qx-storage)
+   Compiling qx-xingban v0.4.0 (/workspace/qianxing-07505ae/crates/qx-xingban)
+   Compiling qx-execution v0.4.0 (/workspace/qianxing-07505ae/crates/qx-execution)
+   Compiling qx-python v0.4.0 (/workspace/qianxing-07505ae/crates/qx-python)
+   Compiling qx-provider v0.4.0 (/workspace/qianxing-07505ae/crates/qx-provider)
+   Compiling qx-factor v0.4.0 (/workspace/qianxing-07505ae/crates/qx-factor)
+   Compiling qx-runtime v0.4.0 (/workspace/qianxing-07505ae/crates/qx-runtime)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 12s

@@ -1,0 +1,7 @@
+$ python tools/check_strategy_deployment_lifecycle_evidence.py maturity/evidence/strategy-deployment-lifecycle-2026-11-04.json
+exit_code=0
+
+[stdout]
+PASS: maturity\evidence\strategy-deployment-lifecycle-2026-11-04.json (ff3dd0b08fd5409b8a749d9b3f8a3be6)
+
+[stderr]

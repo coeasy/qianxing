@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.dev/schema/account-snapshot-v3.json",
+  "title": "Qianxing Canonical Account Snapshot v3",
+  "type": "object",
+  "required": ["protocol", "schema_version", "header", "cash_raw", "equity_raw", "positions", "orders", "fills", "transfers", "reconcile"],
+  "properties": {
+    "protocol": {"const": "QIANXING_ACCOUNT"},
+    "schema_version": {"const": 3},
+    "header": {
+      "type": "object",
+      "required": ["snapshot_id", "account_id", "portfolio_id", "venue_id", "as_of", "event_seq", "state_hash"]
+    },
+    "cash_raw": {"type": "object", "additionalProperties": {"type": "integer"}},
+    "cash_exact": {"type": "object", "additionalProperties": {"$ref": "#/$defs/exact_decimal"}, "description": "按币种保存的精确净钱包余额。cash_raw 是相同余额截断到 1e9 的兼容投影。"},
+    "equity_raw": {"type": ["integer", "null"], "description": "账户权益 raw 值。本构建有生产者；仅在单报价币现货口径可安全估值时发布，复杂组合或估值不完整时为 null，不是 0；多币种组合净值见 /account/portfolio 的 equity_by_currency_raw。"},
+    "available_raw": {"type": ["integer", "null"], "description": "可用资金 = 结算币种账簿现金，单位 raw。本构建有生产者；null 表示这一层没算出它，不是 0。"},
+    "margin_raw": {"type": ["integer", "null"], "description": "账户级保证金占用，单位 raw。本构建这一层没有生产者，恒为 null——不是 0，也不表示该账户没有保证金占用。"},
+    "frozen_raw": {"type": ["integer", "null"], "description": "账户级冻结金额，单位 raw。本构建这一层没有生产者，恒为 null——不是 0，也不表示该账户没有冻结资金。"},
+    "realized_pnl_raw": {"type": ["integer", "null"], "description": "账户级已实现盈亏 raw 值。本构建有生产者；仅在单报价币现货口径可安全估值时发布，其他产品/币种或溢出时为 null，不是 0。"},
+    "unrealized_pnl_raw": {"type": ["integer", "null"], "description": "账户级未实现盈亏 raw 值。本构建有生产者；仅在单报价币现货口径可安全估值时发布，缺标记价或币种/产品不匹配时为 null，不是 0。持仓行内同名列另按交易所上报。"},
+    "fees_raw": {"type": ["integer", "null"], "description": "结算币种的净成交费用 raw 值（正数为费用、负数为返佣）。本构建有生产者；任何费用属于其他币种时为 null，不能将不同币种的 raw 数字相加。"},
+    "fees_by_currency_raw": {"type": "object", "additionalProperties": {"type": "integer"}, "description": "按手续费原币种累计的净费用 raw 值（正数为费用、负数为返佣）；币种之间禁止相加。"},
+    "funding_raw": {"type": ["integer", "null"], "description": "账户级资金费累计，单位 raw。本构建这一层没有生产者，恒为 null——不是 0。"},
+    "positions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "settlement_currency": {"type": "string", "minLength": 1},
+          "exact_amounts": {"$ref": "#/$defs/exact_position_amounts"}
+        }
+      }
+    },
+    "orders": {"type": "object", "additionalProperties": {"type": "object"}},
+    "fills": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "exact_amounts": {
+            "type": ["object", "null"],
+            "properties": {
+              "quantity": {"$ref": "#/$defs/exact_decimal"},
+              "price": {"$ref": "#/$defs/exact_decimal"}
+            }
+          },
+          "exact_fees": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["amount", "currency"],
+              "properties": {
+                "amount": {"$ref": "#/$defs/exact_decimal"},
+                "currency": {"type": ["string", "null"]},
+                "source_trade_ids": {"type": "array", "items": {"type": "string"}}
+              }
+            }
+          }
+        }
+      }
+    },
+    "transfers": {"type": "object", "additionalProperties": {"type": "object"}},
+    "reconcile": {"type": "object"}
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "exact_position_amounts": {
+      "type": "object",
+      "required": ["quantity"],
+      "properties": {
+        "quantity": {"$ref": "#/$defs/exact_decimal"},
+        "average_price": {"$ref": "#/$defs/exact_decimal"},
+        "mark_price": {"$ref": "#/$defs/exact_decimal"},
+        "liquidation_price": {"$ref": "#/$defs/exact_decimal"},
+        "unrealized_pnl": {"$ref": "#/$defs/exact_decimal"},
+        "initial_margin": {"$ref": "#/$defs/exact_decimal"},
+        "maintenance_margin": {"$ref": "#/$defs/exact_decimal"}
+      },
+      "additionalProperties": false
+    },
+    "exact_decimal": {
+      "type": "object",
+      "required": ["coefficient", "scale"],
+      "properties": {
+        "coefficient": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)$"},
+        "scale": {"type": "integer", "minimum": 0, "maximum": 18}
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -19,7 +19,7 @@ fn frame_is_pit_bounded_and_round_trips_columns() {
     let frame = BarFrame::from_view(instrument, &view, 2).unwrap();
     assert_eq!(frame.len(), 2);
     assert_eq!(frame.close_at(1), Some(11));
-    assert_eq!(Vec::<Bar>::from(&frame)[1].ts, 2);
+    assert_eq!(frame.bars().expect("valid frame bars")[1].ts, 2);
     let payload = frame.to_json();
     assert!(payload.contains("\"schema_version\":1"));
     assert!(payload.contains("\"volume_raw\":[1,2]"));

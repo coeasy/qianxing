@@ -89,6 +89,31 @@ impl BuiltinStrategyKind {
         }
     }
 
+    /// Requirements declared by the built-in algorithm itself, separate from
+    /// optional requirements selected by runtime configuration.
+    pub fn required_capabilities(self) -> &'static [crate::capabilities::StrategyCapability] {
+        use crate::capabilities::StrategyCapability::{Bar, MultiInstrument};
+        match self {
+            Self::SmaCross
+            | Self::EmaCross
+            | Self::Macd
+            | Self::Rsi
+            | Self::Bollinger
+            | Self::DonchianBreakout
+            | Self::Momentum
+            | Self::MeanReversion
+            | Self::Grid
+            | Self::AtrTrend
+            | Self::KeltnerTrend
+            | Self::VwapReversion
+            | Self::VolatilityBreakout => &[Bar],
+            Self::PairsArbitrage
+            | Self::BasisArbitrage
+            | Self::CrossVenueArbitrage
+            | Self::SpotFuturesArbitrage => &[Bar, MultiInstrument],
+        }
+    }
+
     /// 双腿套利口径：这四个 kind 需要第二条 BarFrame 与 `reference_instrument`，
     /// 只有 `backtest multi-builtin` 喂得动，单标的入口（含 `init --strategy`）必须拒绝。
     pub const fn needs_reference_leg(self) -> bool {
@@ -152,9 +177,15 @@ pub struct BuiltinStrategyConfig {
     pub reference_instrument: Option<InstrumentId>,
     pub primary_policy: Option<OrderPolicy>,
     pub reference_policy: Option<OrderPolicy>,
+    /// Whether a single-instrument bearish signal may target a short position.
+    /// Pair strategies keep their signed hedge leg semantics independently.
+    pub allow_short: bool,
 }
 
 impl BuiltinStrategyConfig {
+    pub const DEFAULT_FAST_WINDOW: usize = 5;
+    pub const DEFAULT_SLOW_WINDOW: usize = 20;
+
     pub fn new(
         kind: BuiltinStrategyKind,
         strategy_id: impl Into<String>,
@@ -204,13 +235,14 @@ impl BuiltinStrategyConfig {
             target_volatility_bps: None,
             target_kelly_fraction_bps: None,
             kelly_lookback_bars: None,
-            fast_window: 5,
-            slow_window: 20,
+            fast_window: Self::DEFAULT_FAST_WINDOW,
+            slow_window: Self::DEFAULT_SLOW_WINDOW,
             period: 14,
             threshold_bps: 100,
             reference_instrument,
             primary_policy: None,
             reference_policy: None,
+            allow_short: false,
         };
         config.validate()?;
         Ok(config)

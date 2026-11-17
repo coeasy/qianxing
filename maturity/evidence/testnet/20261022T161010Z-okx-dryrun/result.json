@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "kind": "okx-ccxt-sandbox-acceptance",
+  "venue": "okx",
+  "outcome": "fail",
+  "started_at_utc": "2026-10-22T16:10:10Z",
+  "finished_at_utc": "2026-10-22T16:10:11Z",
+  "started_at_unix_ms": 1792685410736,
+  "finished_at_unix_ms": 1792685411015,
+  "duration_ms": 279,
+  "binary": "D:\\aex_work\\qianxing\\target\\release\\qx-cli.exe",
+  "instrument": "BTC/USDT:USDT.OKX",
+  "send_orders": false,
+  "credentials_present": false,
+  "stages": [
+    {
+      "stage": "runtime-check",
+      "argv": [
+        "runtime-check",
+        "D:\\aex_work\\qianxing\\maturity\\evidence\\testnet\\20261022T161010Z-okx-dryrun\\qianxing.runtime.acceptance.json",
+        "--json"
+      ],
+      "exit_code": 2,
+      "duration_ms": 276,
+      "output_tail": [
+        "  ]",
+        "}",
+        "[qx-cli · CLI] 运行时配置校验失败: 运行时配置校验未通过"
+      ]
+    }
+  ],
+  "detail": "验收配置未通过 runtime-check（退出码 2）：['worker ccxt-market-main endpoint 文件不存在: D:\\\\aex_work\\\\qianxing\\\\maturity\\\\evidence\\\\testnet\\\\20261022T161010Z-okx-dryrun\\\\qianxing.ccxt.exchange.example.json (configured=qianxing.ccxt.exchange.example.json)', 'worker ccxt-execution-main endpoint 文件不存在: D:\\\\aex_work\\\\qianxing\\\\maturity\\\\evidence\\\\testnet\\\\20261022T161010Z-okx-dryrun\\\\qianxing.ccxt.exchange.example.json (configured=qianxing.ccxt.exchange.example.json)', 'worker ccxt-reconciler-main endpoint 文件不存在: D:\\\\aex_work\\\\qianxing\\\\maturity\\\\evidence\\\\testnet\\\\20261022T161010Z-okx-dryrun\\\\qianxing.ccxt.exchange.example.json (configured=qianxing.ccxt.exchange.example.json)', '读取 worker ccxt-execution-main CCXT 配置失败 D:\\\\aex_work\\\\qianxing\\\\maturity\\\\evidence\\\\testnet\\\\20261022T161010Z-okx-dryrun\\\\qianxing.ccxt.exchange.example.json: 系统找不到指定的文件。 (os error 2)', '读取 worker ccxt-reconciler-main CCXT 配置失败 D:\\\\aex_work\\\\qianxing\\\\maturity\\\\evidence\\\\testnet\\\\20261022T161010Z-okx-dryrun\\\\qianxing.ccxt.exchange.example.json: 系统找不到指定的文件。 (os error 2)']",
+  "sandbox_tested_flip": {
+    "allowed": false,
+    "rule": "outcome=pass、credentials_present=true 且 send_orders=true；全部必需阶段成功；live-check 必须满足只读安全断言；唯一允许的非零阶段是带幂等拒绝证据的重复提交",
+    "archive_required": true
+  }
+}

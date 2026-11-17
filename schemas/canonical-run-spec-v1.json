@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/canonical-run-spec-v1.json",
+  "title": "Qianxing Canonical Run Spec v1",
+  "description": "Path-independent run identity. Strategy source, dataset content, market rules, UTC millisecond clock, seed, behavior, and resolved execution models are explicit. Local location keys such as path/file/directory/uri and run_id are forbidden in semantic objects. Decimal and large integer values use canonical strings.",
+  "type": "object",
+  "required": ["schema_version", "run_type", "code_revision", "strategies", "datasets", "market_rules", "clock", "random_seed", "behavior", "execution_model"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_type": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$"},
+    "code_revision": {"type": "string", "minLength": 1},
+    "strategies": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["strategy_id", "strategy_version", "parameters"],
+        "properties": {
+          "strategy_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\u0000-\\u001f]+$"},
+          "strategy_version": {"type": "string", "minLength": 1},
+          "source_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+          "parameters": {"type": "object"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "datasets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["role", "instrument", "content_fingerprint", "start_ts_ms", "end_ts_ms"],
+        "properties": {
+          "role": {"type": "string", "minLength": 1},
+          "instrument": {"type": "string", "minLength": 1},
+          "content_fingerprint": {"type": "string", "minLength": 1},
+          "start_ts_ms": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+          "end_ts_ms": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}
+        },
+        "additionalProperties": false
+      }
+    },
+    "market_rules": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}},
+    "clock": {
+      "type": "object",
+      "required": ["start_ts_ms", "end_ts_ms", "timestamp_unit", "timezone"],
+      "properties": {
+        "start_ts_ms": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "end_ts_ms": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "timestamp_unit": {"const": "unix_ms"},
+        "timezone": {"const": "UTC"}
+      },
+      "additionalProperties": false
+    },
+    "random_seed": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
+    "behavior": {"type": "object"},
+    "execution_model": {"type": "object"},
+    "extensions": {"type": "object"}
+  },
+  "additionalProperties": false
+}

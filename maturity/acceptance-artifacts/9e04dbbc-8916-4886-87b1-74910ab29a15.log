@@ -1,0 +1,25 @@
+$ python -c import os,runpy,subprocess,sys; x=runpy.run_path('tools/check_architecture.py',run_name='gate_module'); x['builtin_strategy_host_module_check'](); x['python_strategy_provider_module_check'](); x['builtin_signal_check'](); sys.exit(1 if x['failures'] else subprocess.call(['cargo','check','--workspace','-j','1'],env={**os.environ,'CARGO_PROFILE_DEV_DEBUG':'0'}))
+exit_code=0
+
+[stdout]
+[PASS] 内置 Rust 策略的配置装配、双腿数据读取、确定事件投递与共享 contract 输出由 builtin 子模块唯一拥有，保留稳定入口
+[PASS] Python strategy provider selection/配置由 providers 子模块唯一拥有，凭证仍与普通 worker 环境隔离，host facade 保留启动顺序
+[PASS] strategy.builtin_* 四项的覆盖赋值全仓只有 qx-runtime 一处（新增赋值点即第二份口径）
+[PASS] 运行时策略信号映射、覆盖与来源判定由 qx-runtime 单点实现，service/worker 复用
+[PASS] CLI 不保留已迁入 qx-service 的内置信号包装或孤儿模块
+[PASS] backtest builtin 保留 runtime 信号参数并委托共享 strategy 回测读点
+[PASS] depth.rs 必须把已加载的配置快照用于信号参数（backtest book）
+[PASS] multi_builtin.rs 必须把已加载的配置快照用于信号参数（backtest multi-builtin）
+[PASS] 内置配置由 qx-runtime 单点装配，strategy backtest 复用同一解析入口
+[PASS] 运行时单点必须先应用配置覆盖、再无条件校验；service 仅消费已加载快照
+[PASS] 策略链那条链也要在覆盖之后复检，非法组合不许走到印口径
+[PASS] 四条链各印一行生效口径，判词是同一串键序（Bar 链共用那句，深度链从摘要投影同一串）
+[PASS] 生效口径的措辞全仓只在应用层定义一次（各链自己拼字符串就会各说一套）
+[PASS] 帮助文本点名四个信号键并承诺写了就必须生效
+[PASS] 深度档与多腿链的帮助都写明信号参数在本链生效
+[PASS] 多腿内置策略的默认值与参考腿校验由 qx-strategy 单源构造
+[PASS] 命令行子进程用例逐条咬住 Q64 口径（四条链 + 两类非法组合）
+[PASS] 交易链路（paper/live）那侧也有一条进程内用例钉住同一份声明信号
+
+[stderr]
+    Finished `dev` profile [unoptimized] target(s) in 0.64s

@@ -1,0 +1,11 @@
+$ python -c import runpy; runpy.run_path('tools/check_architecture.py')['strategy_project_execution_boundary_check']()
+exit_code=0
+
+[stdout]
+[PASS] 静态 project doctor 只解析策略语法，不导入用户策略
+[PASS] 动态 doctor 必须走有超时的进程树执行器
+[PASS] 动态预检超时/返回会清理 POSIX 进程组和 Windows Job Object 子进程
+[PASS] 项目计划明确区分无导入 server plan 与会执行用户代码的 local plan/run/动态 doctor
+[PASS] 文档列出所有直接/远端策略代码执行命令
+
+[stderr]

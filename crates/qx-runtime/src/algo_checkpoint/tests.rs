@@ -17,6 +17,10 @@ impl VenuePort for TestVenue {
         qx_zhenlu::venue_capabilities::PAPER_VENUE_CAPABILITIES
     }
 
+    fn execution_readiness(&self) -> Result<(), String> {
+        Ok(())
+    }
+
     fn submit_order(&mut self, order: Order, _ts: u64) -> Result<Vec<ExecutionEvent>, String> {
         Ok(vec![ExecutionEvent::Accepted {
             client_order_id: order.client_id,
@@ -82,10 +86,14 @@ fn root(label: &str) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    std::env::temp_dir().join(format!(
-        "qx-algo-checkpoint-{label}-{}-{unique}",
-        std::process::id()
-    ))
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/test-temp")
+        .join(format!(
+            "qx-algo-checkpoint-{label}-{}-{unique}",
+            std::process::id()
+        ));
+    std::fs::create_dir_all(&path).expect("create algorithm checkpoint test directory");
+    path
 }
 
 fn initial_state(parent_id: &str) -> AlgoExecutionState {
@@ -105,6 +113,7 @@ fn initial_state(parent_id: &str) -> AlgoExecutionState {
             account_id: "main".into(),
             trace: None,
             policy: None,
+            exact_amounts: None,
         },
     })
     .unwrap()

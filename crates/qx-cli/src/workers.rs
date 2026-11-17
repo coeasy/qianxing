@@ -12,4 +12,6 @@ pub(crate) use strategy_orders::{
 mod scheduler_worker;
 mod strategy_worker;
 pub(crate) use scheduler_worker::run_scheduler_worker;
+#[cfg(feature = "bench-prepared-evaluation")]
+pub(crate) use strategy_worker::run_prepared_evaluation_bench;
 pub(crate) use strategy_worker::run_strategy_worker;

@@ -1,0 +1,7 @@
+$ python benchmarks/run_strategy_worker_crash_recovery.py --runtime deploy/qianxing.runtime.paper-strategy.example.json --binary target/debug/qx-cli.exe --output maturity/evidence/strategy-worker-crash-recovery-2026-10-29.json
+exit_code=0
+
+[stdout]
+{"out": "D:\\aex_work\\qianxing\\maturity\\evidence\\strategy-worker-crash-recovery-2026-10-29.json", "recovery_count": 6, "passed": true}
+
+[stderr]

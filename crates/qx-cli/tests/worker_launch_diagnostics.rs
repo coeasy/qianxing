@@ -122,7 +122,8 @@ fn fallback_interpreter_names_its_source_when_it_fails() {
     }
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     assert!(
-        stderr.contains("QX_PYTHON 未设置，回落 PATH python"),
+        stderr.contains("QX_PYTHON 未设置，回落 PATH python")
+            || stderr.contains("QX_PYTHON 未设置，回落 PATH python3"),
         "回落必须被明确报告，不能让人以为配置里写了解释器:\n{stderr}"
     );
 }

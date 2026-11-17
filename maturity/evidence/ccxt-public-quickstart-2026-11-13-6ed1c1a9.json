@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-11-13T11:33:18Z",
+  "source_revision": "6ed1c1a9d1d800045d0802791a32cd73c5e40a55",
+  "merge_commit": "b7cb12aa72f37bbda5391b09bf853d258a1b130d",
+  "workflow": {
+    "name": "Public CCXT quickstart acceptance",
+    "run_id": 43416308831,
+    "url": "https://github.com/coeasy/qianxing/actions/runs/43416308831",
+    "head_sha": "6ed1c1a9d1d800045d0802791a32cd73c5e40a55",
+    "python": "3.12.16",
+    "ccxt": "4.5.89",
+    "conclusion": "failure",
+    "scope": "Linux release wheel and bundled CLI; 30-day 1h public perpetual OHLCV; quality manifest; public default fees; backtest; HTML report and runtime scaffold. No credentials were loaded, no private API was called, and no orders were sent. OKX and Bitget completed all assertions. Binance initialized its exchange-matched runtime, then public exchangeInfo returned HTTP 451 restricted-location eligibility."
+  },
+  "exchange_results": [
+    {
+      "exchange": "okx",
+      "instrument": "BTC/USDT:USDT.OKX",
+      "job_id": 131854979334,
+      "conclusion": "success",
+      "artifact_id": 14032083447,
+      "artifact_name": "public-ccxt-quickstart-okx",
+      "artifact_sha256": "24d05362ca38569300415da090f46de3eb23e211249fb9bd46ab24b473870e7a",
+      "artifact_sha256_verified_locally": false,
+      "runtime_venue_matches_exchange": true,
+      "bars": 720,
+      "missing_intervals": 0,
+      "fills": 38,
+      "rejected_orders": 0,
+      "return_bps": -6,
+      "max_drawdown_bps": 13,
+      "result_hash": "54f4c7917a21b0eb",
+      "quality_manifest_fingerprint": "7ee1e6a92e1912f1",
+      "report_html_present": true,
+      "orders_sent": false
+    },
+    {
+      "exchange": "bitget",
+      "instrument": "BTC/USDT:USDT.BITGET",
+      "job_id": 131854978987,
+      "conclusion": "success",
+      "artifact_id": 14032701233,
+      "artifact_name": "public-ccxt-quickstart-bitget",
+      "artifact_sha256": "2e5d466fa25dbad0ef9d4dcf330ddf3d215b10b4c3985bf1e8fdcc0eeb633e15",
+      "artifact_sha256_verified_locally": false,
+      "runtime_venue_matches_exchange": true,
+      "bars": 720,
+      "missing_intervals": 0,
+      "fills": 38,
+      "rejected_orders": 0,
+      "return_bps": -599,
+      "max_drawdown_bps": 1297,
+      "result_hash": "42c96ee3edd8856f",
+      "quality_manifest_fingerprint": "d6e25d17f7177402",
+      "report_html_present": true,
+      "orders_sent": false
+    },
+    {
+      "exchange": "binance",
+      "instrument": "BTC/USDT:USDT.BINANCE",
+      "job_id": 131854978705,
+      "conclusion": "failure",
+      "artifact_id": 14032780621,
+      "artifact_name": "public-ccxt-quickstart-binance",
+      "artifact_sha256": "b9cd487109cefad7b110fd9959e306ed8a3f4507f93db90c793cf06d1e2593dd",
+      "artifact_sha256_verified_locally": false,
+      "runtime_venue_matches_exchange": true,
+      "report_html_present": false,
+      "blocked_at": "CCXT load_markets",
+      "http_status": 451,
+      "message": "api.binance.com/api/v3/exchangeInfo returned a restricted-location eligibility response after runtime initialization and public quickstart preflight passed",
+      "orders_sent": false
+    }
+  ],
+  "interpretation": [
+    "This run proves the Linux bundled install and public-data backtest/report path for the tested OKX and Bitget configurations. Both exchanges produced 720 hourly bars with no missing intervals, 38 fills and zero rejected orders.",
+    "Binance reached the public exchangeInfo endpoint from the hosted runner but was denied with HTTP 451. This is an environment eligibility block, not evidence of Binance public-data completion.",
+    "All exchange runs were read-only and used no credential values. These results do not prove private API access, sandbox order execution, connector maturity, live readiness or strategy profitability. Artifact digests are the GitHub Actions upload digests and have not been verified locally."
+  ]
+}

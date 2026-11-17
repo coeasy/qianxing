@@ -144,6 +144,14 @@ fn runtime_config_fingerprint_locks_published_configuration() {
 fn segmented_event_log_storage_configuration_is_positive_and_optional() {
     let mut config = config();
     assert_eq!(config.storage.event_log_segment_events, None);
+    let mut legacy_json = serde_json::to_value(&config).unwrap();
+    legacy_json["storage"]
+        .as_object_mut()
+        .unwrap()
+        .remove("event_log_segment_events");
+    let legacy = RuntimeConfig::from_json(&legacy_json.to_string()).unwrap();
+    assert_eq!(legacy.storage.event_log_segment_events, None);
+
     config.storage.event_log_segment_events = Some(1024);
     assert!(config.validate().is_ok());
     config.storage.event_log_segment_events = Some(0);
@@ -274,6 +282,7 @@ fn binance_private_workers_require_one_valid_credential_source() {
 #[test]
 fn execution_worker_requires_account_venue_and_credentials() {
     let mut config = config();
+    configure_testnet_mtls(&mut config);
     config.workers.push(WorkerConfig {
         id: "execution".into(),
         role: WorkerRole::Execution,

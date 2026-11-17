@@ -1,0 +1,78 @@
+{
+  "source_commit": "f72e4564b900350a5f9b14311ce6349f4d781583",
+  "build": {
+    "binary_sha256": "566a3e62a635e283dad18069460848ac51a43779ecc121ff2844a3f604e9bfc9",
+    "binary": "/target/repro-ci438/debug/qx-cli",
+    "command": "cargo build -p qx-cli --no-default-features --features sqlite,postgres,bench-prepared-evaluation",
+    "identity": "qianxing 0.4.0 (build f72e456, target x86_64-unknown-linux-gnu, profile debug, schemas 9e1b1153f5086e9ec7162064a6d0249d476e9c954e258d5eff722d75165ad05e)"
+  },
+  "captured_at_utc": "2026-11-10T05:18:55Z",
+  "kind": "linux_postgres_deployment_lifecycle_repeatability",
+  "environment": {
+    "database": "PostgreSQL 16 (postgres:16-alpine)",
+    "python": "3.11.2",
+    "rust": "1.98.1 (48a229cea 2026-09-01)",
+    "runtime": "Podman",
+    "container": "qianxing-linux-test"
+  },
+  "schema_version": 1,
+  "acceptance": {
+    "checker": "tools/check_strategy_deployment_lifecycle_evidence.py --storage-backend postgres",
+    "scenario": "PostgreSQL Paper lifecycle and Python checkpoint restart",
+    "runs": [
+      {
+        "path": "maturity/evidence/linux-podman-postgres-deployment-lifecycle-run-1-2026-11-10.json",
+        "sha256": "f1e03ebdf1259ed126d3afe0a9031988e296f0bc95277de9e570f6c47fdc3a8f",
+        "orders_sent": false,
+        "venue_worker_started": false,
+        "external_network_access": null,
+        "supervisor_stopped_gracefully": true,
+        "outcome": "passed",
+        "run_id": "196a97866ec0461192847bcbfe246aaa",
+        "supervisor_exit_code": 0,
+        "operations": [
+          "deploy:succeeded",
+          "pause:succeeded",
+          "resume:succeeded",
+          "rollback:succeeded",
+          "deploy:failed",
+          "stop:succeeded"
+        ]
+      },
+      {
+        "path": "maturity/evidence/linux-podman-postgres-deployment-lifecycle-run-2-2026-11-10.json",
+        "sha256": "378b10296f31059e3395efde9d3c10f73b95410ea56476b84f349d8c1104784d",
+        "orders_sent": false,
+        "venue_worker_started": false,
+        "external_network_access": null,
+        "supervisor_stopped_gracefully": true,
+        "outcome": "passed",
+        "run_id": "b92d8ab0e6a945c199cd1befc6f06cdf",
+        "supervisor_exit_code": 0,
+        "operations": [
+          "deploy:succeeded",
+          "pause:succeeded",
+          "resume:succeeded",
+          "rollback:succeeded",
+          "deploy:failed",
+          "stop:succeeded"
+        ]
+      }
+    ],
+    "checker_result": "passed",
+    "id": "R13-AC01"
+  },
+  "ci": {
+    "retry_conclusion": "success",
+    "initial_lifecycle_job_failure_retried": true,
+    "conclusion": "success",
+    "successful_jobs": "33/33",
+    "run_number": 438,
+    "run_attempt": 2,
+    "run_id": 42757064332
+  },
+  "limitations": [
+    "The first CI lifecycle job failed but its captured stdout/stderr was not present in runner logs; the initial cause remains unknown.",
+    "These local runs exercise loopback Paper supervision only; no venue workers, external network requests, or orders were enabled."
+  ]
+}

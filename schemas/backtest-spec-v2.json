@@ -1,0 +1,1154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/backtest-spec-v2.json",
+  "title": "Qianxing BacktestSpec v2",
+  "description": "qx-app 单标的 Bar 回测输入。初始资金使用带 scale 的 ExactDecimal；initial_cash_raw 是 1e-9 向零兼容投影。",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "instrument",
+    "bars_path",
+    "settlement_currency",
+    "initial_cash_raw",
+    "seed",
+    "output_dir",
+    "strategy",
+    "initial_cash_exact"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "instrument": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bars_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": ".*\\S.*"
+    },
+    "settlement_currency": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": ".*\\S.*"
+    },
+    "initial_cash_raw": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "seed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "output_dir": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": ".*\\S.*"
+    },
+    "account_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "market_spec": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TradingInstrumentSpec"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "asset_class": {
+      "description": "Explicit strategy-research taxonomy; never inferred from the ticker.",
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^\\S(?:.*\\S)?$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "margin_model": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BacktestMarginConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "fee_schedule": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MakerTakerFeeSchedule"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "execution_cost_rules": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ExecutionCostRules"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "ashare_rules": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AshareRuleConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "fill_model": {
+      "enum": [
+        "next_bar_open",
+        "best_price",
+        "one_tick_slippage"
+      ]
+    },
+    "max_bar_volume_participation_bps": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "risk_rules": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BacktestRiskRules"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "allow_short": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "strategy": {
+      "$ref": "#/$defs/BuiltinStrategySpec"
+    },
+    "portfolio": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PortfolioBacktestConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "protective_exit": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ProtectiveExitSpec"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "initial_cash_exact": {
+      "required": [
+        "coefficient",
+        "scale"
+      ],
+      "properties": {
+        "scale": {
+          "maximum": 18,
+          "type": "integer",
+          "minimum": 0
+        },
+        "coefficient": {
+          "maxLength": 39,
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "Canonical positive ExactDecimal. The coefficient is decimal text to preserve i128 precision.",
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "scale"
+            ],
+            "properties": {
+              "scale": {
+                "minimum": 1
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "coefficient": {
+                "pattern": "^(?:[1-9]|[1-9][0-9]*[1-9])$"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "InstrumentId": {
+      "type": "object",
+      "required": [
+        "symbol",
+        "venue"
+      ],
+      "properties": {
+        "symbol": {
+          "type": "string",
+          "minLength": 1
+        },
+        "venue": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "TradingInstrumentSpec": {
+      "type": "object",
+      "required": [
+        "instrument",
+        "product",
+        "base_currency",
+        "quote_currency",
+        "settlement_currency",
+        "contract_size",
+        "linear",
+        "inverse",
+        "price_tick",
+        "qty_step",
+        "min_qty",
+        "max_leverage",
+        "maintenance_margin_bps",
+        "valid_from"
+      ],
+      "properties": {
+        "instrument": {
+          "$ref": "#/$defs/InstrumentId"
+        },
+        "product": {
+          "enum": [
+            "spot",
+            "margin",
+            "perpetual",
+            "future",
+            "option"
+          ]
+        },
+        "base_currency": {
+          "type": "string",
+          "minLength": 1
+        },
+        "quote_currency": {
+          "type": "string",
+          "minLength": 1
+        },
+        "settlement_currency": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contract_size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "linear": {
+          "type": "boolean"
+        },
+        "inverse": {
+          "type": "boolean"
+        },
+        "price_tick": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "qty_step": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "min_qty": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_leverage": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maintenance_margin_bps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "valid_from": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "valid_to": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "min_notional_raw": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "exact_rules": {
+          "$ref": "#/$defs/ExactTradingRules"
+        }
+      }
+    },
+    "BacktestMarginTier": {
+      "type": "object",
+      "required": [
+        "max_notional",
+        "initial_bp",
+        "maintenance_bp"
+      ],
+      "properties": {
+        "max_notional": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "initial_bp": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "maintenance_bp": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "max_leverage": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "BacktestMarginConfig": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "no_margin"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "leverage",
+            "maintenance_bp"
+          ],
+          "properties": {
+            "kind": {
+              "const": "leverage"
+            },
+            "leverage": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "maintenance_bp": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "tiers"
+          ],
+          "properties": {
+            "kind": {
+              "const": "tiers"
+            },
+            "tiers": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/BacktestMarginTier"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "MakerTakerFeeSchedule": {
+      "type": "object",
+      "required": [
+        "maker_fee_bps",
+        "taker_fee_bps"
+      ],
+      "properties": {
+        "maker_fee_bps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "taker_fee_bps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExecutionCostRules": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "maker_bp": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "taker_bp": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "latency_base_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "latency_insert_ns": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "AshareCorporateActionEvent": {
+      "type": "object",
+      "required": [
+        "ts"
+      ],
+      "properties": {
+        "ts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "announcement_ts": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "record_ts": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "payment_ts": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "subscription_start_ts": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "subscription_end_ts": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "action_type": {
+          "enum": [
+            "cash_dividend",
+            "bonus_share",
+            "capital_transfer",
+            "rights_issue",
+            "rights_issue_expiry",
+            "new_share_issue",
+            "repurchase",
+            "convertible_bond_issue",
+            "convertible_bond_interest",
+            "convertible_bond_redemption",
+            "convertible_bond_call",
+            "convertible_bond_put",
+            "convertible_bond_conversion",
+            "suspension",
+            "capital_change",
+            "unknown"
+          ]
+        },
+        "cash_dividend_raw": {
+          "type": "integer"
+        },
+        "split_num": {
+          "type": "integer"
+        },
+        "split_den": {
+          "type": "integer"
+        },
+        "rights_issue_price_raw": {
+          "type": "integer"
+        },
+        "rights_issue_ratio_num": {
+          "type": "integer"
+        },
+        "rights_issue_ratio_den": {
+          "type": "integer"
+        },
+        "issue_price_raw": {
+          "type": "integer"
+        },
+        "conversion_price_raw": {
+          "type": "integer"
+        },
+        "conversion_ratio_num": {
+          "type": "integer"
+        },
+        "conversion_ratio_den": {
+          "type": "integer"
+        },
+        "rights_instrument": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "subscription_qty_raw": {
+          "type": "integer"
+        },
+        "rights_expiry_qty_raw": {
+          "type": "integer"
+        },
+        "repurchase_qty_raw": {
+          "type": "integer"
+        },
+        "repurchase_price_raw": {
+          "type": "integer"
+        },
+        "convertible_bond_instrument": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "conversion_target_instrument": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "conversion_qty_raw": {
+          "type": "integer"
+        },
+        "conversion_target_qty_raw": {
+          "type": "integer"
+        },
+        "interest_per_bond_raw": {
+          "type": "integer"
+        },
+        "settlement_qty_raw": {
+          "type": "integer"
+        },
+        "settlement_price_raw": {
+          "type": "integer"
+        },
+        "issuer_total_shares_raw": {
+          "type": "integer"
+        },
+        "issuer_free_float_shares_raw": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "source": {
+          "type": "string"
+        },
+        "published_at_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "raw_payload": {}
+      }
+    },
+    "AshareRuleConfig": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "board": {
+          "enum": [
+            "main",
+            "chi_next",
+            "star",
+            "beijing",
+            "etf",
+            "st"
+          ]
+        },
+        "t_plus_one": {
+          "type": "boolean"
+        },
+        "lot_size": {
+          "type": "integer"
+        },
+        "allow_odd_lot_sell": {
+          "type": "boolean"
+        },
+        "limit_up_bp": {
+          "type": "integer"
+        },
+        "limit_down_bp": {
+          "type": "integer"
+        },
+        "price_tick": {
+          "type": "integer"
+        },
+        "commission_bp": {
+          "type": "integer"
+        },
+        "min_commission": {
+          "type": "integer"
+        },
+        "stamp_duty_bp": {
+          "type": "integer"
+        },
+        "transfer_fee_bp": {
+          "type": "integer"
+        },
+        "trading_timestamps": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "trading_days": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "session_windows": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "integer",
+                "minimum": 0
+              }
+            ],
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "halted_timestamps": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "previous_close_raw": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[0-9]+$"
+          },
+          "additionalProperties": {
+            "type": "integer"
+          }
+        },
+        "corporate_actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AshareCorporateActionEvent"
+          }
+        }
+      }
+    },
+    "BacktestRiskRules": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "string"
+        },
+        "max_qty_raw": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "max_notional_raw": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "no_short": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "PortfolioStrategySpec": {
+      "type": "object",
+      "required": [
+        "priority",
+        "reserved_capital_raw",
+        "strategy"
+      ],
+      "properties": {
+        "priority": {
+          "type": "integer"
+        },
+        "reserved_capital_raw": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reserved_capital_exact": {
+          "$ref": "#/$defs/ExactDecimal"
+        },
+        "strategy": {
+          "$ref": "#/$defs/BuiltinStrategySpec"
+        }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["reserved_capital_exact"] },
+          "then": { "properties": { "reserved_capital_raw": { "minimum": 0 } } }
+        },
+        {
+          "if": { "not": { "required": ["reserved_capital_exact"] } },
+          "then": { "properties": { "reserved_capital_raw": { "minimum": 1 } } }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "PortfolioBacktestConfig": {
+      "type": "object",
+      "required": [
+        "primary_priority",
+        "primary_reserved_capital_raw",
+        "additional_strategies"
+      ],
+      "properties": {
+        "primary_priority": {
+          "type": "integer"
+        },
+        "primary_reserved_capital_raw": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "primary_reserved_capital_exact": {
+          "$ref": "#/$defs/ExactDecimal"
+        },
+        "additional_strategies": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/PortfolioStrategySpec"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["primary_reserved_capital_exact"] },
+          "then": { "properties": { "primary_reserved_capital_raw": { "minimum": 0 } } }
+        },
+        {
+          "if": { "not": { "required": ["primary_reserved_capital_exact"] } },
+          "then": { "properties": { "primary_reserved_capital_raw": { "minimum": 1 } } }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "ProtectiveExitSpec": {
+      "type": "object",
+      "properties": {
+        "stop_loss_bps": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9999
+        },
+        "take_profit_bps": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9999
+        },
+        "trailing_stop_bps": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9999
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "stop_loss_bps"
+          ],
+          "properties": {
+            "stop_loss_bps": {
+              "type": "integer"
+            }
+          }
+        },
+        {
+          "required": [
+            "take_profit_bps"
+          ],
+          "properties": {
+            "take_profit_bps": {
+              "type": "integer"
+            }
+          }
+        },
+        {
+          "required": [
+            "trailing_stop_bps"
+          ],
+          "properties": {
+            "trailing_stop_bps": {
+              "type": "integer"
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "BuiltinStrategySpec": {
+      "type": "object",
+      "required": [
+        "kind",
+        "strategy_id",
+        "quantity_raw",
+        "fast_window",
+        "slow_window"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "sma_cross",
+            "ema_cross",
+            "macd",
+            "rsi",
+            "bollinger",
+            "donchian_breakout",
+            "momentum",
+            "mean_reversion",
+            "grid",
+            "atr_trend",
+            "keltner_trend",
+            "vwap_reversion",
+            "volatility_breakout",
+            "pairs_arbitrage",
+            "basis_arbitrage",
+            "cross_venue_arbitrage",
+            "spot_futures_arbitrage"
+          ]
+        },
+        "strategy_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "quantity_raw": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "target_notional_raw": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "target_available_margin_bps": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "target_volatility_bps": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "target_kelly_fraction_bps": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "kelly_lookback_bars": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 30,
+          "maximum": 1000
+        },
+        "fast_window": {
+          "type": "integer"
+        },
+        "slow_window": {
+          "type": "integer"
+        },
+        "period": {
+          "type": "integer"
+        },
+        "threshold_bps": {
+          "type": "integer"
+        }
+      },
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "target_notional_raw",
+              "target_available_margin_bps"
+            ],
+            "properties": {
+              "target_notional_raw": {
+                "type": "integer"
+              },
+              "target_available_margin_bps": {
+                "type": "integer"
+              }
+            }
+          },
+          {
+            "required": [
+              "target_notional_raw",
+              "target_volatility_bps"
+            ],
+            "properties": {
+              "target_notional_raw": {
+                "type": "integer"
+              },
+              "target_volatility_bps": {
+                "type": "integer"
+              }
+            }
+          },
+          {
+            "required": [
+              "target_notional_raw",
+              "target_kelly_fraction_bps"
+            ],
+            "properties": {
+              "target_notional_raw": {
+                "type": "integer"
+              },
+              "target_kelly_fraction_bps": {
+                "type": "integer"
+              }
+            }
+          },
+          {
+            "required": [
+              "target_available_margin_bps",
+              "target_volatility_bps"
+            ],
+            "properties": {
+              "target_available_margin_bps": {
+                "type": "integer"
+              },
+              "target_volatility_bps": {
+                "type": "integer"
+              }
+            }
+          },
+          {
+            "required": [
+              "target_available_margin_bps",
+              "target_kelly_fraction_bps"
+            ],
+            "properties": {
+              "target_available_margin_bps": {
+                "type": "integer"
+              },
+              "target_kelly_fraction_bps": {
+                "type": "integer"
+              }
+            }
+          },
+          {
+            "required": [
+              "target_volatility_bps",
+              "target_kelly_fraction_bps"
+            ],
+            "properties": {
+              "target_volatility_bps": {
+                "type": "integer"
+              },
+              "target_kelly_fraction_bps": {
+                "type": "integer"
+              }
+            }
+          }
+        ]
+      },
+      "if": {
+        "required": [
+          "kelly_lookback_bars"
+        ],
+        "properties": {
+          "kelly_lookback_bars": {
+            "type": "integer"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "target_kelly_fraction_bps"
+        ],
+        "properties": {
+          "target_kelly_fraction_bps": {
+            "type": "integer"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExactDecimal": {
+      "type": "object",
+      "required": [
+        "coefficient",
+        "scale"
+      ],
+      "properties": {
+        "coefficient": {
+          "type": "string",
+          "pattern": "^-?(0|[1-9][0-9]*)$"
+        },
+        "scale": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExactTradingRules": {
+      "type": "object",
+      "required": [
+        "contract_size",
+        "price_tick",
+        "quantity_step",
+        "minimum_quantity",
+        "minimum_notional"
+      ],
+      "properties": {
+        "contract_size": {
+          "$ref": "#/$defs/ExactDecimal"
+        },
+        "price_tick": {
+          "$ref": "#/$defs/ExactDecimal"
+        },
+        "quantity_step": {
+          "$ref": "#/$defs/ExactDecimal"
+        },
+        "minimum_quantity": {
+          "$ref": "#/$defs/ExactDecimal"
+        },
+        "minimum_notional": {
+          "$ref": "#/$defs/ExactDecimal"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

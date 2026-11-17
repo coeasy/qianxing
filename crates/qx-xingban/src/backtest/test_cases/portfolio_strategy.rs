@@ -41,6 +41,10 @@ impl qx_strategy::Strategy for BuyThenCloseOwnPosition {
                         policy: None,
                         reduce_only,
                         post_only: false,
+
+                        qty_exact: None,
+                        limit_price_exact: None,
+                        quote_budget: None,
                     }]
                 })
                 .unwrap_or_default(),
@@ -83,12 +87,14 @@ impl BarStrategy for ScheduledBuyer {
             filled: Quantity::ZERO,
             account_id: "main".into(),
             trace: Some(qx_core::OrderTrace {
+                run_id: None,
                 strategy_id: Some(self.id.into()),
                 signal_id: Some(1),
                 intent_id: Some(1),
                 rule_version: Some("portfolio-test-v1".into()),
             }),
             policy: None,
+            exact_amounts: None,
         }])
     }
 
@@ -240,12 +246,14 @@ impl BarStrategy for MisattributedBuyer {
             filled: Quantity::ZERO,
             account_id: "main".into(),
             trace: Some(qx_core::OrderTrace {
+                run_id: None,
                 strategy_id: Some("beta".into()),
                 signal_id: None,
                 intent_id: None,
                 rule_version: None,
             }),
             policy: None,
+            exact_amounts: None,
         }])
     }
 }
@@ -284,6 +292,9 @@ fn native_children_trade_against_their_own_fills_not_the_shared_net_position() {
                 venue_id: "SIM".into(),
                 data_fingerprint: "portfolio-bars".into(),
                 as_of: 1,
+                positions_exact: std::collections::BTreeMap::new(),
+                cash_exact: std::collections::BTreeMap::new(),
+                available_margin_exact: None,
                 positions: std::collections::BTreeMap::new(),
                 cash: std::collections::BTreeMap::from([("USD".into(), 1_000 * SCALE)]),
                 available_margin_raw: Some(1_000 * SCALE),

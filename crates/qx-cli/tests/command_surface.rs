@@ -70,6 +70,21 @@ fn provider_backtest_without_configured_sources_fails_closed() {
         interval_ms: 60_000,
         timezone: "UTC".into(),
         manifest_path: None,
+        snapshot_context: qx_data::DatasetSnapshotContextV1 {
+            schema_version: 1,
+            instrument_role: qx_data::DatasetInstrumentRole::CryptoSpot,
+            captured_at_ms: 1,
+            frequency_ms: 60_000,
+            timestamp_semantics: qx_data::DatasetTimestampSemantics::BarClose,
+            price_precision: 8,
+            quantity_precision: 8,
+            price_unit: "USDT".into(),
+            quantity_unit: "BTC".into(),
+            calendar_id: "crypto-24x7".into(),
+            calendar_version: "v1".into(),
+            gaps: Vec::new(),
+            corporate_action_policy: qx_data::CorporateActionPolicy::NotApplicable,
+        },
     };
     std::fs::write(&spec_path, serde_json::to_vec(&spec).unwrap())
         .expect("write valid provider-backtest spec");
@@ -146,6 +161,8 @@ fn provider_depth_backtest_without_configured_sources_fails_closed() {
             queue_position_bps: 0,
             queue_position_model: Default::default(),
             market_impact_bps: 0,
+            funding_bps: 0,
+            funding_events: Vec::new(),
             output_dir: "target/provider-depth/run".into(),
             strategy: BuiltinStrategySpec::new(
                 qx_strategy::BuiltinStrategyKind::SmaCross,
@@ -171,6 +188,22 @@ fn provider_depth_backtest_without_configured_sources_fails_closed() {
             account_base_source: None,
             signal_source: None,
             signal_declared_unused: None,
+        },
+        timezone: "UTC".into(),
+        snapshot_context: qx_data::DatasetSnapshotContextV1 {
+            schema_version: 1,
+            instrument_role: qx_data::DatasetInstrumentRole::CryptoSpot,
+            captured_at_ms: 1,
+            frequency_ms: 1,
+            timestamp_semantics: qx_data::DatasetTimestampSemantics::EventTime,
+            price_precision: 8,
+            quantity_precision: 8,
+            price_unit: "USDT".into(),
+            quantity_unit: "BTC".into(),
+            calendar_id: "crypto-24x7".into(),
+            calendar_version: "v1".into(),
+            gaps: Vec::new(),
+            corporate_action_policy: qx_data::CorporateActionPolicy::NotApplicable,
         },
     };
     std::fs::write(&spec_path, serde_json::to_vec(&spec).unwrap())

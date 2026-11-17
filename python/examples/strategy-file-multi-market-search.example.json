@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "experiment_id": "python-file-multi-market-sma-search",
+  "target_strategy_id": "file-sma-binance",
+  "base": {
+    "schema_version": 1,
+    "run_id": "python-file-multi-market-sma-search-base",
+    "account_id": "research-account",
+    "settlement_currency": "USDT",
+    "initial_cash_raw": 100000000000000,
+    "seed": 7,
+    "output_dir": "runs/python-file-multi-market-sma-search",
+    "markets": [
+      {
+        "instrument": "BTCUSDT.BINANCE",
+        "asset_class": "crypto",
+        "bars_path": "deploy/qianxing.bar-frame.example.json",
+        "priority": 0,
+        "market_spec": {
+          "instrument": {"symbol": "BTCUSDT", "venue": "BINANCE"},
+          "product": "spot",
+          "base_currency": "BTC",
+          "quote_currency": "USDT",
+          "settlement_currency": "USDT",
+          "contract_size": 1000000000,
+          "linear": true,
+          "inverse": false,
+          "price_tick": 1000000,
+          "qty_step": 1000000,
+          "min_qty": 1000000,
+          "max_leverage": 1,
+          "maintenance_margin_bps": 0,
+          "valid_from": 0,
+          "valid_to": null
+        },
+        "fee_schedule": {"maker_fee_bps": 10, "taker_fee_bps": 10},
+        "strategies": [
+          {
+            "priority": 0,
+            "reserved_capital_raw": 50000000000000,
+            "strategy": {
+              "kind": "sma_cross",
+              "strategy_id": "file-sma-binance",
+              "quantity_raw": 1000000000,
+              "fast_window": 5,
+              "slow_window": 20
+            }
+          }
+        ]
+      },
+      {
+        "instrument": "BTC/USDT:USDT.OKX",
+        "asset_class": "crypto",
+        "bars_path": "deploy/qianxing.bar-frame.okx.example.json",
+        "priority": 1,
+        "market_spec": {
+          "instrument": {"symbol": "BTC/USDT:USDT", "venue": "OKX"},
+          "product": "perpetual",
+          "base_currency": "BTC",
+          "quote_currency": "USDT",
+          "settlement_currency": "USDT",
+          "contract_size": 1000000,
+          "linear": true,
+          "inverse": false,
+          "price_tick": 100000000,
+          "qty_step": 1000000000,
+          "min_qty": 1000000000,
+          "max_leverage": 20,
+          "maintenance_margin_bps": 500,
+          "valid_from": 0,
+          "valid_to": null
+        },
+        "fee_schedule": {"maker_fee_bps": 10, "taker_fee_bps": 10},
+        "strategies": [
+          {
+            "priority": 0,
+            "reserved_capital_raw": 50000000000000,
+            "strategy": {
+              "kind": "sma_cross",
+              "strategy_id": "file-sma-okx",
+              "quantity_raw": 1000000000,
+              "fast_window": 5,
+              "slow_window": 20
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "split_plan": {
+    "train_bars": 42,
+    "test_bars": 14,
+    "walk_forward": true,
+    "step_bars": 14
+  },
+  "search": {
+    "algorithm": "tpe_kde",
+    "seed": 13,
+    "budget": 8,
+    "fold_local_search": true,
+    "continuous_parameter_space": [
+      {"name": "fast_window", "min": 2, "max": 10, "step": 2},
+      {"name": "slow_window", "min": 10, "max": 40, "step": 5}
+    ]
+  }
+}

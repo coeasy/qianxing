@@ -1,0 +1,13 @@
+FILES python/qianxing_ashare/__init__.py python/qianxing_ashare/sources.py
+GUN s1_install_hint file=python/qianxing_ashare/sources.py red=killed ran=1 test_lines=252 claim=missing-extra 建议命令 | FAIL: test_source_resolution_has_four_levels_and_explicit_au
+GUN s2_adjustment_suggestion file=python/qianxing_ashare/__init__.py red=killed ran=1 test_lines=613,613 claim=unsupported 可替代源 | FAIL: test_mootdx_unsupported_requests_never_load_provider (
+GUN s3_capability_bit file=python/qianxing_ashare/__init__.py red=killed ran=1 test_lines=612,612 claim=unsupported 能力位 | FAIL: test_mootdx_unsupported_requests_never_load_provider (
+GUN s4_frequency_suggestion file=python/qianxing_ashare/__init__.py red=killed ran=1 test_lines=613 claim=频率不支持的可用清单 | FAIL: test_mootdx_unsupported_requests_never_load_provider (
+GUN s5_actions_capability_bit file=python/qianxing_ashare/__init__.py red=killed ran=1 test_lines=617 claim=公司行为能力位 | FAIL: test_mootdx_unsupported_requests_never_load_provider (
+GUN s6_actions_suggestion file=python/qianxing_ashare/__init__.py red=killed ran=1 test_lines=618 claim=公司行为可替代源 | FAIL: test_mootdx_unsupported_requests_never_load_provider (
+TALLY fired=6 killed=6 equivalent=0
+VERDICT verdict_a red=False ran=1
+VERDICT verdict_b red=False ran=1
+SHA python/qianxing_ashare/__init__.py 70da794700343c65 restored
+SHA python/qianxing_ashare/sources.py 6958a7e328d68e3c restored
+SUGGESTION BATTERY CLOSED

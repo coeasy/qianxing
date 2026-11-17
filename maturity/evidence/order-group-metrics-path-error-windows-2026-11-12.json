@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "evidence_id": "order-group-metrics-path-error-windows-2026-11-12",
+  "recorded_at": "2026-11-12",
+  "scope": "Order-group metrics distinguish absent storage from path inspection errors",
+  "environment": {
+    "os": "Windows",
+    "workspace_commit_before_change": "6598becb",
+    "rustc": "1.98.1"
+  },
+  "change": "load_order_groups now uses Path::try_exists and propagates inspection errors so Prometheus reports metrics_available=0 instead of an empty healthy store.",
+  "verification": [
+    {
+      "command": "standalone rustc --test probe for Path::exists vs Path::try_exists on a NUL-containing path",
+      "result": "passed",
+      "passed": 1,
+      "failed": 0,
+      "assertions": [
+        "Path::exists returns false for a path inspection error",
+        "Path::try_exists preserves the inspection error"
+      ]
+    },
+    {
+      "command": "rustfmt --edition 2024 --check crates/qx-service/src/api_read_model.rs",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    },
+    {
+      "command": "cargo test --offline --locked -j 1 -p qx-service order_group_metrics",
+      "result": "blocked_by_windows_rust_metadata_and_pagefile_failure",
+      "detail": "Rustc reported E0786/invalid metadata and only-metadata-stub errors while compiling qx-app/qx-data; Windows also reported page-file exhaustion during this session. The service tests did not run."
+    },
+    {
+      "command": "podman machine start podman-machine-default",
+      "result": "blocked_by_wsl_bootstrap_error",
+      "detail": "WSL returned Wsl/Service/CreateInstance/CreateVm/E_ABORT; the Podman VM remains stopped."
+    }
+  ],
+  "limitations": [
+    "The service-level regression test was added but could not be compiled or executed in this environment; it still requires CI or Linux runner verification.",
+    "This improves fail-closed metrics reporting only; it does not establish exchange connectivity or update connector maturity."
+  ]
+}

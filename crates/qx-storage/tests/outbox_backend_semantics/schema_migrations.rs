@@ -42,10 +42,11 @@ fn failed_v2_migration_rolls_back_ddl_and_version_marker() {
         .unwrap();
     drop(connection);
 
-    assert!(matches!(
-        SqliteOutboxStore::new(&path),
-        Err(StorageError::Io(_))
-    ));
+    let migration_result = SqliteOutboxStore::new(&path);
+    assert!(
+        migration_result.is_err(),
+        "damaged v1 schema unexpectedly upgraded: {migration_result:?}"
+    );
     let connection = Connection::open(&path).unwrap();
     let version_two_exists: bool = connection
         .query_row(

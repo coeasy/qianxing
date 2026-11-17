@@ -1,0 +1,40 @@
+$ cargo test -p qx-cli --features sqlite,postgres --bin qx-cli workers::strategy_worker::prepared_command_replay::tests::runtime_strategy_checkpoint_is_restored_by_a_new_worker_process --offline -j 1 -- --nocapture
+exit_code=101
+
+[stdout]
+
+running 1 test
+
+running 1 test
+test workers::strategy_worker::prepared_command_replay::tests::runtime_strategy_checkpoint_is_restored_by_a_new_worker_process ... FAILED
+
+failures:
+
+failures:
+    workers::strategy_worker::prepared_command_replay::tests::runtime_strategy_checkpoint_is_restored_by_a_new_worker_process
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 486 filtered out; finished in 0.22s
+
+test workers::strategy_worker::prepared_command_replay::tests::runtime_strategy_checkpoint_is_restored_by_a_new_worker_process ... FAILED
+
+failures:
+
+failures:
+    workers::strategy_worker::prepared_command_replay::tests::runtime_strategy_checkpoint_is_restored_by_a_new_worker_process
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 486 filtered out; finished in 0.95s
+
+
+[stderr]
+   Compiling qx-cli v0.3.0 (D:\aex_work\qianxing\crates\qx-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 26.43s
+     Running unittests src\main.rs (target\debug\deps\qx_cli-cd4cbe8459ea2802.exe)
+
+thread 'workers::strategy_worker::prepared_command_replay::tests::runtime_strategy_checkpoint_is_restored_by_a_new_worker_process' (6160) panicked at crates\qx-cli\src\workers\strategy_worker\prepared_command_replay.rs:852:14:
+called `Result::unwrap()` on an `Err` value: "worker strategy-paper failed: strategy initialization failed: （程序=python（QX_PYTHON 未设置，回落 PATH python），退出码 1; stderr=^ | File \"D:\\aex_work\\qianxing\\python\\qianxing_strategy\\worker.py\", line 798, in _initialize_handlers | module = _load_strategy_module(args.module) | File \"D:\\aex_work\\qianxing\\python\\qianxing_strategy\\worker.py\", line 55, in _load_strategy_module | module = importlib.import_module(reference) | File \"D:\\dev\\miniforge3\\Lib\\importlib\\__init__.py\", line 88, in import_module | return _bootstrap._gcd_import(name[level:], package, level) | ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ | File \"<frozen importlib._bootstrap>\", line 1395, in _gcd_import | File \"<frozen importlib._bootstrap>\", line 1360, in _find_and_load | File \"<frozen importlib._bootstrap>\", line 1310, in _find_and_load_unlocked | File \"<frozen importlib._bootstrap>\", line 488, in _call_with_frames_removed | File \"<frozen importlib._bootstrap>\", line 1395, in _gcd_import | File \"<frozen importlib._bootstrap>\", line 1360, in _find_and_load | File \"<frozen importlib._bootstrap>\", line 1324, in _find_and_load_unlocked | ModuleNotFoundError: No module named 'D:\\\\aex_work\\\\qianxing\\\\crates\\\\qx-cli\\\\python/tests/fixtures/runtime_checkpoint_process_strategy'）"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'workers::strategy_worker::prepared_command_replay::tests::runtime_strategy_checkpoint_is_restored_by_a_new_worker_process' (14552) panicked at crates\qx-cli\src\workers\strategy_worker\prepared_command_replay.rs:938:13:
+strategy worker process 1 failed: exit code: 101
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p qx-cli --bin qx-cli`

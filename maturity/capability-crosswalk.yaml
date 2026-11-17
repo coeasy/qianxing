@@ -1,0 +1,56 @@
+# Stable joins between the product coverage matrix and internal maturity evidence.
+# Product status (five-state matrix) and maturity status (four evidence booleans) remain
+# independent. This file only says which evidence records inform each product capability.
+schema_version: 1
+kind: capability-crosswalk
+updated_at: "2026-10-24"
+
+bindings:
+  - name: qx.domain.rust_kernel
+    matrix_ref: domains/rust_kernel
+    maturity_refs: [deterministic_kernel, event_fact_metadata, storage_consistency_contract, canonical_order_risk_decision, foundation_spec_objects, contract_registry_layer, artifact_schema_versioning]
+  - name: qx.domain.python_sdk
+    matrix_ref: domains/python_sdk
+    maturity_refs: [python_bridge, python_sdk_facade, strategy_bias_diagnostics, adaptive_parameter_search, interactive_experiment_reports]
+  - name: qx.domain.cpp_sdk
+    matrix_ref: domains/cpp_sdk
+    maturity_refs: [cpp_strategy_package, cpp_strategy_sdk]
+  - name: qx.domain.rust_sdk
+    matrix_ref: domains/rust_sdk
+    maturity_refs: [foundation_spec_objects, contract_registry_layer]
+  - name: qx.domain.data_and_venues
+    matrix_ref: domains/data_and_venues
+    maturity_refs: [ccxt_rest, binance_direct, ashare_json_provider, provider_capability_registry, ashare_corporate_action_ledger, dataset_bundle_manifest]
+  - name: qx.domain.accounts_and_strategies
+    matrix_ref: domains/accounts_and_strategies
+    maturity_refs: [local_backtest, paper_execution, factor_research_bridge, multi_leg_execution, broker_gateway]
+  - name: qx.domain.web_api
+    matrix_ref: domains/web_api
+    maturity_refs: [qx_api_self_built_http_ws, result_readability, run_evidence_bundle]
+  - name: qx.domain.release
+    matrix_ref: domains/release
+    maturity_refs: [cli_scenario_init, postgres, nats, merge_c07ad22_rollback_register, artifact_schema_versioning, performance_regression_gate]
+  - name: qx.venue.paper
+    matrix_ref: venues/PaperVenue
+    maturity_refs: [paper_execution]
+  - name: qx.venue.binance_spot
+    matrix_ref: venues/BinanceSpotVenue
+    maturity_refs: [binance_direct]
+  - name: qx.venue.ccxt_process
+    matrix_ref: venues/CcxtProcessVenue
+    maturity_refs: [ccxt_rest, broker_gateway]
+  - name: qx.provider.ccxt_bar
+    matrix_ref: providers/CcxtBarDataProvider
+    maturity_refs: [ccxt_rest, provider_capability_registry]
+  - name: qx.provider.python
+    matrix_ref: providers/PythonDataProvider
+    maturity_refs: [python_bridge, python_sdk_facade]
+  - name: qx.provider.in_memory
+    matrix_ref: providers/InMemoryProvider
+    maturity_refs: [provider_capability_registry]
+  - name: qx.provider.json_bar_frame
+    matrix_ref: providers/JsonBarFrameProvider
+    maturity_refs: [ashare_json_provider, dataset_bundle_manifest]
+  - name: qx.provider.demo
+    matrix_ref: providers/DemoProvider
+    maturity_refs: [cli_scenario_init, provider_capability_registry]

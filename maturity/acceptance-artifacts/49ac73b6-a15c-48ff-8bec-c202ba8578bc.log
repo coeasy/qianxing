@@ -1,0 +1,28 @@
+$ cargo test -p qx-cli --test app_three_entrypoints -- --test-threads=1 --offline
+exit_code=101
+
+[stdout]
+
+[stderr]
+   Compiling zerocopy-derive v0.8.56
+   Compiling rustls v0.23.43
+   Compiling zerocopy v0.8.56
+   Compiling qx-adapter v0.4.0 (D:\aex_work\qianxing\crates\qx-adapter)
+   Compiling ahash v0.8.12
+   Compiling half v2.7.1
+   Compiling hashbrown v0.14.5
+   Compiling ciborium-ll v0.2.2
+   Compiling ciborium v0.2.2
+   Compiling hashlink v0.9.1
+   Compiling criterion v0.8.2
+   Compiling rusqlite v0.32.1
+   Compiling qx-storage v0.4.0 (D:\aex_work\qianxing\crates\qx-storage)
+   Compiling qx-runtime v0.4.0 (D:\aex_work\qianxing\crates\qx-runtime)
+   Compiling qx-api v0.4.0 (D:\aex_work\qianxing\crates\qx-api)
+   Compiling qx-orchestrator v0.4.0 (D:\aex_work\qianxing\crates\qx-orchestrator)
+   Compiling qx-service v0.4.0 (D:\aex_work\qianxing\crates\qx-service)
+   Compiling qx-cli v0.4.0 (D:\aex_work\qianxing\crates\qx-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 39.05s
+     Running tests\app_three_entrypoints.rs (target\debug\deps\app_three_entrypoints-a5967fbf03bb6cb8.exe)
+error: Unrecognized option: 'offline'
+error: test failed, to rerun pass `-p qx-cli --test app_three_entrypoints`

@@ -1,0 +1,7 @@
+$ python3 tools/accept_strategy_process_tree.py --output maturity/evidence/strategy-preflight-process-tree-linux.json --timeout-seconds 0.5
+exit_code=0
+
+[stdout]
+{"out": "/tmp/qx-clean/maturity/evidence/strategy-preflight-process-tree-linux.json", "cases": 3, "all_descendants_reaped": true}
+
+[stderr]

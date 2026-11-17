@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/strategy-worker-lifecycle-v1.json",
+  "title": "Strategy worker host lifecycle evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "host_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "constructed": {
+      "type": "boolean"
+    },
+    "initialized": {
+      "type": "boolean"
+    },
+    "checkpoint_input_supplied": {
+      "type": "boolean"
+    },
+    "warmup_applicable": {
+      "type": "boolean"
+    },
+    "warmup_required_instruments": {
+      "type": "array",
+      "maxItems": 4096,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      }
+    },
+    "warmup_completed_instruments": {
+      "type": "array",
+      "maxItems": 4096,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "host_id",
+    "constructed",
+    "initialized",
+    "checkpoint_input_supplied",
+    "warmup_applicable",
+    "warmup_required_instruments",
+    "warmup_completed_instruments"
+  ]
+}

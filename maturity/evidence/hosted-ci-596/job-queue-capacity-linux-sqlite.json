@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "job_queue_bounded_capacity",
+  "generated_at_utc": "2026-11-13T03:41:29Z",
+  "platform": {
+    "system": "Linux",
+    "release": "7.0.0-1019-azure",
+    "machine": "x86_64"
+  },
+  "python": {
+    "implementation": "CPython",
+    "version": "3.14.4"
+  },
+  "hardware": {
+    "os": "Linux",
+    "arch": "x86_64",
+    "processor": "",
+    "logical_cpu_count": 4,
+    "physical_core_count": null,
+    "total_ram_bytes": 16759439360
+  },
+  "binary": "/home/runner/work/qianxing/qianxing/target/debug/qx-cli",
+  "binary_sha256": "090b20ff335b5785df6fdb40edd5b5e45db82782482b9b1567df8776ed6a90d5",
+  "build_identity": "qianxing 0.4.0 (build ff4dc75, target x86_64-unknown-linux-gnu, profile debug, schemas 761c39a2a8d8bedaf7bc9a3d6a2e6c5c74a2e21bf957fd649f2ac5ba21f18796)",
+  "measurement_source_fingerprint_schema": 4,
+  "measurement_source_fingerprint": "740a721e9cdec42941268e3024df9e2aba4a26f4a6a27c31a9fb8bd34b94fb2e",
+  "batch_sizes": [
+    1,
+    16,
+    64,
+    256,
+    1024,
+    4096,
+    8192,
+    16384
+  ],
+  "iterations_per_batch": 25,
+  "repeats_per_crash_point": 5,
+  "queue_capacity": 4096,
+  "queue_backend": "sqlite",
+  "queue_kind": "job",
+  "job_queue_capacity": 4096,
+  "job_queue_backend": "sqlite",
+  "write_limit_bytes": 8388608,
+  "crash_recovery_semantics": "synthetic local journal only; no venue or command side effects",
+  "workloads": [],
+  "crash_recovery": [],
+  "job_queue": {
+    "backend": "sqlite",
+    "benchmark_jobs_acknowledged": 4096,
+    "enqueue_p50_ms": 1.4347940000000001,
+    "enqueue_p95_ms": 1.7455,
+    "fill_count": 4096,
+    "max_pending_jobs": 4096,
+    "overflow_rejected": true,
+    "pending_count": 4096,
+    "worker_batch_count": 256,
+    "worker_batch_limit": 256,
+    "peak_rss_bytes": 31485952,
+    "process_tree_peak_rss_bytes": null,
+    "process_wall_ms_including_startup": 16451.221170999986
+  }
+}

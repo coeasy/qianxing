@@ -1,17 +1,20 @@
-//! 产物读写：四份产物的落点、格式与**读回**（T2-2）。
+//! 产物读写：四份核心产物和可选事件追溯 sidecar 的落点、格式与**读回**（T2-2）。
 //!
 //! 产物是应用层对外的**第二张脸**（第一张是 [`crate::spec`] 里的 JSON 类型）。它必须满足
-//! 两件事：三个入口写出**逐字节相同**的四份文件；任何一份都能被独立读回来复核
+//! 两件事：三个入口写出**逐字节相同**的四份核心文件；事件追溯 sidecar 与核心文件一起发布，任何产物都能被独立读回来复核
 //! （[`crate::cases::verify_run`] 就是那个读回者）。
 //!
-//! ## 四份产物
+//! ## 四份核心产物
 //!
 //! | 文件 | 内容 | 复核时看什么 |
 //! |---|---|---|
 //! | `<run_id>.run.json` | `qx_core::RunManifest` 的 JSON | `result_hash` / `data_fingerprint` / `config_hash` |
 //! | `<run_id>.summary.json` | [`RunSummary`] | 与 manifest 的同一组哈希逐字相等 |
-//! | `<run_id>.equity.csv` | `ts,equity_raw` | 行数 == `equity_points`；末行 == `final_equity_raw` |
-//! | `<run_id>.fills.csv` | `ts,order_id,qty_raw,price_raw,fee_raw,strategy_id` | 行数 == `fills` |
+//! | `<run_id>.equity.csv` | `ts,equity_raw,position_raw` | 行数 == `equity_points`；末行权益 == `final_equity_raw` |
+//! | `<run_id>.fills.csv` | fills CSV v2：原始字段与精确数量、价格、多币种费用 | 行数 == `fills` |
+//!
+//! Bar 与深度回测还会发布 JSONL 事件 sidecar：完整重放事件流，摘要中的 digest 和事件数可用于校验；
+//! `BacktestArtifacts.event_trace` 暴露其路径。它与内容寻址 RunManifest 同身份发布。
 //!
 //! `RunManifest` 直接复用 `qx-core` 的那一份——**不**另造一份同形清单：它是全仓对"这次运行
 //! 是谁、拿什么跑的、结果是什么"的唯一说法，应用层再写一份等于给同一件事发两张身份证。
@@ -61,15 +64,52 @@ pub(super) struct RunSummary {
     pub result_hash: String,
     /// 合成数据身份（`barframe:<内容哈希>`）。
     pub data_fingerprint: String,
+    /// Declared input provenance for report readers; absent on legacy v1 summaries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<serde_json::Value>,
+    /// RunManifest input digest and location, used to verify the declared source frame.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_data_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_manifest: Option<String>,
+    /// SHA-256 checked references to the completed summary/equity/fills/manifest set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_record: Option<String>,
+    /// Storage locations are resolved at the application boundary; RunRecord V2 itself is pathless.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_locations: Option<serde_json::Value>,
     /// 规格摘要（与 `RunManifest.config_hash` 同源）。
     pub config_hash: String,
+    /// Explicit, machine-readable execution assumptions for research evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matching_kernel: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub risk_rules: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_costs: Option<serde_json::Value>,
     pub return_bps: i32,
     pub max_drawdown_bps: u32,
     pub final_equity_raw: i128,
     pub fees_raw: i128,
     pub turnover_raw: i128,
+    /// Rust-owned metric projection shared by HTML/XLSX/JSON report consumers.
+    /// Absent in older schema-v1 run summaries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<serde_json::Value>,
+    /// Versioned definitions for risk-ratio periods and fee projections.
+    /// Absent in older schema-v1 run summaries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics_definition: Option<serde_json::Value>,
+    /// Currency-aware, scale-preserving costs and turnover; absent on legacy summaries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics_exact: Option<serde_json::Value>,
     /// 事件日志重放吞下的事件条数。
     pub replay_events: u64,
+    /// Structured replay facts shared with report readers; absent in legacy v1 summaries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay: Option<RunReplaySummary>,
     /// 重放重建出的账簿条数——必须等于 `ledger_entries`，否则这一轮不该落盘。
     pub replay_ledger_entries: u64,
     /// 本轮运行账簿的条数（与上一格是同一把尺子的两端）。
@@ -90,6 +130,14 @@ pub(super) struct RunSummary {
     /// Absent for runs without protective exits (preserves the v1 wire shape).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub protective_exit_fills: Vec<ProtectiveExitSummary>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct RunReplaySummary {
+    pub log_digest: String,
+    pub events: u64,
+    pub ledger_entries: u64,
+    pub run_ledger_entries: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,6 +163,7 @@ pub(super) fn artifact_paths(spec: &BacktestSpec) -> BacktestArtifacts {
         summary: named("summary.json"),
         equity: named("equity.csv"),
         fills: named("fills.csv"),
+        event_trace: Some(named("events.jsonl")),
     }
 }
 
@@ -237,6 +286,48 @@ pub(super) fn read_text(path: &str) -> Result<String, AppError> {
         .map_err(|error| AppError::from_io(&format!("读取产物 {path}"), &error))
 }
 
+/// Check the schema-registered manifest and RunRecord references for a modern run summary.
+///
+/// This is shared by Bar and depth verification so every application caller receives the
+/// same artifact-integrity verdict. The API/report layer still roots and size-bounds paths
+/// before invoking the verifier; this helper owns identity and digest semantics.
+pub(super) fn verify_declared_artifact_identity(
+    summary: &serde_json::Value,
+    checks: &mut Vec<String>,
+    mismatches: &mut Vec<String>,
+    reader: &dyn crate::artifact_store::ArtifactReader,
+) {
+    let version = summary
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default();
+    if summary
+        .get("run_manifest")
+        .and_then(serde_json::Value::as_str)
+        .is_some()
+        && summary
+            .get("input_data_hash")
+            .and_then(serde_json::Value::as_str)
+            .is_some()
+    {
+        match crate::artifact_store::verify_declared_run_manifest_with_reader(summary, reader) {
+            Ok(()) => checks.push("RunManifest 声明身份已复核".into()),
+            Err(error) => mismatches.push(format!("RunManifest 身份复核失败: {error}")),
+        }
+    }
+    if summary
+        .get("run_record")
+        .and_then(serde_json::Value::as_str)
+        .is_some()
+        || version >= 5
+    {
+        match crate::artifact_store::verify_declared_run_record_with_reader(summary, reader) {
+            Ok(()) => checks.push("RunRecord 与四份核心产物 SHA-256 已复核".into()),
+            Err(error) => mismatches.push(format!("RunRecord SHA-256 复核失败: {error}")),
+        }
+    }
+}
+
 /// 已存在的那份 manifest（幂等/冲突判定用）。**不存在是正常路径**，所以返回 `Ok(None)`。
 pub(super) fn existing_manifest(path: &str) -> Result<Option<String>, AppError> {
     match std::fs::read_to_string(path) {
@@ -246,34 +337,64 @@ pub(super) fn existing_manifest(path: &str) -> Result<Option<String>, AppError> 
     }
 }
 
-/// `ts,equity_raw` 两列。时间与权益逐行成对，行数取两者较短的——多出来的那一格没有配对的
-/// 时间戳，印出来只会让读回侧对不上账。
-pub(super) fn equity_csv(ts: &[u64], equity: &[i128]) -> String {
-    let mut out = String::from("ts,equity_raw\n");
-    for (stamp, value) in ts.iter().zip(equity.iter()) {
-        out.push_str(&format!("{stamp},{value}\n"));
+/// `ts,equity_raw,position_raw` 三列。时间、权益与持仓逐行对齐；行数取三者较短的，
+/// 多出来的采样值没有对应坐标，不能伪装成完整的研究曲线。
+pub(super) fn equity_csv(ts: &[u64], equity: &[i128], positions: &[i128]) -> String {
+    let mut out = String::from("ts,equity_raw,position_raw\n");
+    for ((stamp, value), position) in ts.iter().zip(equity.iter()).zip(positions.iter()) {
+        out.push_str(&format!("{stamp},{value},{position}\n"));
     }
     out
 }
 
-/// `ts,order_id,qty_raw,price_raw,fee_raw,strategy_id` 六列。
-///
-/// **刻意没有 side 列**：`qx_core::Fill` 不带方向，方向在订单上；给这一格编一个默认值
-/// 就是"看起来完整的来源未知"，正是本仓明令禁止的形状。
-pub(super) fn fills_csv(fills: &[Fill]) -> String {
-    let mut out = String::from("ts,order_id,qty_raw,price_raw,fee_raw,strategy_id\n");
-    for fill in fills {
-        out.push_str(&format!(
-            "{},{},{},{},{},{}\n",
-            fill.ts,
-            fill.order_id,
-            fill.qty.raw(),
-            fill.price.raw(),
-            fill.fee.raw(),
-            fill.strategy_id.as_deref().unwrap_or_default()
+/// Scale-aware equity CSV for runs whose marked curve cannot be represented by the legacy raw
+/// column. The original columns remain available and retain their ordering and semantics.
+pub(super) fn equity_csv_with_exact(
+    ts: &[u64],
+    equity: &[i128],
+    equity_exact: &[qx_core::ExactDecimal],
+    positions: &[i128],
+) -> Result<String, AppError> {
+    if ts.len() != equity.len() || ts.len() != equity_exact.len() || ts.len() != positions.len() {
+        return Err(AppError::new(
+            AppErrorCategory::InternalInvariant,
+            "权益 CSV 的时间、raw、exact 与持仓曲线长度不一致",
         ));
     }
-    out
+    let mut out = String::from("ts,equity_raw,equity_exact,position_raw\n");
+    for (((stamp, value), exact), position) in ts
+        .iter()
+        .zip(equity.iter())
+        .zip(equity_exact.iter())
+        .zip(positions.iter())
+    {
+        out.push_str(&format!("{stamp},{value},{exact},{position}\n"));
+    }
+    Ok(out)
+}
+
+/// **刻意没有 side 列**：`qx_core::Fill` 不带方向，方向在订单上；给这一格编一个默认值
+/// 就是"看起来完整的来源未知"，正是本仓明令禁止的形状。v2 的序列化由 artifact_store 共用。
+pub(super) fn fills_csv(fills: &[Fill]) -> Result<String, AppError> {
+    crate::artifact_store::serialize_backtest_fills_csv(fills)
+        .map_err(|message| AppError::new(AppErrorCategory::InternalInvariant, message))
+}
+
+/// Complete, replayable event trace stored beside the four stable display artifacts.
+/// The trace is a sidecar so the established `BacktestArtifacts` API remains unchanged.
+pub(super) fn event_trace_jsonl(events: &[qx_core::Event]) -> Result<String, AppError> {
+    let mut out = String::new();
+    for event in events {
+        let line = serde_json::to_string(event).map_err(|error| {
+            AppError::new(
+                AppErrorCategory::InternalInvariant,
+                format!("序列化回测事件失败: {error}"),
+            )
+        })?;
+        out.push_str(&line);
+        out.push('\n');
+    }
+    Ok(out)
 }
 
 /// CSV 的**数据行**（跳过表头，丢掉空行）。
@@ -286,7 +407,7 @@ pub(super) fn csv_rows(body: &str) -> Vec<&str> {
 
 /// `equity.csv` 的**权益列号**：按表头定位 `equity_raw`。
 ///
-/// 两代形状共存——Bar 链是 `ts,equity_raw`，深度链统一摘要后是
+/// 两代形状共存——旧 Bar 链是 `ts,equity_raw`，新 Bar 链增加 `position_raw`，深度链是
 /// `index,ts,equity_raw,position_raw`。硬编码第 1 列会在四列形状上静默读到时间戳，
 /// 于是"权益末值"变成一个 5 位的时间值，复核给出**假阴性**（明明一致却说错）。
 /// 按列名取列；表头里没有这一格（再老的产物）时退回第 1 列，保留旧行为。
@@ -298,18 +419,10 @@ fn equity_column(body: &str) -> usize {
         .unwrap_or(1)
 }
 
-/// `equity.csv` 末行的权益列。读不出来就是 `None`——调用方据此报"复核不通过"，
-/// **不**拿 0 当兜底。
-pub(super) fn last_equity_raw(body: &str) -> Option<i128> {
-    let column = equity_column(body);
-    let last = csv_rows(body).pop()?;
-    last.split(',').nth(column)?.trim().parse::<i128>().ok()
-}
-
 /// `equity.csv` 权益列的**整列**（按行序）。任意一行读不出来就是 `None`。
 ///
-/// 与 [`last_equity_raw`] 同一把尺：**不**跳过坏行凑一个"看起来完整"的序列——切分评估
-/// 按 Bar 序号对齐，中间少一格会让训练窗与测试窗错位，而错位不会自己出声。
+/// **不**跳过坏行凑一个"看起来完整"的序列——切分评估按 Bar 序号对齐，中间少一格会让
+/// 训练窗与测试窗错位，而错位不会自己出声。
 pub(super) fn equity_series(body: &str) -> Option<Vec<i128>> {
     let column = equity_column(body);
     csv_rows(body)
@@ -328,6 +441,21 @@ pub(super) fn unverified(run_id: &str, reason: String) -> crate::spec::Verificat
         checks: Vec::new(),
         mismatches: vec![reason],
     }
+}
+
+/// Preserve a hard integrity failure as a typed-category-aware mismatch so API surfaces do not
+/// downgrade tampered content-addressed artifacts to an ordinary incomplete report.
+pub(super) fn unverified_artifact_read(
+    run_id: &str,
+    label: &str,
+    error: &AppError,
+) -> crate::spec::VerificationResult {
+    let reason = if error.category() == AppErrorCategory::Conflict {
+        format!("RunRecord SHA-256 复核失败（{label}）: {error}")
+    } else {
+        format!("产物缺失或不完整（{label}）: {error}")
+    };
+    unverified(run_id, reason)
 }
 
 /// `RunSummary` 的构造留在用例里（它需要 `BacktestReport` 的很多格），这里只做**序列化**：

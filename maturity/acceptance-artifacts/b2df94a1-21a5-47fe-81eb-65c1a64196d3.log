@@ -1,0 +1,15 @@
+LEG r11_gate_arch rc=0 seconds=111.76 bytes=68
+LEG r11_gate_ledger rc=0 seconds=6.84 bytes=104
+SUMMARY_WRITTEN .task-tmp\r11_gate_summary.json
+R r11_gate_arch_checks=336
+R r11_gate_arch_rc=0
+R r11_gate_arch_seconds=111.45
+R r11_gate_arch_shards=4
+R r11_gate_ledger_binds=132
+R r11_gate_ledger_range=R01–R23
+R r11_gate_ledger_rc=0
+R r11_gate_ledger_scenes=23
+R t_r11_gate_arch=111.76
+R t_r11_gate_ledger=6.84
+legs_nonzero=-
+rc=0

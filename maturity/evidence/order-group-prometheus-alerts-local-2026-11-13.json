@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "evidence_id": "order-group-prometheus-alerts-local-2026-11-13",
+  "recorded_at": "2026-11-13",
+  "scope": "Prometheus alert rules for durable order-group state",
+  "environment": {
+    "os": "Windows",
+    "workspace_commit_before_change": "a241f25b7b8fe81f0fc713644edb2156ccf47a55",
+    "prometheus_image": "mirror.gcr.io/prom/prometheus:v3.16.0"
+  },
+  "verification": [
+    {
+      "command": "podman run --rm --entrypoint=/bin/promtool -v D:\\aex_work\\qianxing\\deploy\\prometheus:/etc/prometheus:ro mirror.gcr.io/prom/prometheus:v3.16.0 check rules /etc/prometheus/qianxing-alerts.yml",
+      "result": "passed",
+      "assertions": ["14 alert rules parsed and validated"]
+    },
+    {
+      "command": "podman run --rm --entrypoint=/bin/promtool -v D:\\aex_work\\qianxing\\deploy\\prometheus:/etc/prometheus:ro mirror.gcr.io/prom/prometheus:v3.16.0 test rules /etc/prometheus/qianxing-alerts.test.yml",
+      "result": "passed",
+      "assertions": [
+        "reconcile_required order groups fire the operator reconciliation alert",
+        "unavailable durable order-group metrics fire the data availability alert"
+      ]
+    },
+    {
+      "command": "go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/ci.yml",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "limitations": [
+    "Prometheus rule behavior uses synthetic metric samples and does not prove production scrape or Alertmanager delivery.",
+    "No exchange API was contacted and no connector maturity status changed."
+  ]
+}

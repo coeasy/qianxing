@@ -12,6 +12,9 @@
 //!    内核不提供第二套事件循环——回测（`qx-xingban`）与 paper/live（`qx-runtime` 的
 //!    `pipeline.rs`）的循环各在自己的 crate 里，但都只能通过 `EventLog` 落地事实。
 
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
+pub mod atomic_file;
 pub mod benchmark;
 pub mod clock;
 pub mod contract;
@@ -24,6 +27,7 @@ pub mod identity;
 pub mod ledger;
 pub mod numeric;
 pub mod order;
+pub mod order_group;
 pub mod performance;
 pub mod retry;
 pub mod sourcing;
@@ -43,8 +47,12 @@ pub use self::error::{
     ErrorContract, QxError, QxResult, Retryability,
 };
 pub use self::event::{
-    AccountBalance, AccountCashflow, AccountPositionSnapshot, CashflowKind, Event, EventContext,
-    EventKind, EventMetadata, FundingRateSnapshot, Priority, EVENT_METADATA_SCHEMA_VERSION,
+    event_source_kind, AccountBalance, AccountCashflow, AccountPositionSnapshot, CashflowKind,
+    Event, EventContext, EventKind, EventMetadata, ExactAccountBalanceAmounts,
+    ExactAccountPositionAmounts, ExactOhlcv, ExecutionCapabilityDecisionFact,
+    ExecutionCapabilityDecisionKind, FundingRateSnapshot, MarketDepthLevel, OrderRiskDecisionFact,
+    Priority, StrategyDecisionFact, StrategyIntentFact, EVENT_METADATA_SCHEMA_VERSION,
+    EXECUTION_CAPABILITY_DECISION_SCHEMA_VERSION,
 };
 pub use self::fee::{
     bp_amount, bp_amount_checked, notional, AShareFeeModel, FeeModel, MakerTakerFeeModel,
@@ -59,22 +67,38 @@ pub use self::identity::{
     CanonicalProduct, InstrumentId, MarketId, VenueId, DEFAULT_SETTLEMENT_CURRENCY,
 };
 pub use self::ledger::{
-    ConvertibleBondConversion, CorporateAction, FundingRateEvent, InstrumentFunding, Ledger,
-    LedgerEntry, LedgerEntryKind, PositionState, RightsIssueEvent, FUNDING_INTERVAL_MS,
+    ConvertibleBondConversion, CorporateAction, ExactInstrumentFunding, ExactLedgerAmounts,
+    ExactPositionState, FundingRateEvent, InstrumentFunding, Ledger, LedgerEntry, LedgerEntryKind,
+    PositionState, RightsIssueEvent, FUNDING_INTERVAL_MS, MAX_FUNDING_INTERVAL_MS,
+    MIN_FUNDING_INTERVAL_MS,
 };
 pub use self::numeric::{
     parse_decimal_exact, parse_decimal_half_even, parse_decimal_integer_exact,
-    parse_decimal_scaled_integer, Fixed, Money, Price, Quantity, SCALE,
+    parse_decimal_scaled_integer, DecimalRounding, ExactDecimal, Fixed, Money, Price, Quantity,
+    SCALE,
 };
-pub use self::order::{Fill, Order, OrderStatus, OrderTrace, Side};
+pub use self::order::{
+    ConditionalOrderIntent, ConditionalOrderKind, ExactFillAmounts, ExactFillFee,
+    ExactOrderAmounts, Fill, FillFee, Order, OrderStatus, OrderTrace, Side, TriggerPriceType,
+};
+pub use self::order_group::{
+    OrderGroupAmendment, OrderGroupAmendmentPhase, OrderGroupExecution, OrderGroupIntent,
+    OrderGroupKind, OrderGroupLegIntent, OrderGroupLegRole, OrderGroupLegState, OrderGroupState,
+    OrderGroupStatus, ORDER_GROUP_SCHEMA_VERSION,
+};
 pub use self::performance::{backtest_risk_metrics, BacktestRiskMetrics};
 pub use self::retry::{Backoff, RetryPolicy};
-pub use self::sourcing::{EventLog, Fnv1a, ReplayFacts, ReplayVerifier, RunManifest};
+pub use self::sourcing::{
+    EventLog, Fnv1a, ReplayFacts, ReplayVerifier, RunManifest, StreamingReplayResult,
+    StreamingReplayVerifier,
+};
 pub use self::target::TargetPosition;
 pub use self::trading::{
-    resolve_settlement_currency, MarginMode, MarginState, OrderPolicy, PositionMode, PositionSide,
-    TradingInstrumentSpec, TradingProduct,
+    resolve_settlement_currency, ExactTradingRules, MarginMode, MarginState, OrderPolicy,
+    PositionMode, PositionSide, TradingInstrumentSpec, TradingProduct,
 };
 pub use self::trading_policy::{margin_mode_for_product, short_selling_enabled};
-pub use self::valuation::{PaperValuationContext, ValuationContext, ValuationResult};
+pub use self::valuation::{
+    ExactValuationContext, PaperValuationContext, ValuationContext, ValuationResult,
+};
 pub use self::venue::VenueFamily;

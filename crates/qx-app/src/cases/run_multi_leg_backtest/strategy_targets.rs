@@ -91,6 +91,10 @@ impl Strategy for RecordingMultiLegStrategy {
         self.inner.on_init(context)
     }
 
+    fn on_start(&mut self, context: &StrategyContext) -> Result<(), String> {
+        self.inner.on_start(context)
+    }
+
     fn on_event(
         &mut self,
         context: &StrategyContext,

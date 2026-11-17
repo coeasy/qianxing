@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "kind": "rust_cargo_install_quickstart",
+  "acceptance_id": "rust-cargo-install-quickstart-current-worktree-2026-11-07",
+  "generated_at_utc": "2026-11-07T14:15:01+00:00",
+  "source": {
+    "head_commit": "4a70e85093906d1fc114970ec6349121dbcaa9f6",
+    "working_tree_changes_included": true,
+    "dirty_path_count_at_measurement": 693
+  },
+  "install": {
+    "command": "cargo install --path crates/qx-cli --locked --root .tmp-test/cargo-install-20261107",
+    "package": "qx-cli 0.3.0",
+    "binary": "qx-cli.exe",
+    "size_bytes": 43714560,
+    "sha256": "b191e84e7e0caab3619dcc3fcb921f0989687bb6bfeb3d30b3de97e054fd460c",
+    "version_identity": "qianxing 0.3.0 (build 4a70e85-dirty, target x86_64-pc-windows-msvc, profile release, schemas 1db063770a475ac1f5a13d3494810c1136a1b2fe16694838ff98d87358714a91)"
+  },
+  "checks": [
+    {
+      "command": "installed qx-cli quickstart <workspace-temp-project>",
+      "result": "passed",
+      "steps": ["init", "doctor", "backtest", "report", "status"],
+      "files_created": 17,
+      "backtest_result_hash": "45038cdcb863b87f",
+      "network_accessed": false,
+      "orders_sent": false
+    },
+    {
+      "command": "installed qx-cli runtime-check --json",
+      "result": "passed",
+      "generated_event_log_segment_events": 1024
+    }
+  ],
+  "environment": {
+    "host": "Windows x86_64",
+    "temp_directory": "workspace-local .tmp-test/cargo-temp",
+    "note": "The system temporary directory denied writes in this environment; the same installed binary passed with an explicit writable temporary directory."
+  },
+  "limitations": [
+    "This is a dirty local installation and does not verify a clean tagged source install.",
+    "Linux and macOS install/runtime acceptance remain assigned to the release CI matrix."
+  ]
+}

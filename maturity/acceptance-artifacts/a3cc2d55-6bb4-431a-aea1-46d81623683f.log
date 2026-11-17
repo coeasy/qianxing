@@ -1,0 +1,49 @@
+anchor case-off/ambig-on  occurrences=1 OK
+anchor norm-off           occurrences=1 OK
+anchor shape-drop         occurrences=1 OK
+anchor msg-cited-only     occurrences=1 OK
+anchor link-empty-false   occurrences=1 OK
+shots fired=7 tally={'EQUIV': 1, 'KILL': 6} declared={'EQUIV': 1, 'KILL': 6}
+OK 0 still collects 7 tests
+OK 0 red roster is exactly the declared set
+OK 0 rc=0 as declared
+OK 0 pristine file is green with no FAIL row
+OK 0 restored to the pre-shot sha
+OK 1 mutated the shipped tool
+OK 1 still collects 7 tests
+BAD 1 red roster is exactly the declared set | got=['test_dot_slash_prefix_is_navigation_not_spelling', 'test_unique_case_variant_is_flagged_once_per_occurrence'] want=['test_unique_case_variant_is_flagged_once_per_occurrence']
+OK 1 rc=1 as declared
+OK 1 killed something (survived gun refused)
+OK 1 restored to the pre-shot sha
+OK 2 mutated the shipped tool
+OK 2 still collects 7 tests
+OK 2 red roster is exactly the declared set
+OK 2 rc=1 as declared
+OK 2 killed something (survived gun refused)
+OK 2 restored to the pre-shot sha
+OK 3 mutated the shipped tool
+OK 3 still collects 7 tests
+OK 3 red roster is exactly the declared set
+OK 3 rc=1 as declared
+OK 3 killed something (survived gun refused)
+OK 3 restored to the pre-shot sha
+OK 4 mutated the shipped tool
+OK 4 still collects 7 tests
+BAD 4 red roster is exactly the declared set | got=['test_bare_file_name_is_not_a_path_citation', 'test_dot_slash_prefix_is_navigation_not_spelling', 'test_exact_spelling_is_examined_and_cleared', 'test_multiple_case_variants_are_left_unjudged', 'test_unique_case_variant_is_flagged_once_per_occurrence'] want=['test_bare_file_name_is_not_a_path_citation']
+OK 4 rc=1 as declared
+OK 4 killed something (survived gun refused)
+OK 4 restored to the pre-shot sha
+OK 5 mutated the shipped tool
+OK 5 still collects 7 tests
+BAD 5 red roster is exactly the declared set | got=['test_dot_slash_prefix_is_navigation_not_spelling', 'test_unique_case_variant_is_flagged_once_per_occurrence'] want=['test_unique_case_variant_is_flagged_once_per_occurrence']
+OK 5 rc=1 as declared
+OK 5 killed something (survived gun refused)
+OK 5 restored to the pre-shot sha
+OK 6 mutated the shipped tool
+OK 6 still collects 7 tests
+OK 6 red roster is exactly the declared set
+OK 6 rc=1 as declared
+OK 6 killed something (survived gun refused)
+OK 6 restored to the pre-shot sha
+CHECKS total=41 ok=38 bad=3
+VERDICT FAILED

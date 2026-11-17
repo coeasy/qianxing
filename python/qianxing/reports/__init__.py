@@ -24,8 +24,23 @@ from qianxing.app import (
     MultiLegBacktestOutcome,
     VerificationResult,
     compare_runs,
+    read_depth_run_report_v1,
+    read_multi_account_joint_report_v1,
+    read_multi_account_report_v1,
+    read_multi_leg_report_facts_v1,
+    read_multi_leg_research_report_v1,
+    read_multi_leg_event_report_page_v1,
+    read_multi_market_event_report_page_v1,
+    read_multi_market_depth_event_report_page_v1,
+    read_multi_market_depth_research_report_v1,
+    read_multi_market_research_report_v1,
+    read_run_report_v1,
     verify_depth_run,
     verify_run,
+)
+from qianxing.reports.joint_account_html import (
+    render_multi_account_joint_report_html,
+    write_multi_account_joint_report_html,
 )
 
 __all__ = [
@@ -38,6 +53,19 @@ __all__ = [
     "MultiLegBacktestOutcome",
     "VerificationResult",
     "compare_runs",
+    "read_depth_run_report_v1",
+    "read_multi_account_joint_report_v1",
+    "read_multi_account_report_v1",
+    "read_multi_leg_report_facts_v1",
+    "read_multi_leg_research_report_v1",
+    "read_multi_leg_event_report_page_v1",
+    "read_multi_market_event_report_page_v1",
+    "read_multi_market_depth_event_report_page_v1",
+    "read_multi_market_depth_research_report_v1",
+    "read_multi_market_research_report_v1",
+    "read_run_report_v1",
+    "render_multi_account_joint_report_html",
     "verify_depth_run",
     "verify_run",
+    "write_multi_account_joint_report_html",
 ]

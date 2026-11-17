@@ -2,7 +2,12 @@ use super::*;
 use serde_json::{json, Value};
 use std::io::Read;
 
-pub(super) fn assert_benchmark_report_product(cwd: &Path, summary: &Path, frame: &Value) {
+pub(super) fn assert_benchmark_report_product(
+    cwd: &Path,
+    summary: &Path,
+    frame: &Value,
+    run_index: usize,
+) {
     let benchmark_path = cwd.join("benchmark-bars.json");
     let benchmark_closes = (0..24)
         .map(|index| 4_000_000_000_i64 + index * 5_000_000)
@@ -135,13 +140,7 @@ pub(super) fn assert_benchmark_report_product(cwd: &Path, summary: &Path, frame:
     let run_evidence_path = benchmark_json["run_evidence"]["path"]
         .as_str()
         .expect("benchmark evidence path");
-    let portable_dir = cwd.join(format!(
-        "benchmark-portable-evidence-{}",
-        summary
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or("run")
-    ));
+    let portable_dir = cwd.join(format!("benchmark-evidence-{run_index}"));
     let export_args = vec![
         "evidence".into(),
         "export-run".into(),

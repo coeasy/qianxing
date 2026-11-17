@@ -75,6 +75,7 @@ fn fractional_kelly_uses_only_visible_returns_and_caps_to_available_margin() {
                         low_raw: close,
                         close_raw: close,
                         volume_raw: qx_core::SCALE,
+                        exact_ohlcv: None,
                     },
                 )
                 .unwrap(),
@@ -123,6 +124,7 @@ fn kelly_sizing_fails_closed_without_both_wins_and_losses_or_enough_history() {
                         low_raw: close,
                         close_raw: close,
                         volume_raw: qx_core::SCALE,
+                        exact_ohlcv: None,
                     },
                 )
                 .unwrap(),
@@ -176,6 +178,7 @@ fn non_positive_directional_kelly_target_closes_existing_position_reduce_only() 
                         low_raw: close,
                         close_raw: close,
                         volume_raw: qx_core::SCALE,
+                        exact_ohlcv: None,
                     },
                 )
                 .unwrap(),
@@ -230,6 +233,7 @@ pub(super) fn volatility_budget_quantity(risk_bps: u32) -> i128 {
                         low_raw: (close - 2) * qx_core::SCALE,
                         close_raw: close * qx_core::SCALE,
                         volume_raw: qx_core::SCALE,
+                        exact_ohlcv: None,
                     },
                 )
                 .unwrap(),

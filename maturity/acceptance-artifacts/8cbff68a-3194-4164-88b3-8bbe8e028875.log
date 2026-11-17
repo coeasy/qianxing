@@ -1,0 +1,37 @@
+$ cargo build -p qx-python --offline
+exit_code=0
+
+[stdout]
+
+[stderr]
+   Compiling proc-macro2 v1.0.107
+   Compiling memchr v2.8.3
+   Compiling serde_json v1.0.151
+   Compiling quote v1.0.47
+   Compiling syn v3.0.4
+   Compiling syn v2.0.119
+   Compiling serde_derive v1.0.229
+   Compiling pyo3-macros-backend v0.29.2
+   Compiling serde v1.0.229
+   Compiling qx-core v0.4.0 (D:\aex_work\qianxing\crates\qx-core)
+   Compiling pyo3-macros v0.29.2
+   Compiling pyo3 v0.29.2
+   Compiling qx-guanxing v0.4.0 (D:\aex_work\qianxing\crates\qx-guanxing)
+   Compiling qx-risk v0.4.0 (D:\aex_work\qianxing\crates\qx-risk)
+   Compiling qx-control v0.4.0 (D:\aex_work\qianxing\crates\qx-control)
+   Compiling qx-strategy v0.4.0 (D:\aex_work\qianxing\crates\qx-strategy)
+   Compiling qx-protocol v0.4.0 (D:\aex_work\qianxing\crates\qx-protocol)
+   Compiling qx-scheduler v0.4.0 (D:\aex_work\qianxing\crates\qx-scheduler)
+   Compiling qx-datastruct v0.4.0 (D:\aex_work\qianxing\crates\qx-datastruct)
+   Compiling qx-zhenlu v0.4.0 (D:\aex_work\qianxing\crates\qx-zhenlu)
+   Compiling qx-factor v0.4.0 (D:\aex_work\qianxing\crates\qx-factor)
+   Compiling qx-data v0.4.0 (D:\aex_work\qianxing\crates\qx-data)
+   Compiling qx-storage v0.4.0 (D:\aex_work\qianxing\crates\qx-storage)
+   Compiling qx-execution v0.4.0 (D:\aex_work\qianxing\crates\qx-execution)
+   Compiling qx-spec v0.4.0 (D:\aex_work\qianxing\crates\qx-spec)
+   Compiling qx-provider v0.4.0 (D:\aex_work\qianxing\crates\qx-provider)
+   Compiling qx-xingban v0.4.0 (D:\aex_work\qianxing\crates\qx-xingban)
+   Compiling qx-runtime v0.4.0 (D:\aex_work\qianxing\crates\qx-runtime)
+   Compiling qx-app v0.4.0 (D:\aex_work\qianxing\crates\qx-app)
+   Compiling qx-python v0.4.0 (D:\aex_work\qianxing\crates\qx-python)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 43.07s

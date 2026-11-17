@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "kind": "python-wheel-local-research-smoke",
+  "generated_at_utc": "2026-10-26T22:54:15Z",
+  "environment": {
+    "os": "Windows 11 x64",
+    "python_implementation": "CPython",
+    "python_version": "3.13.13",
+    "virtual_environment": "fresh"
+  },
+  "package": {
+    "name": "qianxing",
+    "version": "0.2.2",
+    "wheel": "qianxing-0.2.2-cp310-abi3-win_amd64.whl",
+    "wheel_bytes": 5961897,
+    "wheel_sha256": "bb81d48f968b7245d36f73a0de794325df03563b327a2fc66e08063a65aa41ad",
+    "installation": "pip install --no-index --no-deps <wheel>",
+    "doctor": {
+      "native_extension_available": true,
+      "application_use_cases_available": true,
+      "version": "0.2.2"
+    }
+  },
+  "local_research": {
+    "execution_mode": "local, no sandbox",
+    "strategy_file": "python/examples/strategy_file_sma.py",
+    "strategy_contract": "STRATEGY_CLASS subclassing qianxing_strategy.BaseStrategy",
+    "experiment_id": "wheel-local-research-final-20261027",
+    "input": "target/wheel-local-research-final.json",
+    "source_data": "deploy/qianxing.bar-frame.example.json",
+    "command": "qianxing research python/examples/strategy_file_sma.py target/wheel-local-research-final.json --diagnostic-startup-windows 2 5 --html target/wheel-local-research-final-output/research.html",
+    "candidate_count": 6,
+    "succeeded_candidates": 6,
+    "candidate_diagnostics": {
+      "coverage_status": "complete",
+      "diagnosed_count": 6,
+      "diagnostic_failure_count": 0,
+      "unavailable_candidate_count": 0,
+      "not_run_candidate_count": 0,
+      "startup_windows_bars": [2, 5]
+    },
+    "html_report": {
+      "path": "target/wheel-local-research-final-output/research.html",
+      "bytes": 381615,
+      "sha256": "d56af7ab77b9e9c26a0a444a8da3bf5c1571529cd504129fd3d07c32ba8f5036",
+      "contains_candidate_diagnostic_rows": true,
+      "contains_exact_fill_columns": true
+    }
+  },
+  "regression": {
+    "targeted_python_tests": {
+      "command": "python -m pytest -q python/tests/test_callback_strategy_diagnostics.py python/tests/test_experiment_html.py",
+      "passed": 32,
+      "failed": 0
+    },
+    "full_python_tests": {
+      "command": "python -m pytest -q python/tests",
+      "passed": 529,
+      "skipped": 10,
+      "failed": 0
+    }
+  },
+  "limitations": [
+    "Wheel smoke covered Windows x64 with CPython 3.13.13 only; other operating systems and Python versions were not built in this run.",
+    "The research used the repository Bar example dataset and demonstrates workflow connectivity, not strategy profitability or live trading performance.",
+    "This evidence does not represent PyPI publication or real E2B, Microsandbox, or OpenSandbox service acceptance, isolation, capacity, or cost validation."
+  ]
+}

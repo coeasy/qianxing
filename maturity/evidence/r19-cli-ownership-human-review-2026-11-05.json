@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "kind": "qianxing_acceptance_human_review",
+  "work_package": "R19",
+  "acceptance_id": "R19-AC01",
+  "reviewed_at": "2026-11-05",
+  "decision": "accepted_for_windows_local_acceptance",
+  "reviewed_run_id": "ec29a71c-c1d0-48c2-97b3-a3dc69eb84ff",
+  "reviewed_command": "python tools/check_architecture.py --fast",
+  "reviewed_artifacts": [
+    "maturity/acceptance-artifacts/ec29a71c-c1d0-48c2-97b3-a3dc69eb84ff.log",
+    "maturity/acceptance-artifacts/ec29a71c-c1d0-48c2-97b3-a3dc69eb84ff.source-tree.json",
+    "crates/qx-cli/src/cli.rs",
+    "crates/qx-cli/src/cli_args.rs",
+    "crates/qx-cli/src/app_commands.rs",
+    "crates/qx-cli/src/app_commands/use_cases.rs",
+    "crates/qx-cli/src/app_commands/report_readers.rs",
+    "tools/check_architecture.py",
+    "docs/module-map.md",
+    "maturity/strategy-run-acceptance-v1.json",
+    ".github/workflows/ci.yml",
+    "crates/qx-cli/tests/cli_behavior_parity/dataset_bundle_parity.rs",
+    "maturity/acceptance-artifacts/ac59430a-9f70-4d7b-8ca2-2d8d24bb2a88.log",
+    "maturity/acceptance-artifacts/ac59430a-9f70-4d7b-8ca2-2d8d24bb2a88.source-tree.json",
+    "crates/qx-cli/tests/cli_behavior_parity.rs",
+    "crates/qx-cli/tests/cli_behavior_parity/fast_backtest_parity.rs",
+    "crates/qx-cli/tests/cli_behavior_parity/full_health_readout.rs",
+    "deploy/qianxing.dataset-bundle.ashare.example.json",
+    "maturity/acceptance-artifacts/360a0a38-d3e2-4678-b754-f2fa38d0a92c.log",
+    "maturity/acceptance-artifacts/360a0a38-d3e2-4678-b754-f2fa38d0a92c.source-tree.json",
+    "maturity/acceptance-artifacts/3f73e167-333b-49cb-a93f-5a59f43fe283.log",
+    "maturity/acceptance-artifacts/3f73e167-333b-49cb-a93f-5a59f43fe283.source-tree.json"
+  ],
+  "findings": [
+    "The recorded top-level command audit covers 52 clap Command variants and confirms one facade match arm per variant, with no missing, duplicate, or stale branch.",
+    "The top-level CLI facade keeps the sole Command match and delegates command families to dedicated adapters; Report follows the compatibility entrypoint into report_command workflow.",
+    "The app command facade performs dispatch and shared stdout/stderr handling. Use-case handlers have a single use_cases owner; versioned report and event DTO reads have a single report_readers owner. The architecture gates check ownership, dispatch links, context construction, serialization, and error categories.",
+    "The module map and the 84 ledger-backed R19 acceptance runs are consistent with the inspected facade and owner boundaries. The latest route audit is source-bound to revision 4a70e85093906d1fc114970ec6349121dbcaa9f6.",
+    "The CLI behavior-parity run found the deploy bundle fixture was stale after bars snapshots became mandatory. The fixture now uses the valid BarFrame-backed example, and that focused replay passes.",
+    "The serialized Windows CLI behavior-parity matrix now passes all 36 cases. Fixes preserve deploy example bytes when isolating runtime storage, refresh fixture handling for required bar snapshots, and canonicalize dynamically generated Paper observation artifact IDs during alias comparisons.",
+    "The full serialized R19-AC01 behavior-parity target was recorded locally and passes 36/36 on Windows (run 3f73e167-333b-49cb-a93f-5a59f43fe283)."
+  ],
+  "limitations": [
+    "The ledger-backed Windows CLI ownership evidence and 36/36 behavior-parity matrix are reviewed; Linux/macOS acceptance remains outstanding.",
+    "The full serial Windows qx-cli unit target passes 466 of 486 cases with TEMP/TMP pointed inside the repository. Twenty failures remain: API route/error documentation, signed dataset-role fixtures and A-share guard ordering, and stale source inventories for dispatch, event-log, pipeline metrics, and zero-reader checks. The R19 unit gate is not complete.",
+    "The initial full unit run without the local TEMP/TMP override had many Windows access-denied failures; the rerun reduced the remaining failures from 64 to 20."
+  ]
+}

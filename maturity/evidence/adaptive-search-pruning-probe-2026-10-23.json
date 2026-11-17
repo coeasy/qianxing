@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "verified_adaptive_search_capacity",
+  "generated_at_utc": "2026-10-22T21:20:59Z",
+  "hardware": {
+    "os": "Windows",
+    "arch": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 16,
+    "physical_core_count": 8,
+    "total_ram_bytes": 65911173120,
+    "system_model": "MS-7E27",
+    "processor_name": "AMD Ryzen 7 8700G w/ Radeon 780M Graphics"
+  },
+  "binary": "D:\\aex_work\\qianxing\\target\\release\\qx-cli.exe",
+  "binary_sha256": "984f9c55f9ce6f25d7749d28bbd86fcae0a036ef6c2ff65f20959b4c9b9959b6",
+  "measurement_source_fingerprint_schema": 3,
+  "measurement_source_fingerprint": "40af8c3e4fcad6e2dea40189cd89e7591472601d0060fbfa31bbac7da8bdca63",
+  "benchmark_script_sha256": "091783b9eeaf193d643a703c752ac179421b73dd3bcf4811891d313afa52770e",
+  "scenario": "qx-cli app run-experiment using seeded TPE-KDE over an adaptive stepped-integer fast_window range",
+  "objective": {
+    "kind": "full_training_return"
+  },
+  "input_profile": "synthetic rise-then-decline path designed to exercise training drawdown pruning",
+  "early_pruning": {
+    "max_training_drawdown_bps": 0,
+    "min_training_bars": 64,
+    "enabled": true
+  },
+  "replay_verified": true,
+  "profile_coverage_claim": false,
+  "profile_target_statuses_updated": false,
+  "resource_measurement": {
+    "peak_rss_field": "peak_rss_bytes",
+    "process_tree_peak_rss_field": "process_tree_peak_rss_bytes",
+    "process_tree_method": "benchmarks/process_metrics.py OS process counters and optional psutil 10ms tree sampling",
+    "cpu_and_io": "process-tree CPU seconds and OS read/write bytes when the platform exposes them; null remains unavailable"
+  },
+  "limitations": [
+    "synthetic crypto spot Bar input and one builtin SMA strategy",
+    "bounded stepped-integer fast_window range; does not measure floating-point spaces",
+    "measures early pruning only under the declared monotone training drawdown budget",
+    "training robustness subwindows are confined to the training interval; no OOS bars are used by this objective",
+    "single process and non-walk-forward training/test split; does not measure parallel search",
+    "short-process RSS and CPU/I/O counters can be unavailable or miss brief peaks"
+  ],
+  "workloads": [
+    {
+      "bars": 8000,
+      "candidate_budget": 8,
+      "algorithm": "tpe_kde",
+      "search_space": "continuous",
+      "objective": {
+        "kind": "full_training_return"
+      },
+      "repeats": 2,
+      "input_generation_ms": 6.833,
+      "candidate_count_per_repeat": 8,
+      "succeeded_candidates": 8,
+      "failed_candidates": 0,
+      "pruned_candidates": 0,
+      "pruned_bars_saved": 0,
+      "pruning_trace_sha256": "574fee1a0aba0d9a42e3c4b5e191bb8ebabe6578cf58009020a837ae9901f682",
+      "proposal_trace_sha256": "db43cb183b8f7b607055057f686c6e2bf4b39f0b8f8b92ce3b80cbc58a7c5dad",
+      "candidate_result_hashes_unique_count": 8,
+      "training_robustness_scores_bps": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "wall_p50_ms": 1063.525,
+      "unpruned_baseline_wall_p50_ms": 1100.229,
+      "unpruned_to_pruned_wall_ratio": 1.0345,
+      "wall_p95_ms": 1065.617,
+      "peak_rss_bytes_max": 32104448,
+      "process_tree_peak_rss_bytes_max": 27504640,
+      "peak_process_count": 1,
+      "process_tree_cpu_seconds_p50": 0.391,
+      "process_tree_io_read_bytes_max": 62940968,
+      "process_tree_io_write_bytes_max": 47549005,
+      "stdout_bytes_max": 12526,
+      "report_sha256_unique_count": 2,
+      "scope_claim": "continuous_integer_adaptive_search_only"
+    }
+  ]
+}

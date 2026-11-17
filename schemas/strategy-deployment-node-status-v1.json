@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/strategy-deployment-node-status-v1.json",
+  "title": "Authenticated strategy deployment node status response v1",
+  "type": "array",
+  "additionalProperties": false,
+  "maxItems": 1024,
+  "items": {
+    "$ref": "#/$defs/node_status"
+  },
+  "$defs": {
+    "node_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "node_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "authenticated_operator_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identity established by the authenticated transport and matched to the explicit node registry."
+        },
+        "freshness": {
+          "enum": [
+            "unobserved",
+            "fresh",
+            "stale"
+          ]
+        },
+        "received_at_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "source_observed_at_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "age_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "deployments": {
+          "type": "array",
+          "maxItems": 1024,
+          "items": {
+            "$ref": "strategy-deployment-status-v1.json"
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "node_id",
+        "authenticated_operator_id",
+        "freshness",
+        "received_at_ms",
+        "source_observed_at_ms",
+        "age_ms",
+        "deployments"
+      ]
+    }
+  }
+}

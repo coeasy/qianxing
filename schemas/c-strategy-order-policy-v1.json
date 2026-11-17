@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.local/schemas/c-strategy-order-policy-v1.json",
+  "title": "Qianxing C ABI per-intent order policy v1",
+  "description": "Optional C ABI JSON extension for derivative order policy fields that cannot be appended to the stable v2 qx_order_intent layout.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version"],
+  "dependentRequired": {
+    "margin_mode": ["position_mode", "leverage"],
+    "position_mode": ["margin_mode", "leverage"],
+    "leverage": ["margin_mode", "position_mode"]
+  },
+  "properties": {
+    "schema_version": {"const": 1},
+    "margin_mode": {"enum": ["cash", "cross", "isolated"]},
+    "position_mode": {"enum": ["one_way", "hedge"]},
+    "leverage": {"type": "integer", "minimum": 1, "maximum": 4294967295}
+  }
+}

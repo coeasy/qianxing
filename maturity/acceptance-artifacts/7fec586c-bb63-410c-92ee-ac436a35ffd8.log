@@ -1,0 +1,12 @@
+OK shot 0 pristine: naive import reports a non-zero examined face
+OK shot 1 hazard is reproducible: bytes restored, naive import is still blinded
+OK shot 2 the audit is immune on the poisoned disk: it pins the bytes it loaded
+OK shot 2 the audit's face is the shipped leg's face, not zero
+OK shot 2 contrast: the naive import on this same disk is still blinded
+OK shot 2 the audit run left the tool bytes untouched
+OK shot 3 the pin kills a diverged import (rc=2, STALE_IMPORT named, no counts printed)
+OK shot 3 control: the disk file itself was never touched by this shot
+OK shot 4 control: a clean disk passes the same pin and still counts
+OK shot 4 nothing left the tree dirty but a regenerable cache
+REPORT shot 1 blinded face pristine 4627 -> stale 0 (equal-length swap, cached)
+checks=10 bad=0

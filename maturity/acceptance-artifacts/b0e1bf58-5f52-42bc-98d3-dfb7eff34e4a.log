@@ -1,0 +1,6 @@
+test_warmup_suppresses_orders_until_each_instrument_is_ready (python.tests.test_strategy_base.BaseStrategyTests.test_warmup_suppresses_orders_until_each_instrument_is_ready) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.001s
+
+OK

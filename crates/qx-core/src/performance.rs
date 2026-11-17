@@ -13,6 +13,14 @@ pub struct BacktestRiskMetrics {
     pub profit_factor: Option<f64>,
 }
 
+fn period_return(previous: i128, current: i128) -> Option<f64> {
+    if previous == 0 {
+        return None;
+    }
+    let delta = current.checked_sub(previous)?;
+    Some(delta as f64 / previous as f64)
+}
+
 /// Compute ratios from fixed-point equity values and the authoritative return
 /// and drawdown metrics recorded by the backtest engine.
 ///
@@ -26,10 +34,7 @@ pub fn backtest_risk_metrics(
 ) -> BacktestRiskMetrics {
     let returns: Vec<f64> = equity
         .windows(2)
-        .filter_map(|pair| {
-            let previous = pair[0] as f64;
-            (previous != 0.0).then(|| (pair[1] as f64 - previous) / previous)
-        })
+        .filter_map(|pair| period_return(pair[0], pair[1]))
         .collect();
     if returns.len() < 2 {
         return BacktestRiskMetrics::default();
@@ -154,6 +159,21 @@ mod tests {
             backtest_risk_metrics(&[0, 1_000, 2_000], 100, 500),
             BacktestRiskMetrics::default()
         );
+    }
+
+    #[test]
+    fn period_returns_preserve_sub_float_ulp_changes_in_large_raw_equity() {
+        let metrics = backtest_risk_metrics(
+            &[
+                1_000_000_000_000_000_000,
+                1_000_000_000_000_000_001,
+                1_000_000_000_000_000_002,
+            ],
+            0,
+            0,
+        );
+
+        assert_eq!(metrics.win_rate, Some(1.0));
     }
 
     #[test]

@@ -2,10 +2,11 @@
 
 use super::{is_identity_token, BuiltinStrategySpec};
 use crate::error::{AppError, AppErrorCategory};
-use qx_core::{FundingRateEvent, TradingInstrumentSpec};
+use qx_core::{DecimalRounding, ExactDecimal, FundingRateEvent, TradingInstrumentSpec};
 use serde::{Deserialize, Serialize};
 
 pub const MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION: u32 = 1;
+pub const MULTI_LEG_BACKTEST_EXACT_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -36,6 +37,11 @@ pub struct MultiLegBacktestSpec {
     pub settlement_currency: String,
     pub primary_initial_cash_raw: i128,
     pub reference_initial_cash_raw: i128,
+    /// Version 2 scale-aware leg principals. The raw fields are toward-zero 1e-9 projections.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_initial_cash_exact: Option<ExactDecimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_initial_cash_exact: Option<ExactDecimal>,
     pub seed: u64,
     pub output_dir: String,
     pub strategy: BuiltinStrategySpec,
@@ -56,10 +62,11 @@ pub struct MultiLegBacktestSpec {
     #[serde(default)]
     pub reference_taker_fee_bps: Option<i64>,
     #[serde(default)]
-    /// Signed derivative funding rate in bps per UTC 8-hour settlement.
+    /// Signed derivative funding rate in bps per default UTC 8-hour settlement.
     /// Settlements affect the shared Rust Ledger and replay before callbacks at that time.
     pub funding_bps: i64,
-    /// Timestamped historical funding rates. A market cannot mix this series with nonzero `funding_bps`.
+    /// Exchange-timestamped historical rates; event cadence optionally bounds mark staleness.
+    /// A market cannot mix this series with nonzero `funding_bps`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub funding_events: Vec<FundingRateEvent>,
     #[serde(default)]
@@ -100,6 +107,8 @@ impl MultiLegBacktestSpec {
             settlement_currency: settlement_currency.into(),
             primary_initial_cash_raw,
             reference_initial_cash_raw,
+            primary_initial_cash_exact: None,
+            reference_initial_cash_exact: None,
             seed,
             output_dir: output_dir.into(),
             strategy,
@@ -120,14 +129,77 @@ impl MultiLegBacktestSpec {
         }
     }
 
+    /// Select the exact v2 principal contract while retaining raw compatibility projections.
+    pub fn with_initial_cash_exact(
+        mut self,
+        primary: ExactDecimal,
+        reference: ExactDecimal,
+    ) -> Result<Self, AppError> {
+        let primary_raw = exact_cash_raw_projection(primary)
+            .ok_or_else(|| invalid("主腿精确初始资金无法投影到 1e-9 兼容范围"))?;
+        let reference_raw = exact_cash_raw_projection(reference)
+            .ok_or_else(|| invalid("参考腿精确初始资金无法投影到 1e-9 兼容范围"))?;
+        self.schema_version = MULTI_LEG_BACKTEST_EXACT_SCHEMA_VERSION;
+        self.primary_initial_cash_raw = primary_raw;
+        self.reference_initial_cash_raw = reference_raw;
+        self.primary_initial_cash_exact = Some(primary);
+        self.reference_initial_cash_exact = Some(reference);
+        self.validate()?;
+        Ok(self)
+    }
+
+    /// Return the authoritative per-leg principal values, preserving the v1 raw contract.
+    pub fn initial_cash_exact_values(&self) -> Result<(ExactDecimal, ExactDecimal), AppError> {
+        match (
+            self.primary_initial_cash_exact,
+            self.reference_initial_cash_exact,
+        ) {
+            (Some(primary), Some(reference)) => Ok((primary, reference)),
+            (None, None) => Ok((
+                ExactDecimal::from_parts(self.primary_initial_cash_raw, 9)
+                    .map_err(|_| invalid("主腿初始资金溢出"))?,
+                ExactDecimal::from_parts(self.reference_initial_cash_raw, 9)
+                    .map_err(|_| invalid("参考腿初始资金溢出"))?,
+            )),
+            _ => Err(invalid("多腿精确初始资金必须为两腿成对提供")),
+        }
+    }
+
+    /// Return the authoritative combined principal and its raw compatibility projection.
+    pub fn combined_initial_cash(&self) -> Result<(ExactDecimal, i128), AppError> {
+        let (primary, reference) = self.initial_cash_exact_values()?;
+        let total = primary
+            .checked_add(reference)
+            .ok_or_else(|| invalid("多腿精确初始资金合计溢出"))?;
+        let raw = exact_cash_raw_projection(total)
+            .ok_or_else(|| invalid("多腿精确初始资金合计无法投影到 1e-9 兼容范围"))?;
+        Ok((total, raw))
+    }
+
     pub fn validate(&self) -> Result<(), AppError> {
-        if self.schema_version != MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION {
+        if !matches!(
+            self.schema_version,
+            MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION | MULTI_LEG_BACKTEST_EXACT_SCHEMA_VERSION
+        ) {
             return Err(AppError::new(
                 AppErrorCategory::InvalidInput,
                 format!(
-                    "MultiLegBacktestSpec schema_version={} 本版本只认 {}",
-                    self.schema_version, MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION
+                    "MultiLegBacktestSpec schema_version={} 本版本只认 {} 或 {}",
+                    self.schema_version,
+                    MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION,
+                    MULTI_LEG_BACKTEST_EXACT_SCHEMA_VERSION
                 ),
+            ));
+        }
+        if (self.schema_version == MULTI_LEG_BACKTEST_SPEC_SCHEMA_VERSION
+            && (self.primary_initial_cash_exact.is_some()
+                || self.reference_initial_cash_exact.is_some()))
+            || (self.schema_version == MULTI_LEG_BACKTEST_EXACT_SCHEMA_VERSION
+                && (self.primary_initial_cash_exact.is_none()
+                    || self.reference_initial_cash_exact.is_none()))
+        {
+            return Err(invalid(
+                "MultiLegBacktestSpec v1 只接受两腿 initial_cash_raw；v2 必须成对提供 initial_cash_exact",
             ));
         }
         if !is_identity_token(&self.run_id) {
@@ -190,21 +262,31 @@ impl MultiLegBacktestSpec {
                 ));
             }
         }
-        if self.primary_initial_cash_raw <= 0 || self.reference_initial_cash_raw <= 0 {
-            return Err(AppError::new(
-                AppErrorCategory::InvalidInput,
-                "多腿两侧 initial_cash_raw 都必须为正数",
-            ));
-        }
-        if self
-            .primary_initial_cash_raw
-            .checked_add(self.reference_initial_cash_raw)
-            .is_none()
-        {
-            return Err(AppError::new(
-                AppErrorCategory::InvalidInput,
-                "多腿初始现金合计溢出 i128",
-            ));
+        if let (Some(primary), Some(reference)) = (
+            self.primary_initial_cash_exact,
+            self.reference_initial_cash_exact,
+        ) {
+            if !primary.is_positive()
+                || !reference.is_positive()
+                || exact_cash_raw_projection(primary) != Some(self.primary_initial_cash_raw)
+                || exact_cash_raw_projection(reference) != Some(self.reference_initial_cash_raw)
+            {
+                return Err(invalid(
+                    "多腿 exact 初始本金必须为正，且 raw 字段必须等于各腿向零投影值",
+                ));
+            }
+            let combined = primary
+                .checked_add(reference)
+                .ok_or_else(|| invalid("多腿精确初始资金合计溢出"))?;
+            exact_cash_raw_projection(combined)
+                .ok_or_else(|| invalid("多腿精确初始资金合计无法投影到 1e-9 兼容范围"))?;
+        } else {
+            if self.primary_initial_cash_raw <= 0 || self.reference_initial_cash_raw <= 0 {
+                return Err(invalid("多腿两侧 initial_cash_raw 都必须为正数"));
+            }
+            self.primary_initial_cash_raw
+                .checked_add(self.reference_initial_cash_raw)
+                .ok_or_else(|| invalid("多腿初始现金合计溢出 i128"))?;
         }
         let fee_rates = [
             self.maker_fee_bps,
@@ -235,12 +317,13 @@ impl MultiLegBacktestSpec {
         let mut funding_event_ids = std::collections::BTreeSet::new();
         for event in &self.funding_events {
             if !(-10_000..=10_000).contains(&event.rate_bps)
-                || event.settlement_ts % qx_core::FUNDING_INTERVAL_MS != 0
+                || event.settlement_ts == 0
+                || !event.has_valid_funding_interval()
                 || !funding_event_ids.insert((event.instrument.clone(), event.settlement_ts))
             {
                 return Err(AppError::new(
                     AppErrorCategory::InvalidInput,
-                    "多腿 funding_events 费率、UTC 8 小时结算时间或唯一性无效",
+                    "多腿 funding_events 费率、结算周期或唯一性无效",
                 ));
             }
         }
@@ -344,6 +427,16 @@ impl MultiLegBacktestSpec {
             )
         })
     }
+}
+
+fn exact_cash_raw_projection(amount: ExactDecimal) -> Option<i128> {
+    amount
+        .checked_mul_at_scale(ExactDecimal::ONE, 9, DecimalRounding::TowardZero)
+        .and_then(|value| value.to_raw(9).ok())
+}
+
+fn invalid(message: impl Into<String>) -> AppError {
+    AppError::new(AppErrorCategory::InvalidInput, message.into())
 }
 
 /// Stable outcome shared by Rust, Python, and HTTP callers.

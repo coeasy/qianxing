@@ -1,0 +1,14 @@
+$ cargo test -p qx-cli --bin qx-cli workers::strategy_worker::execution_updates::replay::tests::authorized_revision_migration_replaces_only_strategy_state_and_persists_receipt --offline
+exit_code=0
+
+[stdout]
+
+running 1 test
+test workers::strategy_worker::execution_updates::replay::tests::authorized_revision_migration_replaces_only_strategy_state_and_persists_receipt ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 480 filtered out; finished in 0.01s
+
+
+[stderr]
+    Finished `test` profile [unoptimized] target(s) in 0.92s
+     Running unittests src\main.rs (target\debug\deps\qx_cli-f4bb28e5802ee70c.exe)
