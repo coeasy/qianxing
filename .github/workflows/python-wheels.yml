@@ -340,6 +340,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [[ -d dist/acceptance-artifacts ]]; then
+            tar -czf dist/acceptance-artifacts.tar.gz -C dist acceptance-artifacts
+          fi
           cd dist
           find . -type f ! -name 'SHA256SUMS' ! -name 'release-identity.json' -printf '%P\0' \
             | sort -z | xargs -0 sha256sum > SHA256SUMS
@@ -371,11 +374,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh release create "${GITHUB_REF_NAME}" \
-            --draft \
-            --title "牵星 ${GITHUB_REF_NAME}" \
-            --notes "可复现发布件：binary / wheel / C++ SDK / Web 控制台 + SHA256SUMS + sbom.json + release-identity.json（build provenance 见 Release 附件证明）。" \
-            dist/*
+          mapfile -d '' assets < <(find dist -mindepth 1 -maxdepth 1 -type f -print0 | sort -z)
+          if [[ ${#assets[@]} -eq 0 ]]; then
+            echo 'No release files were assembled.' >&2
+            exit 1
+          fi
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            is_draft="$(gh release view "${GITHUB_REF_NAME}" --json isDraft --jq '.isDraft')"
+            if [[ "$is_draft" != true ]]; then
+              echo "Refusing to replace assets on published release ${GITHUB_REF_NAME}." >&2
+              exit 1
+            fi
+            gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --draft \
+              --title "牵星 ${GITHUB_REF_NAME}" \
+              --notes "可复现发布件：binary / wheel / C++ SDK / Web 控制台 + SHA256SUMS + sbom.json + release-identity.json（build provenance 见 Release 附件证明）。" \
+              "${assets[@]}"
+          fi
 
   publish-github-release:
     name: Publish GitHub Release after PyPI
