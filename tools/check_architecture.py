@@ -1685,7 +1685,6 @@ NAAIVE_TRUNCATION = '.split("' + CFG_TEST_MARKER + '")[0]'
 # 每条理由都要能在被引文件里就地复核（本轮 23 条零读者全部逐条查过调用点）。
 PUBLIC_SURFACE_ALLOWLIST: dict[str, str] = {
     # 对外契约：README / deploy 文档 / 跨语言 SDK 把这些名字当成公布的能力。
-    "qx-core::CONTROL": "Legacy coarse source kind retained for existing event producers and stored metadata; runtime cancellation events now use a fine-grained category",
     "qx-core::MARKET_DATA": "Legacy coarse source kind retained for existing event producers and stored metadata; runtime market events now use quote or order-book categories",
     "qx-core::VENUE": "Legacy coarse source kind retained for existing event producers and stored metadata; runtime venue facts now use per-fact categories",
     "qx-plugin::sign_ed25519": "README 公布 Ed25519 签名能力；validate() 的 ed25519 分支是消费侧",
@@ -8761,7 +8760,6 @@ PRINCIPAL_WORKER_SITE = 'format!("worker[{}]", worker.id)'
 # 两处 Paper 入账入口都要在真正入账（`seed_paper_initial_cash`）之前过闸门并说出"两处一致"。
 PAPER_PRINCIPAL_ENTRIES = (
     "crates/qx-cli/src/venue_runtime/paper_worker.rs",
-    "crates/qx-cli/src/venue_runtime/paper_worker.rs",
 )
 PAPER_SEED_CALLS = {
     "crates/qx-cli/src/venue_runtime/paper_submit.rs": "seed_paper_initial_cash_from_config(&mut pipeline",
@@ -10526,6 +10524,7 @@ VENUE_FAMILY_CONSUMERS = (
     "crates/qx-cli/src/venue_runtime/binance_venue.rs",
     "crates/qx-cli/src/venue_runtime/ccxt_submit.rs",
     "crates/qx-cli/src/venue_runtime/paper_worker.rs",
+    "crates/qx-cli/src/venue_runtime/paper_worker/paper_check.rs",
     "crates/qx-service/src/paper_execution_host.rs",
     "crates/qx-cli/src/venue_runtime/paper_worker/pipeline.rs",
     "crates/qx-orchestrator/src/lib.rs",
@@ -23769,6 +23768,7 @@ COMMIT_ROLLBACK_WRAPPERS = (
     "fn register_order_with_correlation_once(",
     "fn ingest_once(",
     "fn record_execution_capability_decision_once(",
+    "fn record_order_risk_decision_once(",
 )
 COMMIT_ROLLBACK_CALL = "self.rebuild_from_store(true)"
 COMMIT_ROLLBACK_CASE = "failed_ingest_rolls_back_the_appended_fact_and_the_seq_cursor"
@@ -23800,6 +23800,7 @@ def pipeline_commit_rollback_check() -> None:
         and "提交失败: {error}; 从持久化日志恢复本地状态失败: {rollback_error}" in commit
         and "归约失败: {error}; 从持久化日志恢复本地状态失败: {rollback_error}" in commit
         and "执行能力证据提交失败: {error}; 从持久化日志恢复本地状态失败: {rollback_error}" in commit
+        and "订单风控证据提交失败: {error}; 从持久化日志恢复本地状态失败: {rollback_error}" in commit
     )
     check(
         missing_wrappers == []

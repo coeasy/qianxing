@@ -1181,24 +1181,6 @@ impl LiveEventPipeline {
         ))
     }
 
-    /// Read the immutable risk decision bound to one client order ID.
-    pub fn order_risk_decision(
-        &self,
-        client_order_id: u64,
-    ) -> Option<&qx_core::OrderRiskDecisionFact> {
-        self.log
-            .events()
-            .iter()
-            .find_map(|event| match &event.kind {
-                EventKind::OrderRiskDecision { decision }
-                    if decision.client_order_id == client_order_id =>
-                {
-                    Some(decision)
-                }
-                _ => None,
-            })
-    }
-
     /// 归约一条外部事实。所有内存变更和事件日志持久化成功后才提交给调用方。
     /// 多个账户 worker 共享同一 EventLog 时，写冲突会重新载入最新事实并重放
     /// 当前输入；同一 correlation/source 只会落一次，避免重复成交或重复余额快照。

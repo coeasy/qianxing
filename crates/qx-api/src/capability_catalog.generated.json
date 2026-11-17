@@ -8,7 +8,7 @@
   },
   "source_sha256": {
     "maturity/capability-matrix.yaml": "02bccb8a3ef0252ec8eaf0bea111af14f869394d04baade8a2ed468e7a5305c8",
-    "maturity/capabilities.yaml": "21a7de809105bf83ee8b886c9bf072a102725bec48d0104aaaf23a5a2311477d",
+    "maturity/capabilities.yaml": "1eb42e212f7cbeb4a637d518447f8784f751b1c5abc2209893d4cdb89cce1514",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
   "product_levels": [
@@ -97,7 +97,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 123,
+      "evidence_path_count": 125,
       "limitation_count": 4
     },
     {
@@ -611,6 +611,8 @@
             "crates/qx-risk/src/lib.rs",
             "crates/qx-risk/src/rules.rs single notional formula",
             "crates/qx-execution/src/lib.rs CanonicalRiskPort",
+            "crates/qx-runtime/src/pipeline.rs record_order_risk_decision; crates/qx-service/src/paper_execution_host.rs persists each Paper decision before execution side effects (research-report projection remains open)",
+            "crates/qx-cli/src/venue_runtime/paper_worker/paper_check.rs reads Paper account EventLogs without recovery writes and returns counts plus the most recent 100 risk decisions with exact raw values as strings; file-backed Paper account log bytes are observed with a configurable warning threshold, while database size and background alerting remain open",
             "backtest/paper/live share one RuleSet (crates/qx-cli/src/runtime_wiring.rs strategy_risk_gate)"
           ],
           "limitations_count": 6
