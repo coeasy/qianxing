@@ -15599,13 +15599,24 @@ def release_supply_chain_check() -> None:
     release_start = re.search(r"(?m)^  release:\s*$", text)
     release_job = text[release_start.start() :] if release_start is not None else ""
     release_needs = re.search(r"(?m)^\s+needs:\s*\[([^\]]+)\]", release_job)
+    release_asset_file_list = (
+        "find dist -mindepth 1 -maxdepth 1 -type f -print0" in release_job
+    )
+    release_asset_retry = "gh release upload" in release_job and "--clobber" in release_job
+    release_evidence_archive = (
+        "tar -czf dist/acceptance-artifacts.tar.gz" in release_job
+    )
     check(
         release_needs is not None
         and "web-console" in release_needs.group(1)
         and "actions/download-artifact@v4" in release_job
-        and "dist/*" in release_job,
-        "GitHub Release 汇集 Web 控制台 artifact，并纳入统一发布附件与 SHA256 清单",
-        f"release needs={release_needs.group(1) if release_needs else None!r}",
+        and release_asset_file_list
+        and release_asset_retry
+        and release_evidence_archive,
+        "GitHub Release 汇集 Web 控制台 artifact，归档目录证据，并以幂等文件列表上传",
+        f"release needs={release_needs.group(1) if release_needs else None!r}，"
+        f"文件列表={release_asset_file_list}，草稿重试={release_asset_retry}，"
+        f"证据归档={release_evidence_archive}",
     )
     identity_fields = (
         "version",
