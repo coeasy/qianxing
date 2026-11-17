@@ -95,22 +95,12 @@ jobs:
 
   public-market-data-quickstart:
     name: Real public-data quickstart (${{ matrix.exchange }})
-    if: ${{ github.event_name != 'workflow_call' || inputs.include_binance_public_profile || matrix.exchange != 'binance' }}
     runs-on: ubuntu-22.04
     needs: build-linux-release
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - exchange: okx
-            instrument: BTC/USDT:USDT.OKX
-            days: 180
-          - exchange: binance
-            instrument: BTC/USDT:USDT.BINANCE
-            days: 180
-          - exchange: bitget
-            instrument: BTC/USDT:USDT.BITGET
-            days: 52
+        include: ${{ fromJSON(github.event_name == 'workflow_call' && inputs.include_binance_public_profile == false && '[{"exchange":"okx","instrument":"BTC/USDT:USDT.OKX","days":180},{"exchange":"bitget","instrument":"BTC/USDT:USDT.BITGET","days":52}]' || '[{"exchange":"okx","instrument":"BTC/USDT:USDT.OKX","days":180},{"exchange":"binance","instrument":"BTC/USDT:USDT.BINANCE","days":180},{"exchange":"bitget","instrument":"BTC/USDT:USDT.BITGET","days":52}]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
