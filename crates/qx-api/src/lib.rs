@@ -910,9 +910,15 @@ fn validate_projection_event(key: &ApiProjectionKey, event: &Event) -> Result<()
         }
         _ => None,
     };
-    if event_venue
-        .as_deref()
-        .is_some_and(|venue_id| !venue_id.eq_ignore_ascii_case(&key.venue_id))
+    // A Paper account is a virtual execution venue. Its order/risk facts retain the underlying
+    // instrument venue (e.g. BINANCE), which must not be confused with the account projection's
+    // `paper` namespace. Real venue-scoped accounts still require exact venue identity.
+    let paper_account = qx_core::VenueFamily::parse_option(Some(&key.venue_id))
+        == Some(qx_core::VenueFamily::Paper);
+    if !paper_account
+        && event_venue
+            .as_deref()
+            .is_some_and(|venue_id| !venue_id.eq_ignore_ascii_case(&key.venue_id))
     {
         return Err(format!(
             "事件身份与 API 投影 Venue 不匹配: expected={}/{} actual={}/{} seq={}",

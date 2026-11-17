@@ -21,7 +21,7 @@ Rust CLI 与 Python wheel 由 tag 发布流水线构建，并随 GitHub Release 
 前置只有一样：Rust 工具链（本轮实测 `cargo 1.98.1` / `rustc 1.98.1`）。稳定安装优先下载 GitHub Release 对应平台的 `qx-cli` 二进制；从源码仓库固定 tag 安装可在仓库外执行：
 
 ```bash
-cargo install --git https://github.com/coeasy/qianxing --tag v0.3.0 --locked qx-cli
+cargo install --git https://github.com/coeasy/qianxing --tag v0.4.0 --locked qx-cli
 ```
 
 在仓库根目录开发时可用 `cargo install --path crates/qx-cli --locked`；完全离线且依赖缓存齐全时再加 `--offline`。当前没有 `cargo install qianxing` 的 crates.io 发布包。
@@ -53,7 +53,17 @@ qx-cli help                                         # 全部入口清单
 qx-cli version                                      # 一行构建身份：版本 / git 提交 / 目标三元组 / 构建档
 ```
 
+也可把项目创建、静态检查、回测、报告和状态检查合成一条命令：
+
+```bash
+qx-cli quickstart my-qx --strategy macd --html
+```
+
+这个内置策略 quickstart 使用项目生成的**示例 BarFrame**，并非交易所真实历史行情。报告会在控制台打印确切路径；收益只说明示例输入下的计算结果。对真实历史数据回测，请先导入并核对自己的数据集，再运行 `backtest`。
+
 需要可视化结果时，在回测后加 `--html`：`qx-cli report qianxing.runtime.json --html` 会写一份可离线打开的 HTML 和三张独立 SVG；用 `-o reports/latest.html` 可改 HTML 与 SVG 的输出前缀。
+
+Paper 是单独的本地虚拟成交模型：买单按卖一价、卖单按买一价，按该档显示数量限量成交并按 client order id 顺序处理。它不模拟隐藏流动性、排队位置、交易所撮合延迟或市场冲击，也不与 Bar/L1/L2 回测撮合等价；`paper-check --json` 会在 `paper_check.execution_model` 中输出模型与限制，并在 `paper_risk_audit` 中只读汇总 Paper 账户已持久化的风控裁决（最多展示最近 100 条，定点原始值使用字符串）。这些裁决用于审计，不代表订单成交或盈亏。文件型 Paper EventLog 大小会显示在 `paper_risk_audit.storage_observation`；默认 1 GiB 起提示，可用 `QIANXING_EVENT_LOG_WARN_BYTES` 调整。SQLite/PostgreSQL 容量需由数据库侧监控；该命令不会自动轮转或删除日志。
 
 本轮没有重跑 `cargo install` 的计时（上一轮的用时读数见归档）；能核的是行为而不是耗时：
 `help` / `init --strategy macd` / `doctor` / `backtest` / `report` / `status` 这六条在**仓库外**

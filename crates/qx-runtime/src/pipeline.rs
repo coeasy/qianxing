@@ -1160,6 +1160,45 @@ impl LiveEventPipeline {
             })
     }
 
+    /// Persist the immutable canonical order-risk decision evaluated by a runtime worker.
+    /// A client order ID can have only one decision; retries are idempotent only when every
+    /// projected value and violation matches the original fact.
+    pub fn record_order_risk_decision(
+        &mut self,
+        decision: qx_core::OrderRiskDecisionFact,
+        order: &Order,
+        ts: u64,
+    ) -> QxResult<u64> {
+        for _ in 0..3 {
+            self.refresh_latest()?;
+            match self.record_order_risk_decision_once(decision.clone(), order, ts) {
+                Err(error) if error.contract().retryability.allows_retry() => continue,
+                result => return result,
+            }
+        }
+        Err(QxError::Transient(
+            "共享 EventLog 并发写入 order risk decision 超过重试上限".into(),
+        ))
+    }
+
+    /// Read the immutable risk decision bound to one client order ID.
+    pub fn order_risk_decision(
+        &self,
+        client_order_id: u64,
+    ) -> Option<&qx_core::OrderRiskDecisionFact> {
+        self.log
+            .events()
+            .iter()
+            .find_map(|event| match &event.kind {
+                EventKind::OrderRiskDecision { decision }
+                    if decision.client_order_id == client_order_id =>
+                {
+                    Some(decision)
+                }
+                _ => None,
+            })
+    }
+
     /// 归约一条外部事实。所有内存变更和事件日志持久化成功后才提交给调用方。
     /// 多个账户 worker 共享同一 EventLog 时，写冲突会重新载入最新事实并重放
     /// 当前输入；同一 correlation/source 只会落一次，避免重复成交或重复余额快照。

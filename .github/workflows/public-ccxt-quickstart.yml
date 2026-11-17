@@ -20,6 +20,12 @@ on:
       - "deploy/qianxing.runtime.ccxt.example.json"
   workflow_dispatch:
   workflow_call:
+    inputs:
+      include_binance_public_profile:
+        description: "Run Binance public-data profile. Disable only for the backtest/Paper release lane when the hosted runner is geo-blocked; the full PR/manual lane remains enabled."
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -89,6 +95,7 @@ jobs:
 
   public-market-data-quickstart:
     name: Real public-data quickstart (${{ matrix.exchange }})
+    if: ${{ github.event_name != 'workflow_call' || inputs.include_binance_public_profile || matrix.exchange != 'binance' }}
     runs-on: ubuntu-22.04
     needs: build-linux-release
     strategy:

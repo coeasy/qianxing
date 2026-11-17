@@ -26,7 +26,8 @@
 //! （一次性验收入口，不是长驻 worker：
 //! 给它们落 `.prom` 等于替一个已经退出的进程宣称健康。它们写入的事实照旧进 EventLog，
 //! 只是不在这族样本里 —— `paper-submit-order` 那条还会以 `paper-execution` 的名义领取租约，
-//! 所以它的计数并进 worker 会更假）。Binance/CCXT 的 MarketData、UserStream、Execution、Reconciler、
+//! 所以它的计数并进 worker 会更假）。`paper_risk_audit` 是 CLI 验收报告的短生命周期只读汇总，
+//! 其打开的 EventLog 不代表一个 worker 实例。Binance/CCXT 的 MarketData、UserStream、Execution、Reconciler、
 //! SpreadRecovery 与 Paper 行情镜像 pipeline 由相应 worker 循环通过 `observe`/`absorb` 计入同一出口，
 //! 不经过上述短生命周期 account-pipeline 站点表。
 

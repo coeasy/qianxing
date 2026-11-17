@@ -447,6 +447,29 @@ pub fn paper_submit_match_attempt(
         })?;
     validate_paper_quote_receive_freshness(quote_received_at, runtime_timestamp_ms())
         .map_err(terminal_submit_rejection)?;
+    let risk_decision = risk.evaluate_order(&order, &position);
+    let trace = order.trace.as_ref();
+    pipeline
+        .record_order_risk_decision(
+            qx_core::OrderRiskDecisionFact {
+                client_order_id: order.client_id,
+                instrument: order.instrument.clone(),
+                strategy_id: trace.and_then(|value| value.strategy_id.clone()),
+                signal_id: trace.and_then(|value| value.signal_id),
+                intent_id: trace.and_then(|value| value.intent_id),
+                allowed: risk_decision.allowed,
+                violations: risk_decision.violations.clone(),
+                projected_position_raw: risk_decision.projected_position_raw,
+                projected_margin_raw: risk_decision.projected_margin_raw,
+                reference_price_raw: risk_decision.reference_price_raw,
+                rule_set_version: risk_decision.rule_set_version.clone(),
+            },
+            &order,
+            now,
+        )
+        .map_err(|error| {
+            terminal_submit_rejection(format!("持久化 Paper 风控裁决失败: {error}"))
+        })?;
     execute_paper_submit_effect(qx_execution::PaperSubmitRequest {
             command,
             pipeline,

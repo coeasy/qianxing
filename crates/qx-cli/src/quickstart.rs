@@ -71,7 +71,7 @@ fn require(label: &str, command: &str, retry: &str, outcome: Result<(), String>)
 /// 预算是为了让收尾陈述能在符号链接目录环上终止：`is_dir()` 跟随符号链接，一个指回祖先的
 /// 链接就能让这里永不返回——五步产品全部跑完之后卡在「共 N 份文件」这一行上。同一份预算
 /// 也给一次误指向大目录树的首跑兜底。
-/// 文档口径是 11 份（`init`，含 Grafana 面板）+ 6 份（首跑回测与数据集清单）= 17 份。读不动的目录只少计一份，不让一次
+/// 当前首跑口径是 10 份（`init`）+ 6 份（首跑回测与数据集清单）= 16 份。读不动的目录只少计一份，不让一次
 /// 已经成功的首跑改口——这格计数是收尾陈述，不是判据，所以截断如实印出来而不是报错。
 pub(crate) fn project_file_count(dir: &Path, budget: usize) -> (usize, bool) {
     let mut stack = vec![dir.to_path_buf()];
@@ -245,6 +245,9 @@ pub(crate) fn run(
     if let Some(strategy) = strategy_name.or(ccxt_strategy.as_deref()) {
         println!("内置策略：{strategy}");
     }
+    if ccxt_strategy.is_none() {
+        println!("[数据说明] 本次使用项目内置的示例 BarFrame，仅用于演示本机回测流程；它不是交易所真实历史行情，也不会作为真实 Paper/实盘成交的证据，收益结果不代表真实市场表现。");
+    }
     let mut init_arguments = vec!["init", runtime_text.as_str()];
     if let Some(strategy) = strategy_name {
         init_arguments.extend(["--strategy", strategy]);
@@ -382,6 +385,14 @@ pub(crate) fn run(
         "回测产物在 {} 下（summary / equity.csv / fills.csv / run.json / record.json 与数据集清单）。",
         absolute.join("data").display()
     );
+    if html {
+        println!("已生成离线 HTML 回测报告和 SVG 图表；请使用上方 [Report] 行显示的确切路径打开报告。报告数据仍绑定本次回测的输入和结果摘要。");
+    } else {
+        println!(
+            "需要可视化时可执行：{}；该命令生成离线 HTML 报告和 SVG 图表。",
+            command_line(&["report", &runtime_text, "--html"])
+        );
+    }
     println!("下一步三条命令：");
     let next_profile = match profile {
         cli_args::QuickstartProfile::Builtin => "ashare",

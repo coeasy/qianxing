@@ -10,6 +10,110 @@
 use super::*;
 
 impl LiveEventPipeline {
+    pub(super) fn record_order_risk_decision_once(
+        &mut self,
+        decision: qx_core::OrderRiskDecisionFact,
+        order: &Order,
+        ts: u64,
+    ) -> QxResult<u64> {
+        match self.record_order_risk_decision_commit(decision, order, ts) {
+            Ok(seq) => Ok(seq),
+            Err(error) => {
+                if let Err(rollback_error) = self.rebuild_from_store(true) {
+                    return Err(QxError::ReconcileRequired(format!(
+                        "订单风控证据提交失败: {error}; 从持久化日志恢复本地状态失败: {rollback_error}"
+                    )));
+                }
+                Err(error)
+            }
+        }
+    }
+
+    fn record_order_risk_decision_commit(
+        &mut self,
+        decision: qx_core::OrderRiskDecisionFact,
+        order: &Order,
+        ts: u64,
+    ) -> QxResult<u64> {
+        if decision.client_order_id == 0
+            || decision.rule_set_version.trim().is_empty()
+            || decision.allowed == !decision.violations.is_empty()
+        {
+            return Err(QxError::BusinessViolation(
+                "OrderRiskDecisionFact 的订单身份、规则版本或 allowed/violations 不一致".into(),
+            ));
+        }
+        if order.client_id != decision.client_order_id || order.instrument != decision.instrument {
+            return Err(QxError::Invariant(format!(
+                "订单风控证据与提交订单不匹配 order={} fact_instrument={} order_instrument={}",
+                decision.client_order_id, decision.instrument, order.instrument
+            )));
+        }
+        if let Some(event) = self.log.events().iter().find(|event| {
+            matches!(
+                &event.kind,
+                EventKind::OrderRiskDecision { decision: existing }
+                    if existing.client_order_id == decision.client_order_id
+            )
+        }) {
+            return match &event.kind {
+                EventKind::OrderRiskDecision { decision: existing } if existing == &decision => {
+                    Ok(event.seq)
+                }
+                _ => Err(QxError::Invariant(format!(
+                    "client_order_id={} 已绑定不同的订单风控证据，拒绝覆盖",
+                    decision.client_order_id
+                ))),
+            };
+        }
+
+        let trace = order.trace.as_ref();
+        let context = EventContext {
+            tenant_id: order.account_id.clone(),
+            run_id: format!("account:{}", order.account_id),
+            account_id: order.account_id.clone(),
+            portfolio_id: order.account_id.clone(),
+            strategy_id: decision
+                .strategy_id
+                .clone()
+                .or_else(|| trace.and_then(|value| value.strategy_id.clone()))
+                .unwrap_or_else(|| "runtime-risk-gate".into()),
+            signal_id: decision
+                .signal_id
+                .or_else(|| trace.and_then(|value| value.signal_id))
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+            intent_id: decision
+                .intent_id
+                .or_else(|| trace.and_then(|value| value.intent_id))
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| format!("order:{}", decision.client_order_id)),
+        };
+        let correlation_id = format!(
+            "order-risk:{}:{}",
+            order.account_id, decision.client_order_id
+        );
+        let event = self.append_fact(
+            ts,
+            ts,
+            Priority::COMMAND,
+            decision.client_order_id,
+            correlation_id.clone(),
+            EventFact {
+                metadata: EventMetadata {
+                    source_id: "canonical-order-risk-gate".into(),
+                    source_kind: event_source_kind::CONTROL.into(),
+                    dedup_key: correlation_id,
+                    context,
+                    ..EventMetadata::default()
+                },
+                kind: EventKind::OrderRiskDecision { decision },
+            },
+        )?;
+        self.persist()?;
+        Ok(event.seq)
+    }
+
     fn enrich_registered_order_context(
         &self,
         metadata: &mut EventMetadata,

@@ -154,6 +154,9 @@ mod pipeline;
 
 pub(crate) fn run_paper_check(path: &Path, as_json: bool) -> Result<(), String> {
     if !as_json {
+        println!("[Paper 成交模型] L1 displayed-depth touch / FIFO by client order id；买单按卖一价、卖单按买一价，成交量不超过该档显示数量；不模拟排队位置、隐藏流动性、交易所撮合延迟或市场冲击，且不等同于 Bar/L1/L2 回测撮合。使用 --json 时，paper_check.execution_model 提供机器可读说明。");
+    }
+    if !as_json {
         return run_paper_pipeline_once(path);
     }
 

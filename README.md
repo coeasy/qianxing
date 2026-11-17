@@ -35,6 +35,7 @@
 - **不是一台统一撮合机。** 回测与 Paper 同源的是**规则**（风控、费用、延迟、保证金四模型与事件归约
   有门禁钉着），不是撮合：回测按数据档位分三套内核，Paper 的成交由 `PaperVenue::on_quote` 的首档
   touch 产生，与回测簿内核**不是**同一台撮合机 —— 读到"同一内核"时不要把"同一撮合"一起读进去。
+  `paper-check` 会显示所用 L1 触价/显示数量/FIFO 模型与不覆盖的隐藏流动性、排队位置、撮合延迟及市场冲击；Paper 结果不能当作回测撮合精度或实盘收益的证明。
 - **不含跨节点高可用、WASM、券商柜台协议与逐家签名实现**，这些按供应商另立项，不因 feature 开关
   存在就宣称完成。
 
@@ -95,7 +96,7 @@ Python 策略的未来数据扰动与预热长度敏感性检查见[策略偏差
 cargo build --release
 
 # Rust CLI 安装方式：从源码仓库固定 tag 编译安装；也可直接下载 GitHub Release 的平台二进制
-cargo install --git https://github.com/coeasy/qianxing --tag v0.3.0 --locked qx-cli
+cargo install --git https://github.com/coeasy/qianxing --tag v0.4.0 --locked qx-cli
 
 # 运行端到端演示（含确定性自校验）
 cargo run -p qx-cli --release
@@ -140,6 +141,7 @@ cargo run -p qx-cli -- run paper
 cargo run -p qx-cli -- status qianxing.runtime.json
 cargo run -p qx-cli -- report qianxing.runtime.json
 cargo run -p qx-cli -- report qianxing.runtime.json --json
+qx-cli quickstart my-qx --strategy macd --html
 cargo run -p qx-cli -- builtin-strategies
 cargo run -p qx-cli -- strategy list
 cargo run -p qx-cli -- strategy init macd qianxing.strategy.macd.json

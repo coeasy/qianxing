@@ -22,7 +22,7 @@ const COUNTED_OPEN_SITES: [(&str, usize); 2] = [
 /// 不并账的函数：函数名 -> 站点数与"为什么不该出现在按 worker 进程累计的量纲里"。
 ///
 /// 这里的每一项都必须在 qx-service `pipeline_metrics_report.rs` 模块文档里点名，反过来也一样。
-const EXEMPT_OPEN_SITES: [(&str, usize, &str); 18] = [
+const EXEMPT_OPEN_SITES: [(&str, usize, &str); 19] = [
     (
         "open_account_pipeline",
         1,
@@ -85,6 +85,11 @@ const EXEMPT_OPEN_SITES: [(&str, usize, &str); 18] = [
     ("run_paper_pipeline_once_with_quote", 2, "一次性验收入口"),
     ("run_paper_submit_order", 1, "一次性验收入口"),
     ("paper_submit_action", 1, "一次性验收入口拆出的提交尝试"),
+    (
+        "paper_risk_audit",
+        1,
+        "paper-check 的短生命周期只读 EventLog 汇总",
+    ),
 ];
 
 /// 生产源码里每个函数拥有的 `(打开站点数, absorb 次数)`。

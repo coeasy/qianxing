@@ -71,11 +71,17 @@ jobs:
     uses: ./.github/workflows/ci.yml
 
   public-market-data-acceptance:
-    name: Public market-data quickstart acceptance
+    name: Backtest/Paper public-data acceptance (OKX + Bitget)
     needs: version-consistency
     permissions:
       contents: read
     uses: ./.github/workflows/public-ccxt-quickstart.yml
+    with:
+      # The 0.4.0 public release is scoped to backtest/Paper. Keep real Binance
+      # public-data acceptance mandatory on PR/manual runs, but do not make a
+      # geo-restricted hosted runner block this release lane. The called workflow
+      # visibly skips only Binance; OKX and Bitget still run against real data.
+      include_binance_public_profile: false
 
   binary:
     name: binary (${{ matrix.os }})

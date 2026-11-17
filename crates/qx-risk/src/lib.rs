@@ -205,8 +205,8 @@ pub struct ExactOrderRiskFacts {
 ///
 /// 另外三格投影（`projected_position_raw` / `projected_margin_raw` /
 /// `reference_price_raw`）由 Bar 回测的风险事件持久化，并通过已复核的 research-artifact
-/// 读模型展示原始定点值。Paper/Live 的 `RiskPort` 目前仍只消费前述三格，未把这些投影
-/// 接入其运行产物或研究读模型；这项剩余边界登记在
+/// 读模型展示原始定点值。Paper worker 也将规范裁决完整写入账户 EventLog；Paper/Live
+/// 尚未把这些投影接入与回测相同的研究报告读模型。这项剩余边界登记在
 /// `maturity/capabilities.yaml` 的 `canonical_order_risk_decision.limitations`。
 ///
 /// Venue 只能在 `allowed=true` 且调用方完成副作用前被调用。
