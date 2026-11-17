@@ -77,11 +77,10 @@ jobs:
       contents: read
     uses: ./.github/workflows/public-ccxt-quickstart.yml
     with:
-      # The 0.4.0 public release is scoped to backtest/Paper. Keep real Binance
-      # public-data acceptance mandatory on PR/manual runs, but do not make a
-      # geo-restricted hosted runner block this release lane. The called workflow
-      # visibly skips only Binance; OKX and Bitget still run against real data.
-      include_binance_public_profile: false
+      # The 0.4.0 public release is scoped to backtest/Paper. Use the explicit
+      # release profile so the reusable workflow runs real OKX + Bitget data
+      # without adding geo-restricted Binance hosted acceptance.
+      public_profile: release
 
   binary:
     name: binary (${{ matrix.os }})
