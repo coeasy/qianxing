@@ -19,13 +19,22 @@ on:
       - "python/pyproject.toml"
       - "deploy/qianxing.runtime.ccxt.example.json"
   workflow_dispatch:
+    inputs:
+      public_profile:
+        description: "Use the release profile (OKX + Bitget only)"
+        required: true
+        type: choice
+        options:
+          - full
+          - release
+        default: full
   workflow_call:
     inputs:
-      include_binance_public_profile:
-        description: "Run Binance public-data profile. Disable only for the backtest/Paper release lane when the hosted runner is geo-blocked; the full PR/manual lane remains enabled."
+      public_profile:
+        description: "Release profile limits public-data acceptance to OKX + Bitget; full profile also includes Binance."
         required: false
-        type: boolean
-        default: true
+        type: string
+        default: full
 
 permissions:
   contents: read
@@ -100,7 +109,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(github.event_name == 'workflow_call' && inputs.include_binance_public_profile == false && '[{"exchange":"okx","instrument":"BTC/USDT:USDT.OKX","days":180},{"exchange":"bitget","instrument":"BTC/USDT:USDT.BITGET","days":52}]' || '[{"exchange":"okx","instrument":"BTC/USDT:USDT.OKX","days":180},{"exchange":"binance","instrument":"BTC/USDT:USDT.BINANCE","days":180},{"exchange":"bitget","instrument":"BTC/USDT:USDT.BITGET","days":52}]') }}
+        include: ${{ fromJSON(inputs.public_profile == 'release' && '[{"exchange":"okx","instrument":"BTC/USDT:USDT.OKX","days":180},{"exchange":"bitget","instrument":"BTC/USDT:USDT.BITGET","days":52}]' || '[{"exchange":"okx","instrument":"BTC/USDT:USDT.OKX","days":180},{"exchange":"binance","instrument":"BTC/USDT:USDT.BINANCE","days":180},{"exchange":"bitget","instrument":"BTC/USDT:USDT.BITGET","days":52}]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
