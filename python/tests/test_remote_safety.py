@@ -187,8 +187,18 @@ class RemoteSafetyTests(unittest.TestCase):
             self.assertTrue(await asyncio.to_thread(started.wait, 1))
             task.cancel()
             try:
+                # Do not use wait_for(task): on timeout it sends a second
+                # cancellation to the task and can replace the first
+                # CancelledError (including its cleanup evidence) on slower
+                # Python 3.10 CI runners. asyncio.wait bounds observation
+                # without mutating the cancellation under test.
+                done, _ = await asyncio.wait({task}, timeout=1)
+                if not done:
+                    release.set()
+                    await asyncio.wait({task}, timeout=2)
+                self.assertIn(task, done, "async start cleanup exceeded its one-second bound")
                 with self.assertRaises(asyncio.CancelledError) as caught:
-                    await asyncio.wait_for(task, timeout=1)
+                    await task
                 error = caught.exception.remote_cleanup_error
                 self.assertIsInstance(error, OutcomeUnknownError)
                 self.assertEqual(error.recovery_id, "async-run")
