@@ -1134,7 +1134,7 @@ impl ControlPlane {
             plane.audit_high_watermark = plane.audit_sequences.last().copied().unwrap_or(0);
         }
         if plane.audit_sequences.len() != plane.audit.len()
-            || plane.audit_sequences.iter().any(|sequence| *sequence == 0)
+            || plane.audit_sequences.contains(&0)
             || plane
                 .audit_sequences
                 .windows(2)
