@@ -5,6 +5,22 @@
 //!
 use super::*;
 
+fn read_request_headers(stream: &mut TcpStream) {
+    let mut request = Vec::new();
+    let mut chunk = [0_u8; 256];
+    loop {
+        let read = stream.read(&mut chunk).unwrap();
+        if read == 0 {
+            break;
+        }
+        request.extend_from_slice(&chunk[..read]);
+        if request.windows(4).any(|window| window == b"\r\n\r\n") {
+            break;
+        }
+    }
+    assert!(request.windows(4).any(|window| window == b"\r\n\r\n"));
+}
+
 #[test]
 fn http_response_enforces_message_framing_and_utf8() {
     let parse = |bytes: &[u8]| parse_http_response(bytes, "GET");
@@ -48,8 +64,7 @@ fn tcp_transport_decodes_chunks_and_rejects_truncated_response() {
         let port = listener.local_addr().unwrap().port();
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0_u8; 1024];
-            stream.read(&mut request).unwrap();
+            read_request_headers(&mut stream);
             stream.write_all(wire).unwrap();
         });
         let response = TcpHttpTransport::default().send(HttpRequest {
@@ -74,8 +89,7 @@ fn tcp_transport_finishes_framed_responses_without_waiting_for_server_close() {
         let worker = thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-            let mut request = [0_u8; 1024];
-            stream.read(&mut request).unwrap();
+            read_request_headers(&mut stream);
             stream.write_all(wire).unwrap();
             // Keep the server connection open until the client finishes reading.
             let mut byte = [0_u8; 1];
