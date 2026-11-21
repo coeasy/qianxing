@@ -192,7 +192,13 @@ fn local_and_remote_sdk_share_research_results_and_server_controls_artifact_path
     );
     let (python_proxy_port, python_proxy) = drop_response_proxy(port);
     let (python_paper_proxy_port, python_paper_proxy) = drop_response_proxy(port);
-    let python = std::env::var_os("QX_PYTHON").unwrap_or_else(|| "python3".into());
+    let python = std::env::var_os("QX_PYTHON").unwrap_or_else(|| {
+        if cfg!(windows) {
+            "python".into()
+        } else {
+            "python3".into()
+        }
+    });
     let python_output = Command::new(python)
         .arg(repo.join("crates/contract-tests/tests/fixtures/python_remote_research.py"))
         .arg(format!("http://127.0.0.1:{port}"))
@@ -224,12 +230,11 @@ fn local_and_remote_sdk_share_research_results_and_server_controls_artifact_path
     }
     drop(audit_state);
     let remote_audit = remote.get_command_audit().unwrap();
-    let remote_audit = remote_audit.as_array().unwrap();
     for request_id in ["python-paper-command", "python-paper-lost-response"] {
         assert_eq!(
             remote_audit
                 .iter()
-                .filter(|record| record["request_id"] == request_id)
+                .filter(|record| record.request_id == request_id)
                 .count(),
             1,
             "Rust SDK audit read must expose exactly one recovered Paper command: {request_id}"
@@ -238,8 +243,8 @@ fn local_and_remote_sdk_share_research_results_and_server_controls_artifact_path
     let recovered = remote
         .get_command_audit_by_request_id("python-paper-lost-response")
         .unwrap();
-    assert_eq!(recovered.as_array().unwrap().len(), 1);
-    assert_eq!(recovered[0]["request_id"], "python-paper-lost-response");
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].request_id, "python-paper-lost-response");
     stop.store(true, Ordering::Release);
     worker.join().unwrap();
 }
