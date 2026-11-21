@@ -703,8 +703,8 @@ fn keyed_and_keyless_route_lists_are_disjoint_and_both_live() {
     );
     assert_eq!(
         extract(&scope, "CONTROL_AUDIT_FILTER_PARAMS"),
-        ["request_id"],
-        "控制审计只接受 request_id"
+        ["request_id", "cursor", "limit"],
+        "控制审计只接受请求 ID 和有界分页参数"
     );
     assert_eq!(
         set(&keyless),
