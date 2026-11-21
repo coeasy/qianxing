@@ -703,7 +703,7 @@ class AppClient(_HttpJsonClient):
                 handle = await asyncio.wait_for(asyncio.shield(task), timeout=self.timeout)
                 await asyncio.wait_for(handle.async_cancel(), timeout=self.timeout)
             except Exception as error:
-                if isinstance(error, TimeoutError):
+                if isinstance(error, (TimeoutError, asyncio.TimeoutError)):
                     identity = next((value for value in
                                      (_spec_field(spec, key) for key in ("run_id", "experiment_id", "batch_id"))
                                      if isinstance(value, str)), None)
