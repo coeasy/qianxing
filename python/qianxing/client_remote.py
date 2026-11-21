@@ -709,6 +709,12 @@ class AppClient(_HttpJsonClient):
                                      if isinstance(value, str)), None)
                     error = OutcomeUnknownError("async start/cancel cleanup", identity, error)
                 cancelled.remote_cleanup_error = error
+                # Python 3.10's Future.result() creates a new CancelledError
+                # and chains the original cancellation as its context. Keep
+                # the cleanup outcome in standard exception chaining so it
+                # survives that wrapper as well as runtimes that preserve
+                # attributes on the original CancelledError.
+                cancelled.__cause__ = error
                 if hasattr(cancelled, "add_note"):
                     cancelled.add_note(f"remote start/cancellation could not be confirmed: {error}")
                 # A timed-out thread may finish later. Retrieve its exception so it

@@ -199,7 +199,24 @@ class RemoteSafetyTests(unittest.TestCase):
                 self.assertIn(task, done, "async start cleanup exceeded its one-second bound")
                 with self.assertRaises(asyncio.CancelledError) as caught:
                     await task
-                error = caught.exception.remote_cleanup_error
+                pending_errors = [caught.exception]
+                seen_errors = set()
+                error = None
+                while pending_errors:
+                    candidate = pending_errors.pop()
+                    if id(candidate) in seen_errors:
+                        continue
+                    seen_errors.add(id(candidate))
+                    if isinstance(candidate, OutcomeUnknownError):
+                        error = candidate
+                        break
+                    cleanup_error = getattr(candidate, "remote_cleanup_error", None)
+                    if isinstance(cleanup_error, BaseException):
+                        pending_errors.append(cleanup_error)
+                    pending_errors.extend(
+                        chained for chained in (candidate.__cause__, candidate.__context__)
+                        if isinstance(chained, BaseException)
+                    )
                 self.assertIsInstance(error, OutcomeUnknownError)
                 self.assertEqual(error.recovery_id, "async-run")
             finally:
