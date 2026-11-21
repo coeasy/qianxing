@@ -396,6 +396,23 @@ pub(crate) fn query_param(query: &str, key: &str) -> Result<Option<String>, &'st
     Ok(None)
 }
 
+/// Parse an optional query key that must occur at most once. Recovery filters must reject
+/// ambiguous duplicate keys instead of silently selecting the first value.
+pub(crate) fn unique_query_param(query: &str, key: &str) -> Result<Option<String>, &'static str> {
+    let mut found = None;
+    for part in query.split('&') {
+        let (name, value) = part.split_once('=').unwrap_or((part, ""));
+        if name != key {
+            continue;
+        }
+        if found.is_some() {
+            return Err("query parameter must not be repeated");
+        }
+        found = Some(percent_decode(value).map_err(|()| QUERY_DECODE_ERROR)?);
+    }
+    Ok(found)
+}
+
 /// 这条入口不认的那把查询键，按路由取名单；不在任何名册里的路径（`/health` 那一类）不判。
 ///
 /// 名单本身住在 `read_scope`（读面分类的单点），这里只负责"名单外的键当场点名"：`?acount_id=`

@@ -13,8 +13,9 @@
 use qx_sdk::{
     AlgoExecutionMethod, AlgoExecutionSpec, AlgoExecutionState, AlgoExecutionStatus,
     AlgoParentOrder, BacktestDatasetInput, BacktestSpec, BuiltinStrategyKind, BuiltinStrategySpec,
-    CallerCapability, Client, DatasetSpec, DepthBacktestSpec, EventAppender, ExecutionEvent,
-    ExecutionEventEnvelope, ExecutionGateway, ExperimentParameterRange, ExperimentParameterSpace,
+    CallerCapability, Client, ControlAuditEntryV1, ControlAuditPageV1, ControlAuditRecordV1,
+    ControlAuditStatus, DepthBacktestSpec, EventAppender, ExecutionEvent, ExecutionEventEnvelope,
+    ExecutionGateway, ExperimentParameterRange, ExperimentParameterSpace,
     ExperimentSearchAlgorithm, ExperimentSearchPlan, ExperimentSplitPlan, InstrumentId,
     MakerTakerFeeSchedule, MultiLegBacktestSpec, MultiMarketBacktestMarket,
     MultiMarketBacktestSpec, Order, OrderStatus, OrderStore, PortfolioBacktestConfig,
@@ -42,6 +43,36 @@ fn repo_root() -> PathBuf {
         .and_then(Path::parent)
         .expect("crates/qx-sdk 一定有仓库根")
         .to_path_buf()
+}
+
+#[test]
+fn versioned_control_audit_receipts_are_available_from_the_sdk_facade() {
+    let receipt = ControlAuditRecordV1 {
+        schema_version: 1,
+        command_id: 9,
+        request_id: "paper-9".into(),
+        operator_id: "local-paper".into(),
+        command_digest: 123,
+        status: ControlAuditStatus::Accepted,
+        result_code: "ACCEPTED_FOR_EXECUTION".into(),
+        ts: 10,
+    };
+    assert_eq!(receipt.schema_version, 1);
+    assert_eq!(receipt.status, ControlAuditStatus::Accepted);
+    let page = ControlAuditPageV1 {
+        schema_version: 1,
+        entries: vec![ControlAuditEntryV1 {
+            sequence: 1,
+            record: receipt,
+        }],
+        next_cursor: None,
+        has_more: false,
+        snapshot_through_sequence: 1,
+        oldest_available_sequence: Some(1),
+        retired_records: 0,
+    };
+    assert_eq!(page.entries[0].sequence, 1);
+    assert!(!page.has_more);
 }
 
 /// 仓库自带的样例 BarFrame（70 根 BTCUSDT.BINANCE Bar）。
@@ -93,11 +124,15 @@ fn an_independent_consumer_runs_and_verifies_a_backtest_through_the_facade_only(
 
     let client = Client::new(CallerCapability::Research, "sdk-run");
 
-    // ① 数据可用性是**裁定**：usable=false 是结论，不是错误。
-    let dataset = DatasetSpec::new("sdk-dataset", sample_bars().to_string_lossy().into_owned());
-    let verdict = client.validate_dataset(&dataset).expect("数据集可读");
-    assert!(verdict.usable, "样例数据集必须可用: {:?}", verdict.gaps);
-    assert_eq!(verdict.rows, 70);
+    // ① 在完整回测规格上读取统一预检报告；数据、标的身份和规则窗口一起判定。
+    let readiness = client.preflight_backtest(&backtest).expect("回测预检成功");
+    assert!(
+        readiness.ready,
+        "样例回测必须 ready: {:?}",
+        readiness.checks
+    );
+    assert_eq!(readiness.data.rows, 70);
+    assert_eq!(readiness.data.instrument, "BTCUSDT.BINANCE");
 
     // ② 同步回测，四份产物落盘。
     let outcome = client.run_backtest(&backtest).expect("回测跑通");

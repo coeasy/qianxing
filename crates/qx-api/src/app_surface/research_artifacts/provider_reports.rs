@@ -97,7 +97,7 @@ fn verify_bar_report(
 > {
     let root = std::fs::canonicalize(&paths.artifact_root)
         .map_err(|error| AppError::from_io("解析 API Provider 产物根目录", &error))?;
-    let reader = RootedArtifactReader { root: root.clone() };
+    let reader = RootedArtifactReader::new(root.clone())?;
     root_bar_artifacts(&mut provider.outcome, &root)?;
     provider.manifest_path = rooted_file(&provider.manifest_path, &root)?;
     provider.snapshot_path = rooted_file(&provider.snapshot_path, &root)?;
@@ -153,7 +153,7 @@ fn verify_depth_report(
 > {
     let root = std::fs::canonicalize(&paths.artifact_root)
         .map_err(|error| AppError::from_io("解析 API Provider 产物根目录", &error))?;
-    let reader = RootedArtifactReader { root: root.clone() };
+    let reader = RootedArtifactReader::new(root.clone())?;
     root_depth_artifacts(&mut provider.outcome, &root)?;
     provider.depth_path = rooted_file(&provider.depth_path, &root)?;
     provider.manifest_path = rooted_file(&provider.manifest_path, &root)?;

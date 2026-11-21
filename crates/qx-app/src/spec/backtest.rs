@@ -129,6 +129,16 @@ impl BacktestSpec {
         Ok(self)
     }
 
+    /// Bind the canonical builtin strategy declaration owned by the runtime into this request.
+    /// The conversion stays in qx-app so CLI/service adapters cannot drift on kind or sizing fields.
+    pub fn with_builtin_strategy_config(
+        mut self,
+        strategy: &qx_strategy::BuiltinStrategyConfig,
+    ) -> Result<Self, AppError> {
+        self.strategy = BuiltinStrategySpec::from_strategy_config(strategy)?;
+        Ok(self)
+    }
+
     /// 从 JSON 读入（严格：多余键即拒）。
     pub fn from_json(payload: &str) -> Result<Self, AppError> {
         serde_json::from_str(payload).map_err(|error| {

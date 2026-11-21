@@ -39,6 +39,12 @@ pub(crate) enum AppCommand {
         /// `DatasetSpec` JSON 的路径。
         spec: PathBuf,
     },
+    /// Bar 回测只读预检（`qx_app::preflight_backtest_v1`）。
+    #[command(name = "preflight-backtest")]
+    PreflightBacktest {
+        /// `BacktestSpec` JSON 的路径。
+        spec: PathBuf,
+    },
     /// Bar 回测（`qx_app::run_backtest`），落四份产物。
     #[command(name = "backtest")]
     Backtest {

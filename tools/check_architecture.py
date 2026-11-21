@@ -87,6 +87,7 @@ import ast
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
+import os
 import re
 from functools import lru_cache
 import subprocess
@@ -100,13 +101,72 @@ if hasattr(sys.stdout, "reconfigure"):
 
 ROOT = Path(__file__).resolve().parent.parent
 CRATES = ROOT / "crates"
+SOURCE_SCAN_EXCLUDED_DIRS = frozenset(
+    {"target", ".git", "node_modules", "__pycache__", ".venv", ".pytest_cache"}
+)
+
+
+@lru_cache(maxsize=None)
+def _source_file_inventory(base: Path) -> tuple[Path, ...]:
+    """List source-tree files once, pruning generated/cache directories before descent."""
+    files: list[Path] = []
+    for current, directories, names in os.walk(base):
+        directories[:] = sorted(
+            name for name in directories if name not in SOURCE_SCAN_EXCLUDED_DIRS
+        )
+        current_path = Path(current)
+        files.extend(current_path / name for name in names)
+    return tuple(sorted(files))
+
+
+@lru_cache(maxsize=256)
+def _glob_regex(pattern: str, recursive: bool) -> re.Pattern[str]:
+    """Compile pathlib-style path globs; `**/` matches zero or more directories."""
+    if recursive:
+        pattern = "**/" + pattern
+    translated: list[str] = []
+    index = 0
+    while index < len(pattern):
+        if pattern.startswith("**/", index):
+            translated.append("(?:.*/)?")
+            index += 3
+        elif pattern.startswith("**", index):
+            translated.append(".*")
+            index += 2
+        elif pattern[index] == "*":
+            translated.append("[^/]*")
+            index += 1
+        elif pattern[index] == "?":
+            translated.append("[^/]")
+            index += 1
+        elif pattern[index] == "[":
+            closing = pattern.find("]", index + 1)
+            if closing < 0:
+                translated.append(r"\[")
+                index += 1
+            else:
+                members = pattern[index + 1 : closing]
+                if members.startswith("!"):
+                    members = "^" + members[1:]
+                elif members.startswith("^"):
+                    members = "\\" + members
+                translated.append("[" + members.replace("/", "") + "]")
+                index = closing + 1
+        else:
+            translated.append(re.escape(pattern[index]))
+            index += 1
+    return re.compile("^" + "".join(translated) + "$")
 
 
 @lru_cache(maxsize=None)
 def _glob_paths(base: Path, pattern: str, recursive: bool) -> tuple[Path, ...]:
-    """Cache read-only source-tree listings shared by the many structural checks."""
-    iterator = base.rglob(pattern) if recursive else base.glob(pattern)
-    return tuple(iterator)
+    """Filter a cached source inventory instead of recursively walking ignored build output."""
+    matcher = _glob_regex(pattern, recursive)
+    return tuple(
+        path
+        for path in _source_file_inventory(base)
+        if matcher.fullmatch(path.relative_to(base).as_posix())
+    )
 
 
 @lru_cache(maxsize=8192)
@@ -475,9 +535,7 @@ def windows_batch_parse_check() -> None:
             for base in BATCH_DIRS
             if base.is_dir()
             for pattern in ("*.bat", "*.cmd")
-            for path in (
-                base.glob(pattern) if base == ROOT else base.rglob(pattern)
-            )
+            for path in _glob_paths(base, pattern, base != ROOT)
             if ".git" not in path.parts
             and "target" not in path.parts
             and ".venv" not in path.parts
@@ -1697,6 +1755,8 @@ PUBLIC_SURFACE_ALLOWLIST: dict[str, str] = {
     "qx-sdk::cancel_paper_algo_execution": "qx-sdk Rust 远端 Paper 生命周期公开入口；仅由外部 SDK 消费者调用",
     "qx-sdk::list_paper_algo_executions": "qx-sdk Rust 远端 Paper 生命周期公开入口；仅由外部 SDK 消费者调用",
     "qx-sdk::get_live_events": "qx-sdk Rust 远端事件游标公开入口；仅由外部 SDK 消费者调用",
+    "qx-sdk::get_command_audit_by_request_id": "qx-sdk Rust 远端按 request_id 精确恢复控制命令的公开入口；仅由外部 SDK 消费者调用",
+    "qx-sdk::cancel_run": "qx-sdk Rust 远端 Run 生命周期取消公开入口；仅由外部 SDK 消费者调用",
     "qx-sdk::get_run_events": "qx-sdk Rust 远端单次 Run 事件游标公开入口；仅由外部 SDK 消费者调用",
     "qx-sdk::builtin_strategy_recipes": "qx-sdk Rust 远端策略配方发现公开入口；仅由外部 SDK 消费者调用",
     "qx-sdk::run_backtest_with_strategy": "qx-sdk Rust 策略扩展公开入口；由外部 SDK 消费者实现 Strategy 并调用",
@@ -2222,8 +2282,7 @@ def transport_read_deadline_check() -> None:
             "set_read_timeout 每读到一块就复位，滴水的上游能借它把连接无限续期，所以时间界要在循环之内",
         )
     check(
-        adapter.count("read_capped_response(&mut stream, MAX_HTTP_RESPONSE_BYTES, self.timeout)")
-        == 2,
+        len(re.findall(r"read_capped_response\(\s*&mut stream,\s*MAX_HTTP_RESPONSE_BYTES,\s*self\.timeout,\s*&request\.method,?\s*\)", adapter)) == 2,
         "两条 HTTP 读链（TLS 与明文）都把 self.timeout 交给整体预算，不是一处补一处漏",
         "两条 send 共用同一个读函数：只补一条，另一条照旧无界读下去，而走哪条由运行时的 scheme 决定",
     )
@@ -3738,7 +3797,7 @@ def builtin_signal_check() -> None:
     # The historical `*/src/**/*.rs` glob missed nested Rust sources and treated `backtest_*` as tests.
     note_definitions = sum(
         len(re.findall(r"fn display_note\(", non_test_source(path.read_text(encoding="utf-8"))))
-        for path in sorted(CRATES.rglob("*.rs"))
+        for path in _glob_paths(CRATES, "*.rs", True)
         if not (
             {"tests"} <= set(path.parts)
             or path.stem.startswith("test_")
@@ -8087,7 +8146,9 @@ def calendar_fingerprint_caliper_check() -> None:
         "日历夹具与摘要成对存在，两侧用例读的是同一对文件",
         f"没有引用的夹具 {sorted(set(unread))}" if unread else "",
     )
-    scanned = list(_glob_paths(CRATES, "*.rs", True)) + list((ROOT / "python").rglob("*.py"))
+    scanned = list(_glob_paths(CRATES, "*.rs", True)) + list(
+        _glob_paths(ROOT, "python/**/*.py", False)
+    )
     copied = []
     for path in sorted(scanned):
         text = path.read_text(encoding="utf-8", errors="ignore")
@@ -9102,7 +9163,7 @@ def browser_admission_check() -> None:
     )
     definitions = [
         path.relative_to(ROOT).as_posix()
-        for path in sorted((ROOT / "crates").rglob("*.rs"))
+        for path in _glob_paths(ROOT, "crates/**/*.rs", False)
         if "DEFAULT_MAX_CONCURRENT_CONNECTIONS: usize"
         in path.read_text(encoding="utf-8", errors="replace")
     ]
@@ -12293,7 +12354,7 @@ def bounded_growth_and_reap_check() -> None:
         and "self.finalized_command_ids()" in pending_body
         and "self.audit.iter().rev().any(" not in control_code
         and control_code.count("pub const fn is_final(self) -> bool") == 1
-        and control_code.count("record.status.is_final()") == 4
+        and control_code.count("record.status.is_final()") == 5
         and control_code.count("if prior.is_final() {") == 1,
         "控制面待办一次算出终态集合，不再逐条命令回扫整段只追加的审计（V13 R1-D）",
         f"终态集合定义 {control_code.count('fn finalized_command_ids(&self) -> BTreeSet<u64>')} 处（期望 1）、"
@@ -12301,7 +12362,7 @@ def bounded_growth_and_reap_check() -> None:
         f"旧的逐条回扫残留 {control_code.count('self.audit.iter().rev().any(')} 处（期望 0）；"
         f"表达式位置的终态判据 is_final 定义 {control_code.count('pub const fn is_final(self) -> bool')} 处（期望 1）、"
         f"调用点 {control_code.count('record.status.is_final()')} / {control_code.count('if prior.is_final() {')} 处"
-        f"（期望 4 / 1：终态集合、退场排序、恢复校验的两条守卫，以及 execute 的 AlreadyFinal）",
+        f"（期望 5 / 1：待办计数释放、终态集合、退场排序、恢复校验的两条守卫，以及 execute 的 AlreadyFinal）",
     )
 
     # 死信台账与成交幂等台账同形：它是**只追加**的。三条后端（文件 / SQLite / Postgres）都只有
@@ -16692,6 +16753,8 @@ LAYER_APP_SIDE_CRATES = (
     "qx-execution",
     "qx-risk",
     "qx-runtime",
+    "qx-sdk",
+    "qx-sdk-http",
     "qx-storage",
     "qx-xingban",
     "qx-zhenlu",
@@ -16707,6 +16770,8 @@ LAYER_FACADE_CRATES = (
     "qx-execution",
     "qx-python",
     "qx-runtime",
+    "qx-sdk",
+    "qx-sdk-http",
     "qx-storage",
 )
 
@@ -16726,13 +16791,13 @@ LAYER_FORBIDDEN_DEPS = (
 LAYER_SOLE_DEPENDENTS = (
     (
         "qx-adapter",
-        ("qx-execution", "qx-cli", "qx-service", "contract-tests"),
+        ("qx-execution", "qx-cli", "qx-service", "contract-tests", "qx-sdk-http"),
         "§14.3-6 qx-execution 是外部回报到执行事实的唯一转换层（qx-adapter 可被执行、CLI 与 service 宿主依赖；"
         "`contract-tests` 是 P1-12 建的纯测试宿主，只在 dev 边上读它做三家 venue 回报契约，无生产依赖）",
     ),
     (
         "qx-api",
-        ("qx-cli", "qx-service"),
+        ("qx-cli", "qx-service", "contract-tests"),
         "§14.3-7 API/报告/快照/指标都是投影（只由 CLI 与服务宿主依赖，领域层不得反向依赖）",
     ),
     ("qx-cli", (), "§14.3-10 qx-cli 是叶子（不得被任何 crate 反向依赖）"),
@@ -23934,18 +23999,17 @@ def parallel_run_isolation_check() -> None:
     )
 
 
-# —— V13 R31：现读模型的按账户收窄通道（/account/ledger、/reconcile/reports）——
+# —— V13 R31：现读模型按账户收窄及控制审计 request_id 恢复通道 ——
 # 从「四条整体现读端点一律不收窄」里拆出两条：它们读的仍是整份现读模型，但底层类型本来就带
 # 账户归属列（`LedgerEntry.account_id`；`ReconcileReportSnapshot` 还多一列 `venue_id`），所以
-# `?account_id=` 真的能过滤；`/scheduler/runs` 与 `/control/audit` 的 `JobRun` / `AuditRecord`
-# 没有那一列，只能继续回 400。这一族最容易出的退化是四个方向：过滤臂退回只回整份台账（收窄变
-# 成摆设）、空结果改成 404（借了投影那族的口径，读者把「这一轮没有事实」读成「这个账户不存
-# 在」）、三张路由名单挪走一半（admission 的名单与分派的名单从此各说各话）、以及名单只写在
-# 注释里（代码照旧不收窄）。取数一律走 `production_text`，注释里的锚点不算证据。
+# `?account_id=` 真的能过滤；`/scheduler/runs` 不接受过滤；控制审计按 request_id 精确读取，
+# 让不确定命令恢复不必下载整个审计窗口。退化包括过滤臂退回整页、过滤结果不匹配、名单分叉，
+# 或只在注释里声明而代码没有收窄。取数一律走 `production_text`，注释里的锚点不算证据。
 READ_SCOPE_FILE = "crates/qx-api/src/read_scope.rs"
 READ_SCOPE_CASE_FILE = "crates/qx-cli/tests/unit/api_read_route_query_contract.rs"
 READ_SCOPE_CASES = (
     "keyless_read_routes_refuse_a_query_they_cannot_honor",
+    "control_audit_filter_is_exact_and_rejects_ambiguous_query_values",
     "model_filter_routes_honor_the_account_scope",
     "reconcile_reports_narrow_by_venue_alone",
     "model_filter_routes_return_an_empty_array_not_a_missing_projection",
@@ -23957,7 +24021,8 @@ READ_SCOPE_CASES = (
 )
 READ_SCOPE_PROJECTION = "const PROJECTION_SCOPED_ROUTES: [&str; 8] = ["
 READ_SCOPE_MODEL_FILTER = "const MODEL_FILTER_ROUTES: [(&str, &[&str]); 3] = ["
-READ_SCOPE_KEYLESS = "const KEYLESS_READ_ROUTES: [&str; 2] = ["
+READ_SCOPE_AUDIT_FILTER = "const CONTROL_AUDIT_FILTER_ROUTES: [(&str, &[&str]); 1] ="
+READ_SCOPE_KEYLESS = "const KEYLESS_READ_ROUTES: [&str; 1] = ["
 READ_SCOPE_LEDGER_PARAMS = "const LEDGER_FILTER_PARAMS: [&str; 1] = ["
 READ_SCOPE_REPORT_PARAMS = "const REPORT_FILTER_PARAMS: [&str; 2] = ["
 READ_SCOPE_ARM_LEDGER = '("GET", "/account/ledger") => match ScopeFilter::from_query(query) {'
@@ -24009,17 +24074,19 @@ def read_face_scope_check() -> None:
     projection = _const_literals(READ_SCOPE_PROJECTION, scope)
     keyless = _const_literals(READ_SCOPE_KEYLESS, scope)
     filtered = _const_literals(READ_SCOPE_MODEL_FILTER, scope)
+    audit_filter = _const_literals(READ_SCOPE_AUDIT_FILTER, scope)
     dispatch = production_text((ROOT / "crates/qx-api/src/lib.rs").read_text(encoding="utf-8"))
-    live = [route for route in projection + keyless + filtered if f'"/{route[1:]}"' in dispatch]
-    groups = [set(projection), set(keyless), set(filtered)]
+    live = [route for route in projection + keyless + filtered + audit_filter if f'"/{route[1:]}"' in dispatch]
+    groups = [set(projection), set(keyless), set(filtered), set(audit_filter)]
     check(
         len(projection) == 8
         and len(filtered) == 3
-        and len(keyless) == 2
-        and len(set(projection) | set(keyless) | set(filtered)) == len(projection) + len(filtered) + len(keyless)
-        and len(live) == len(projection) + len(filtered) + len(keyless),
-        "三张路由名单条目数自洽、两两不相交，且每条都在 handle_inner 里有活的分派臂",
-        f"带键={len(projection)} 过滤={len(filtered)} 无键={len(keyless)} 有分派臂={len(live)}",
+        and len(keyless) == 1
+        and len(audit_filter) == 1
+        and len(set.union(*groups)) == sum(map(len, groups))
+        and len(live) == len(projection) + len(filtered) + len(keyless) + len(audit_filter),
+        "四种读面名单条目数自洽、两两不相交，且每条都在 handle_inner 里有活的分派臂",
+        f"带键={len(projection)} 过滤={len(filtered)} 无键={len(keyless)} 审计过滤={len(audit_filter)} 有分派臂={len(live)}",
     )
 
     admission = production_text((ROOT / "crates/qx-api/src/admission.rs").read_text(encoding="utf-8"))
@@ -24032,15 +24099,15 @@ def read_face_scope_check() -> None:
         f"event_scoped_params 引用 {admission.count('crate::read_scope::event_scoped_params')} 次",
     )
     check(
-        all(marker in scope for marker in (READ_SCOPE_MODEL_FILTER, READ_SCOPE_KEYLESS))
+        all(marker in scope for marker in (READ_SCOPE_MODEL_FILTER, READ_SCOPE_KEYLESS, READ_SCOPE_AUDIT_FILTER))
         and all(
             name in scope
-            for name in ("EVENT_SCOPED_PARAMS", "SNAPSHOT_DIFF_PARAMS", "ACCOUNT_SCOPED_PARAMS")
+            for name in ("EVENT_SCOPED_PARAMS", "SNAPSHOT_DIFF_PARAMS", "ACCOUNT_SCOPED_PARAMS", "CONTROL_AUDIT_FILTER_PARAMS")
         )
         and "accepted_query_params(route)?" in admission
         and "fn accepted_query_params(" not in admission,
         "accepted_query_params 是唯一取名册的出口：admission 真的委派到它、自己不再定义一份，"
-        "六种查询键名单都在 read_scope 体内",
+        "查询键名单都在 read_scope 体内",
         "取数出口或名单被挪走",
     )
 
@@ -24376,7 +24443,7 @@ def _app_doc_table() -> tuple[list[str], list[str]]:
         rows.append(cells)
     if not rows:
         return [], []
-    header = re.findall(r"`([a-z_]+)`", " ".join(rows[0][1:]))
+    header = re.findall(r"`([a-z0-9_]+)`", " ".join(rows[0][1:]))
     return header, [row[0] for row in rows[1:]]
 
 
@@ -24467,7 +24534,7 @@ def qx_app_check() -> None:
     native_digest_source = (CRATES / "qx-python/src/lib.rs").read_text(encoding="utf-8")
     python_fnv_offsets = [
         path.relative_to(ROOT).as_posix()
-        for path in (ROOT / "python").rglob("*.py")
+        for path in _glob_paths(ROOT, "python/**/*.py", False)
         if not {"build", ".codex-tmp-build", "__pycache__"}.intersection(path.relative_to(ROOT).parts)
         if "0xCBF29CE484222325" in _read_text(path)
     ]
@@ -24713,14 +24780,15 @@ def qx_app_check() -> None:
     )
 
     cases_text = (ROOT / APP_CASES_FILE).read_text(encoding="utf-8")
-    reexported = set(re.findall(r"^pub use [a-z_]+::([a-z_]+);$", cases_text, re.MULTILINE))
+    reexported = set(re.findall(r"^pub use [a-z0-9_]+::([a-z0-9_]+);$", cases_text, re.MULTILINE))
+    direct_support_exports = {"prepare_quick_research_spec_v1"}
     grouped_reexports = re.findall(
-        r"^pub use ([a-z_]+)::\{([^}]+)\};$", cases_text, re.MULTILINE
+        r"^pub use ([a-z0-9_]+)::\{([^}]+)\};$", cases_text, re.MULTILINE
     )
     grouped_symbols = {
         symbol.strip()
         for module, group in grouped_reexports
-        if module == "run_multi_builtin_backtest"
+        if module in {"run_multi_builtin_backtest", "verify_depth_run", "verify_run"}
         for symbol in group.split(",")
         if symbol.strip()
     }
@@ -24728,17 +24796,40 @@ def qx_app_check() -> None:
         "run_multi_builtin_backtest_with_inputs",
         "validate_multi_builtin_frames",
         "MultiBuiltinBacktestInputs",
+        "verify_depth_run_with_reader",
+        "verify_run_with_reader",
     }
     reexported.update(grouped_symbols - case_support_exports)
+    use_case_reexports = reexported - direct_support_exports
     support_source = (
         ROOT / APP_CASES_DIR / "run_multi_builtin_backtest.rs"
     ).read_text(encoding="utf-8")
+    reader_support_sources = {
+        "verify_depth_run_with_reader": ROOT / APP_CASES_DIR / "verify_depth_run.rs",
+        "verify_run_with_reader": ROOT / APP_CASES_DIR / "verify_run.rs",
+    }
     check(
         case_support_exports <= grouped_symbols
         and "pub fn run_multi_builtin_backtest_with_inputs(" in support_source
         and "pub struct MultiBuiltinBacktestInputs" in support_source,
         "多策略入口的 typed inputs 是同一用例的支持 API，不登记成平行用例",
         f"群组导出 {sorted(grouped_symbols)}",
+    )
+    check(
+        {"verify_depth_run_with_reader", "verify_run_with_reader"} <= grouped_symbols
+        and all(
+            f"pub fn {name}(" in path.read_text(encoding="utf-8")
+            for name, path in reader_support_sources.items()
+        ),
+        "文件制品 reader 是 verify 用例的显式支持导出，不冒充独立应用用例",
+        f"群组 reader 导出 {sorted(grouped_symbols)}",
+    )
+    quick_research_support = ROOT / APP_CASES_DIR / "quick_research.rs"
+    check(
+        direct_support_exports <= reexported
+        and "pub fn prepare_quick_research_spec_v1(" in quick_research_support.read_text(encoding="utf-8"),
+        "guided-research 规格归一化是显式支持导出，不冒充独立应用用例",
+        f"直接支持导出 {sorted(direct_support_exports & reexported)}",
     )
     doc_names, doc_items = _app_doc_table()
     missing_fns = sorted(
@@ -24749,9 +24840,9 @@ def qx_app_check() -> None:
         not in (ROOT / APP_CASES_DIR / f"{name}.rs").read_text(encoding="utf-8")
     )
     check(
-        set(registered) == reexported and not missing_fns,
-        "登记面的用例集合 == `cases/mod.rs` 的 `pub use`，且每个用例都有自己的 `pub fn` 落点",
-        f"登记 {sorted(registered)}；重导出 {sorted(reexported)}；缺 `pub fn` {missing_fns or '无'}",
+        set(registered) == use_case_reexports and not missing_fns,
+        "登记面的用例集合 == `cases/mod.rs` 的用例导出（显式扣除支持 API），且每个用例都有自己的 `pub fn` 落点",
+        f"登记 {sorted(registered)}；用例重导出 {sorted(use_case_reexports)}；支持导出 {sorted(direct_support_exports & reexported)}；缺 `pub fn` {missing_fns or '无'}",
     )
     check(
         doc_names == registered
@@ -25284,6 +25375,7 @@ def module_map_english_roles_check() -> None:
         "qx-provider", "qx-scheduler", "qx-control", "qx-api", "qx-datastruct",
         "qx-adapter", "qx-runtime", "qx-orchestrator", "qx-storage",
         "qx-strategy", "qx-execution", "qx-service", "python/qianxing_ccxt", "qx-python",
+        "qx-sdk-http",
         "cpp/", "qx-cli", "web/console/",
     )
     english_section = text.split("## English role index", 1)[-1]
@@ -25330,6 +25422,7 @@ def cli_app_command_behavior_coverage_check() -> None:
     declared = clap_nested_command_table(sources, app_enum) if app_enum else set()
     evidence = {
         "validate-dataset": "crates/qx-cli/tests/app_three_entrypoints.rs",
+        "preflight-backtest": "crates/qx-cli/tests/app_three_entrypoints.rs",
         "backtest": "crates/qx-cli/tests/app_three_entrypoints.rs",
         "provider-backtest": "crates/qx-cli/tests/command_surface.rs",
         "provider-depth-backtest": "crates/qx-cli/tests/command_surface.rs",
@@ -26265,6 +26358,37 @@ def language_api_contract_check() -> None:
         f"落空 {missing_http}；声明面 {sorted(client_routes)}",
     )
 
+    response_schemas = {
+        entry.get("schema_id")
+        for entry in json.loads(SCHEMA_REGISTRY_FILE.read_text(encoding="utf-8")).get(
+            "entries", []
+        )
+    }
+    route_pairs = {
+        (route.get("method"), route.get("path"))
+        for route in json.loads(_text_or_empty(ROOT / HTTP_ROUTE_MANIFEST_FILE)).get("routes", [])
+    }
+    invalid_response_contracts: list[str] = []
+    for row in rows:
+        declared_routes = set(row.get("http", []))
+        for contract in row.get("http_response_schemas", []):
+            matched = re.fullmatch(r"(GET|POST) (\S+)=([a-z0-9-]+)", str(contract))
+            if matched is None:
+                invalid_response_contracts.append(f"{row['use_case']}:{contract}:格式无效")
+                continue
+            method, path, schema_id = matched.groups()
+            if path not in declared_routes:
+                invalid_response_contracts.append(f"{row['use_case']}:{path}:未登记在 http")
+            if (method, path) not in route_pairs:
+                invalid_response_contracts.append(f"{row['use_case']}:{method} {path}:路由不存在")
+            if schema_id not in response_schemas:
+                invalid_response_contracts.append(f"{row['use_case']}:{schema_id}:schema 未登记")
+    check(
+        not invalid_response_contracts,
+        "已声明的 HTTP 响应都绑定真实路由与 schema registry 合同",
+        f"错误 {invalid_response_contracts or '无'}",
+    )
+
     declared_native = {entry for row in rows for entry in row.get("python_native", [])}
     native_helpers = _named_roster("python_native_helpers")
     check(
@@ -26880,7 +27004,7 @@ def _production_trait_impls() -> dict[str, dict[str, str]]:
     """
     wanted = ("Venue", "DataProvider")
     found: dict[str, dict[str, str]] = {trait: {} for trait in wanted}
-    for path in sorted((ROOT / "crates").rglob("*.rs")):
+    for path in _glob_paths(ROOT, "crates/**/*.rs", False):
         relative = path.relative_to(ROOT).as_posix()
         if TEST_PATH.search(relative):
             continue
@@ -28352,13 +28476,14 @@ _CHAIN_TEXT_CACHE: dict[str, str] | None = None
 def _chain_production_texts() -> dict[str, str]:
     """全仓生产文本（`crates/**/*.rs` 与 `python/**/*.py`），一次读齐。
 
-    Python 侧只排除 `build/` 与 `__pycache__`——它们是构建产物，不是仓库里的第二份实现。
+    共用源清单会在遍历前剪去 `target/`、虚拟环境和缓存目录；Python 侧还排除包内 `build/`
+    与 `__pycache__`，它们都不是仓库里的第二份实现。
     """
     global _CHAIN_TEXT_CACHE
     if _CHAIN_TEXT_CACHE is None:
         cache: dict[str, str] = {}
         for pattern in ("crates/**/*.rs", "python/**/*.py"):
-            for path in sorted(ROOT.glob(pattern)):
+            for path in _glob_paths(ROOT, pattern, False):
                 relative = path.relative_to(ROOT).as_posix()
                 if (
                     TEST_PATH.search(relative)
@@ -28662,6 +28787,11 @@ SDK_FACADE_ROSTER: dict[str, tuple[tuple[str, str | None], ...]] = {
         ("verify_run", "qx-app::verify_run"),
         ("verify_depth_run", "qx-app::verify_depth_run"),
         ("compare_runs", "qx-app::compare_runs"),
+    ),
+    "remote_control": (
+        ("ControlAuditRecordV1", "qx-app::ControlAuditRecordV1"),
+        ("ControlAuditPageV1", "qx-app::ControlAuditPageV1"),
+        ("ControlAuditStatus", "qx-app::ControlAuditStatus"),
     ),
     "provider_port": (
         ("DataProvider", "qx-provider::DataProvider"),

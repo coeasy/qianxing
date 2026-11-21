@@ -92,6 +92,38 @@ pub(crate) fn run_single_strategy_backtest(
         builtin_signal,
         ..
     } = bindings;
+    let app_context = qx_app::RunContext::new(
+        qx_app::CallerCapability::Research,
+        format!("strategy-backtest:{strategy_id}:{}", frame.instrument),
+    )
+    .with_code_commit(build_identity::BUILD_REVISION);
+    if builtin_execution.is_some() {
+        let preflight = qx_app::preflight_backtest_v1(&app_spec, &app_context)
+            .map_err(|error| format!("Bar 回测预检失败: {error}"))?;
+        println!(
+            "[Backtest · Preflight] ready={} instrument={} rows={} fingerprint={}",
+            preflight.ready,
+            preflight.instrument,
+            preflight.data.rows,
+            preflight.data.content_fingerprint
+        );
+        if !preflight.ready {
+            let blocked = preflight
+                .checks
+                .iter()
+                .filter(|check| check.status == qx_app::BacktestPreflightCheckStatusV1::Blocked)
+                .map(|check| {
+                    format!(
+                        "{}: {}",
+                        check.id,
+                        check.detail.as_deref().unwrap_or("blocked")
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("；");
+            return Err(format!("Bar 回测预检未通过：{blocked}"));
+        }
+    }
     let execution = match builtin_execution {
         Some(execution) => execution,
         None => {
@@ -108,11 +140,6 @@ pub(crate) fn run_single_strategy_backtest(
             qx_app::StrategyBacktestExecution::Adapter(Box::new(strategy))
         }
     };
-    let app_context = qx_app::RunContext::new(
-        qx_app::CallerCapability::Research,
-        format!("strategy-backtest:{strategy_id}:{}", frame.instrument),
-    )
-    .with_code_commit(build_identity::BUILD_REVISION);
     let runtime_version = format!("runtime-schema-{}", config.schema_version);
     let workflow =
         qx_app::run_and_persist_strategy_backtest(qx_app::StrategyBacktestWorkflowInput {

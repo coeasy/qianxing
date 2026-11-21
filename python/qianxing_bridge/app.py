@@ -153,6 +153,11 @@ def validate_dataset(spec: "str | dict[str, Any]") -> dict[str, Any]:
     return json.loads(native.app_validate_dataset(_payload(spec)))
 
 
+def preflight_backtest(spec: "str | dict[str, Any]") -> dict[str, Any]:
+    """Check data identity, coverage and built-in strategy history without writing artifacts."""
+    return json.loads(native.app_preflight_backtest(_payload(spec)))
+
+
 def run_backtest(spec: "str | dict[str, Any]") -> dict[str, Any]:
     """跑一次 Bar 回测并落四份产物，返回 ``BacktestOutcome``。"""
     return json.loads(native.app_run_backtest(_payload(spec)))

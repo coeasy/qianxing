@@ -6,8 +6,8 @@
 //! 用法：`cargo run -p qx-sdk --example quickstart -- <bars.json> <输出目录>`
 
 use qx_sdk::{
-    BacktestDatasetInput, BacktestSpec, BuiltinStrategyKind, BuiltinStrategySpec, CallerCapability,
-    Client, DatasetSpec,
+    BacktestDatasetInput, BacktestPreflightCheckStatusV1, BacktestSpec, BuiltinStrategyKind,
+    BuiltinStrategySpec, CallerCapability, Client,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -18,15 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ① 建会话：能力档 + correlation id。研究档足够跑回测与复核。
     let client = Client::new(CallerCapability::Research, "quickstart-1");
 
-    // ② 先问数据能不能用——这是**裁定**，`usable: false` 是结论不是错误。
-    let verdict = client.validate_dataset(&DatasetSpec::new("quickstart", bars.clone()))?;
-    println!("数据集 {} 行，可用={}", verdict.rows, verdict.usable);
-    if !verdict.usable {
-        eprintln!("数据不可用: {:?}", verdict.gaps);
-        return Ok(());
-    }
-
-    // ③ 同步回测。
+    // ② 声明完整规格后做统一只读预检；标的、样本量、规则有效期一并提前反馈。
     let mut strategy = BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, "quickstart-sma");
     strategy.fast_window = 2;
     strategy.slow_window = 3;
@@ -42,6 +34,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         output_dir,
         strategy,
     );
+    let readiness = client.preflight_backtest(&spec)?;
+    println!(
+        "预检 ready={}：{} 根 Bar，数据标的 {}",
+        readiness.ready, readiness.data.rows, readiness.data.instrument
+    );
+    if !readiness.ready {
+        let reasons = readiness
+            .checks
+            .iter()
+            .filter(|check| check.status == BacktestPreflightCheckStatusV1::Blocked)
+            .map(|check| {
+                format!(
+                    "{}: {}",
+                    check.id,
+                    check.detail.as_deref().unwrap_or("未通过")
+                )
+            })
+            .collect::<Vec<_>>();
+        return Err(format!("回测预检阻断: {}", reasons.join("；")).into());
+    }
+
+    // ③ 同步回测；运行时仍会重新读取并校验数据。
     let outcome = client.run_backtest(&spec)?;
     println!(
         "回测完成：{} 个权益点 / {} 笔成交 / hash {}",
@@ -55,5 +69,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         verification.verified,
         verification.mismatches.len()
     );
+    if !verification.verified {
+        return Err(format!("回测产物复核失败: {:?}", verification.mismatches).into());
+    }
     Ok(())
 }

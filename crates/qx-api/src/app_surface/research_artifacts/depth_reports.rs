@@ -17,7 +17,7 @@ pub(super) fn build(
     let mut outcome = qx_app::DepthBacktestOutcome::from_json(&encoded)?;
     let root = std::fs::canonicalize(&paths.artifact_root)
         .map_err(|error| AppError::from_io("解析 API 研究产物根目录", &error))?;
-    let artifact_reader = RootedArtifactReader { root: root.clone() };
+    let artifact_reader = RootedArtifactReader::new(root.clone())?;
     outcome.artifacts.run_manifest = rooted_file(&outcome.artifacts.run_manifest, &root)?;
     outcome.artifacts.summary = rooted_file(&outcome.artifacts.summary, &root)?;
     outcome.artifacts.equity = rooted_file(&outcome.artifacts.equity, &root)?;
@@ -31,10 +31,10 @@ pub(super) fn build(
         &outcome.artifacts.equity,
         &outcome.artifacts.fills,
     ] {
-        check_artifact_size(Path::new(path))?;
+        check_artifact_size(&artifact_reader, path)?;
     }
     if let Some(event_trace) = outcome.artifacts.event_trace.as_deref() {
-        check_artifact_size(Path::new(event_trace))?;
+        check_artifact_size(&artifact_reader, event_trace)?;
     }
     let declared_summary =
         read_json_with_reader(&artifact_reader, &outcome.artifacts.summary, "深度研究摘要")?;

@@ -170,6 +170,16 @@ int main() {
     assert(initial_events.ok());
     assert(observed_method == "GET");
     assert(observed_path == "/events/live");
+    const auto command_audit = client.get_command_audit();
+    assert(command_audit.ok());
+    assert(observed_method == "GET");
+    assert(observed_path == "/control/audit?limit=100");
+    const auto filtered_audit = client.get_command_audit("paper +/7");
+    assert(filtered_audit.ok());
+    assert(observed_path == "/control/audit?limit=100&request_id=paper%20%2B%2F7");
+    const auto next_audit_page = client.get_command_audit_page(25, "v1.900.1000");
+    assert(next_audit_page.ok());
+    assert(observed_path == "/control/audit?limit=25&cursor=v1.900.1000");
 
     const auto activity = client.get_account_activity("account 1", "binance/spot", 42,
                                                        std::nullopt, 100);
@@ -318,6 +328,12 @@ int main() {
     assert(observed_method == "POST");
     assert(observed_path == "/app/validate-dataset");
     assert(observed_body == spec);
+
+    const auto preflight = client.preflight_backtest(sized_backtest_spec);
+    assert(preflight.ok());
+    assert(observed_method == "POST");
+    assert(observed_path == "/app/backtest/preflight");
+    assert(observed_body == sized_backtest_spec);
 
     const auto backtest = client.run_backtest(sized_backtest_spec);
     assert(backtest.ok());

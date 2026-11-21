@@ -70,6 +70,7 @@ def extension_target_triple() -> str | None:
 APP_ENTRYPOINTS = (
     "app_screen_ashare_bars",
     "app_validate_dataset",
+    "app_preflight_backtest",
     "app_validate_dataset_manifest",
     "app_publish_dataset_snapshot",
     "app_assemble_dataset_bundle",
@@ -157,6 +158,7 @@ CAPABILITY_ENTRYPOINTS = (
 # Keep this catalog next to APP_ENTRYPOINTS so doctor never reports an older hand-written subset.
 APP_USE_CASE_ENTRYPOINTS = (
     ("dataset.validate.bar.v1", ("app_validate_dataset",)),
+    ("backtest.preflight.bar.v1", ("app_preflight_backtest",)),
     ("dataset.bundle.assemble.v1", ("app_assemble_dataset_bundle",)),
     ("strategy.execution.preflight.v1", ("app_validate_strategy_execution_preflight_v1",)),
     ("strategy.project.validate.v1", ("app_validate_strategy_project_v1",)),
@@ -381,6 +383,11 @@ def app_validate_dataset(spec_json: str) -> str:
     JSON 文档（与另两个入口逐字节相同）。
     """
     return str(_extension().app_validate_dataset(spec_json))
+
+
+def app_preflight_backtest(spec_json: str) -> str:
+    """Return a versioned, read-only readiness report for a local Bar backtest."""
+    return str(_extension().app_preflight_backtest(spec_json))
 
 
 def app_validate_dataset_manifest(spec_json: str) -> str:

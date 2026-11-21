@@ -4,6 +4,40 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
+  - name: sustained pending control commands nearing capacity raise a warning
+    interval: 1m
+    input_series:
+      - series: 'qx_control_pending_commands'
+        values: '9 9 9 9 9 9 9'
+      - series: 'qx_control_pending_commands_limit'
+        values: '10 10 10 10 10 10 10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: QianxingControlCommandCapacityHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              service: qianxing
+            exp_annotations:
+              summary: Qianxing control command queue is nearing capacity
+              description: The API has 90% of its pending command capacity in use; investigate stuck or slow command execution.
+
+  - name: control command capacity rejection is visible immediately
+    interval: 1m
+    input_series:
+      - series: 'qx_api_control_capacity_rejections_total'
+        values: '0 1 1'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: QianxingControlCommandCapacityRejected
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              service: qianxing
+            exp_annotations:
+              summary: Qianxing rejected a control command because its queue is full
+              description: The API rejected 1 control command(s) in the last 5 minutes because pending capacity was exhausted.
+
   - name: unhealthy gateway ports page an operator and healthy ports stay quiet
     interval: 1m
     input_series:

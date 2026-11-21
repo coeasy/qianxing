@@ -19,6 +19,7 @@ from .app import (
     QianxingError,
     compare_runs,
     doctor,
+    preflight_backtest,
     run_backtest,
     run_backtest_with_strategy,
     start_backtest_with_strategy,
@@ -66,6 +67,7 @@ from .strategy_manifest import (
 )
 from .strategy_project import (
     init_strategy_project,
+    project_init_recovery_info,
     load_strategy_file,
     load_strategy_project,
     local_project_preflight,
@@ -87,7 +89,7 @@ from .project_runs import (run_project, wait_project_run, record_project_result,
                            project_runs, project_run_status, cancel_project_run, project_run_events,
                            record_project_error, record_project_plan,
                            prepare_project_input, snapshot_project_input, snapshot_project_strategy,
-                           verify_project_artifacts, generate_project_report)
+                           verify_project_artifacts, generate_project_report, latest_project_run_id)
 
 
 def _document(value: object) -> object:
@@ -298,6 +300,18 @@ def _parser() -> argparse.ArgumentParser:
     run_file.add_argument("--seed", type=int)
     run_file.add_argument("-o", "--output", type=Path,
                           help="run directory for bars/spec/artifacts (default: runs/<strategy>)")
+    quickstart = commands.add_parser(
+        "quickstart",
+        help="create an offline sample project, run it, and render a verified report",
+    )
+    quickstart.add_argument("directory", help="new project directory; must not contain an existing project")
+    quickstart.add_argument("--rows", type=int, default=600, help="sample bars to generate (default: 600)")
+    quickstart.add_argument(
+        "--format", default="html", metavar="LIST",
+        help="comma-separated report formats: html, xlsx, json (default: html)",
+    )
+    quickstart.add_argument("--report-output", help="HTML report path relative to the project root")
+    quickstart.add_argument("--cli", help="report renderer executable; defaults to the bundled qx-cli, then PATH")
     project = commands.add_parser(
         "project",
         help="initialize, inspect, and run a versioned local strategy project",
@@ -309,7 +323,7 @@ def _parser() -> argparse.ArgumentParser:
     project_init.add_argument("--input-spec", help="link a versioned BacktestSpec JSON file")
     project_init.add_argument("--runtime-config", help="optional server runtime config for plan")
     project_init.add_argument("--worker-id", help="strategy worker id in the server runtime config")
-    project_init.add_argument("--force", action="store_true", help="replace the project manifest")
+    project_init.add_argument("--force", action="store_true", help="replace generated project files, including demo strategy and data")
     project_init.add_argument("--demo", action="store_true",
                               help="write an offline sample dataset and a runnable input spec")
     project_init.add_argument("--source", help="fetch real bars from this source (implies demo wiring)")
@@ -321,6 +335,10 @@ def _parser() -> argparse.ArgumentParser:
     project_init.add_argument("--frequency", default="daily")
     project_init.add_argument("--adjustment", default="none", choices=("none", "qfq", "hfq"))
     project_init.add_argument("--rows", type=int, default=600, help="sample rows (--demo only)")
+    project_recovery = project_commands.add_parser(
+        "init-recovery-info", help="inspect files retained by an interrupted project initialization"
+    )
+    project_recovery.add_argument("directory", help="project directory containing the retained files")
     project_doctor = project_commands.add_parser(
         "doctor", help="statically inspect a project; run user code only with --dynamic",
     )
@@ -345,7 +363,7 @@ def _parser() -> argparse.ArgumentParser:
     project_run.add_argument("project_path", help="project directory or qianxing.strategy.json")
     project_report = project_commands.add_parser("report", help="generate verified HTML/XLSX/JSON reports for a completed project run")
     project_report.add_argument("project_path")
-    project_report.add_argument("run_id")
+    project_report.add_argument("run_id", nargs="?", help="run ID (default: latest started run, if successful)")
     project_report.add_argument(
         "--cli", default=None,
         help="report renderer executable; defaults to the qx-cli bundled in this wheel, then PATH",
@@ -411,6 +429,7 @@ def _parser() -> argparse.ArgumentParser:
     inspect_strategy.add_argument("--out", type=Path, help="write the manifest JSON to this path")
     for name, help_text in (
         ("validate-dataset", "validate a versioned DatasetSpec JSON file"),
+        ("preflight-backtest", "check Bar data and strategy readiness without writing artifacts"),
         ("backtest", "run a versioned Bar BacktestSpec JSON file"),
         ("verify", "verify artifacts described by a BacktestOutcome JSON file"),
         ("compare-runs", "rank completed runs from identical market data"),
@@ -707,6 +726,81 @@ def _run_strategy_command(args: argparse.Namespace) -> Any:
     return run_strategy_file(spec, strategy_file, _loaded_strategy=loaded)
 
 
+def _run_strategy_project(project_path: str | Path) -> tuple[int, Any, Any]:
+    """Run a project through the same snapshot, preflight, receipt, and engine path."""
+    execution: dict[str, Any] = {}
+
+    def execute(root, manifest):
+        strategy_path = Path(manifest["strategy_file"]).expanduser()
+        if not strategy_path.is_absolute():
+            strategy_path = root / strategy_path
+        strategy_snapshot = snapshot_project_strategy(
+            root, strategy_path.resolve(strict=True)
+        )
+        input_path = Path(manifest["input_spec"]).expanduser()
+        if not input_path.is_absolute():
+            input_path = root / input_path
+        snapshot = snapshot_project_input(root, input_path.resolve(strict=True))
+        run_plan = local_project_preflight(
+            root,
+            input_spec_override=snapshot,
+            strategy_file_override=strategy_snapshot,
+        )
+        record_project_plan(run_plan)
+        execution["plan"] = run_plan
+        execution["result"] = run_project_strategy(root, manifest, snapshot, run_plan)
+        return 0
+
+    status = run_project(project_path, execute)
+    if status != 0:
+        return status, None, execution.get("plan")
+    result = execution.get("result")
+    if result is None:
+        raise RuntimeError("project run completed without a strategy result")
+    return 0, result, execution.get("plan")
+
+
+def _run_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any] | None]:
+    """Create a deterministic offline demo and carry it through verified reporting."""
+    created = init_strategy_project(args.directory, demo=True, rows=args.rows)
+    status, run_result, preflight = _run_strategy_project(args.directory)
+    if status != 0:
+        return status, None
+    root, _manifest = load_strategy_project(args.directory)
+    run_id = latest_project_run_id(root)
+    try:
+        report = generate_project_report(
+            root,
+            run_id,
+            executable=args.cli,
+            output=args.report_output,
+            formats=args.format,
+        )
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"sample run {run_id} succeeded, but report rendering failed: {exc}; "
+            f"retry with `qianxing project report {str(root)!r} {run_id}`"
+        ) from exc
+    integrity = verify_project_artifacts(root, run_id)
+    if not integrity.get("verified"):
+        raise ValueError("quickstart run artifacts failed verification after report rendering")
+    return 0, {
+        "status": "succeeded",
+        "project_root": str(root),
+        "data": {
+            "source": "sample",
+            "is_sample": True,
+            "rows": created["data"]["rows"],
+            "instrument": created["data"]["instrument"],
+        },
+        "preflight": preflight,
+        "run": _document(run_result),
+        "project_run_id": run_id,
+        "artifacts_verified": integrity["verified"],
+        "report": report,
+    }
+
+
 def _dispatch_command(argv: Sequence[str] | None = None) -> int:
     _configure_console_encoding()
     # `data` 的旗标面由 qianxing_ashare 拥有（含 -h）；先在顶层截走，避免外层
@@ -753,6 +847,8 @@ def _dispatch_command(argv: Sequence[str] | None = None) -> int:
                         adjustment=args.adjustment,
                         rows=args.rows,
                     )
+                elif args.project_command == "init-recovery-info":
+                    result = project_init_recovery_info(args.directory)
                 elif args.project_command == "doctor":
                     result = (
                         dynamic_project_doctor(args.project_path, timeout_seconds=args.timeout)
@@ -775,7 +871,8 @@ def _dispatch_command(argv: Sequence[str] | None = None) -> int:
                         )
                 elif args.project_command == "report":
                     root, _manifest = load_strategy_project(args.project_path)
-                    result = generate_project_report(root, args.run_id, executable=args.cli,
+                    run_id = args.run_id if args.run_id is not None else latest_project_run_id(root)
+                    result = generate_project_report(root, run_id, executable=args.cli,
                                                      output=args.output, formats=args.format)
                 elif args.project_command == "deployments":
                     context = None
@@ -801,35 +898,9 @@ def _dispatch_command(argv: Sequence[str] | None = None) -> int:
                     else:
                         result = project_run_events(root, args.run_id, args.tail)
                 elif args.project_command == "run":
-                    execution_result: dict[str, Any] = {}
-
-                    def execute(root, manifest):
-                        strategy_path = Path(manifest["strategy_file"]).expanduser()
-                        if not strategy_path.is_absolute():
-                            strategy_path = root / strategy_path
-                        strategy_snapshot = snapshot_project_strategy(
-                            root, strategy_path.resolve(strict=True)
-                        )
-                        input_path = Path(manifest["input_spec"]).expanduser()
-                        if not input_path.is_absolute():
-                            input_path = root / input_path
-                        snapshot = snapshot_project_input(root, input_path.resolve(strict=True))
-                        run_plan = local_project_preflight(
-                            root, input_spec_override=snapshot,
-                            strategy_file_override=strategy_snapshot,
-                        )
-                        record_project_plan(run_plan)
-                        execution_result["value"] = run_project_strategy(
-                            root, manifest, snapshot, run_plan
-                        )
-                        return 0
-
-                    run_status = run_project(args.project_path, execute)
+                    run_status, result, _plan = _run_strategy_project(args.project_path)
                     if run_status != 0:
                         return run_status
-                    result = execution_result.get("value")
-                    if result is None:
-                        raise RuntimeError("project run completed without a strategy result")
                 else:
                     raise InvalidInputError("unknown project action")
             except QianxingError:
@@ -837,6 +908,18 @@ def _dispatch_command(argv: Sequence[str] | None = None) -> int:
             except (OSError, TypeError, ValueError) as exc:
                 raise InvalidInputError(
                     f"strategy project {args.project_command} failed: {exc}",
+                    payload={"category": "INVALID_INPUT", "message": str(exc)},
+                ) from exc
+        elif args.command == "quickstart":
+            try:
+                status, result = _run_quickstart(args)
+                if status != 0:
+                    return status
+            except QianxingError:
+                raise
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                raise InvalidInputError(
+                    f"quickstart failed: {exc}",
                     payload={"category": "INVALID_INPUT", "message": str(exc)},
                 ) from exc
         elif args.command == "doctor":
@@ -976,6 +1059,8 @@ def _dispatch_command(argv: Sequence[str] | None = None) -> int:
                     ) from exc
             elif args.command == "validate-dataset":
                 result = validate_dataset(payload)
+            elif args.command == "preflight-backtest":
+                result = preflight_backtest(payload)
             elif args.command == "diagnose-strategy":
                 if not isinstance(payload, dict):
                     message = "diagnose-strategy input must be a BacktestSpec object"

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.dev/schemas/control-audit-record-v1.json",
+  "title": "Qianxing ControlAuditRecordV1",
+  "description": "Versioned Paper/Live command acceptance and recovery record returned by qx-api.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "command_id",
+    "request_id",
+    "operator_id",
+    "command_digest",
+    "status",
+    "result_code",
+    "ts"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "command_id": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+    "request_id": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"},
+    "operator_id": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"},
+    "command_digest": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+    "status": {"enum": ["Accepted", "Executed", "Failed"]},
+    "result_code": {"type": "string"},
+    "ts": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615}
+  },
+  "additionalProperties": false
+}

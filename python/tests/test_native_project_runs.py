@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -61,6 +62,51 @@ class NativeProjectRunTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()) as output, contextlib.redirect_stderr(io.StringIO()) as errors:
             code = self.cli.main(["project", "run", str(self.root)])
         return code, output.getvalue(), errors.getvalue()
+
+    def test_demo_run_renders_latest_report_with_real_cli(self):
+        from qianxing import strategy_project
+
+        renderer = os.environ.get("QX_TEST_REPORT_CLI")
+        if not renderer:
+            self.skipTest("set QX_TEST_REPORT_CLI to the freshly built report renderer")
+        demo = Path(self.temp.name) / "latest report demo"
+        strategy_project.init_strategy_project(demo, demo=True, rows=80)
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as errors:
+            code = self.cli.main(["project", "run", str(demo)])
+        self.assertEqual(code, 0, errors.getvalue())
+        record, = self.runs.project_runs(demo)
+        with contextlib.redirect_stdout(io.StringIO()) as output, contextlib.redirect_stderr(io.StringIO()) as errors:
+            code = self.cli.main(["project", "report", str(demo), "--cli", renderer])
+        log = self.runs._directory(demo, record["project_run_id"]) / "report.log"
+        detail = log.read_text(encoding="utf-8") if log.exists() else ""
+        self.assertEqual(code, 0, errors.getvalue() + detail)
+        report = json.loads(output.getvalue())
+        self.assertEqual(report["project_run_id"], record["project_run_id"])
+        self.assertEqual(report["status"], "succeeded")
+        self.assertTrue(Path(report["report_paths"]["html"]).is_file())
+
+    def test_python_quickstart_runs_sample_preflight_engine_and_verified_report(self):
+        renderer = os.environ.get("QX_TEST_REPORT_CLI")
+        if not renderer:
+            self.skipTest("set QX_TEST_REPORT_CLI to the freshly built report renderer")
+        project = Path(self.temp.name) / "python quickstart"
+        with contextlib.redirect_stdout(io.StringIO()) as output, contextlib.redirect_stderr(io.StringIO()) as errors:
+            code = self.cli.main([
+                "quickstart", str(project), "--rows", "80", "--cli", renderer,
+            ])
+        self.assertEqual(code, 0, errors.getvalue())
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["status"], "succeeded")
+        self.assertEqual(result["data"]["source"], "sample")
+        self.assertTrue(result["data"]["is_sample"])
+        self.assertEqual(result["data"]["rows"], 80)
+        self.assertEqual(result["preflight"]["status"], "ready")
+        self.assertTrue(result["artifacts_verified"])
+        self.assertEqual(result["report"]["status"], "succeeded")
+        self.assertTrue(Path(result["report"]["report_paths"]["html"]).is_file())
+        record = self.runs.project_run_status(project, result["project_run_id"])
+        self.assertEqual(record["status"], "succeeded")
+        self.assertTrue(self.runs.verify_project_artifacts(project, result["project_run_id"])["verified"])
 
     def test_native_success_verifies_replay_and_isolates_repeated_run_artifacts(self):
         from qianxing.app import verify_run
@@ -136,6 +182,152 @@ class NativeProjectRunTests(unittest.TestCase):
             bars_path.write_bytes(bars_path.read_bytes() + b"\n")
             with self.assertRaisesRegex(Exception, "does not bind|mismatched"):
                 strategy_project.local_project_preflight(demo)
+
+    def test_sample_project_with_less_than_one_unit_of_cash_can_trade(self):
+        from qianxing import strategy_project
+        from qianxing.reports import verify_run
+
+        demo = Path(self.temp.name) / "fractional sample"
+        strategy_project.init_strategy_project(demo, demo=True, cash="50")
+        snapshot = json.loads((demo / "data" / "snapshot.json").read_text(encoding="utf-8"))
+        self.assertEqual((snapshot["price_precision"], snapshot["quantity_precision"]), (9, 9))
+        output, errors = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            code = self.cli.main(["project", "run", str(demo)])
+        self.assertEqual(code, 0, errors.getvalue())
+        result = json.loads(output.getvalue())
+        self.assertGreater(result["fills"], 0)
+        self.assertTrue(verify_run(result).verified)
+
+    def test_demo_reinitialization_rolls_back_data_on_install_failure(self):
+        from qianxing import strategy_project
+        from qianxing.dataset_bundle import verify_bundle
+
+        demo = Path(self.temp.name) / "recoverable demo"
+        strategy_project.init_strategy_project(demo, demo=True, rows=30)
+        demo = demo.resolve()
+        extra = demo / "data" / "personal-notes.txt"
+        extra.write_text("keep me", encoding="utf-8")
+        paths = [demo / "input.json", demo / "qianxing.strategy.json", demo / "strategies" / "main.py",
+                 demo / ".gitignore", *sorted((demo / "data").iterdir())]
+        original = {p: p.read_bytes() for p in paths}
+
+        with patch.object(strategy_project, "_write_sample_dataset", side_effect=OSError("generation failed")):
+            with self.assertRaisesRegex(OSError, "generation failed"):
+                strategy_project.init_strategy_project(demo, demo=True, rows=40, force=True)
+        self.assertEqual(original, {p: p.read_bytes() for p in paths})
+
+        replace = os.replace
+        calls = 0
+        def fail_once(source, target):
+            nonlocal calls
+            calls += 1
+            if calls == 4:
+                raise OSError("install failed")
+            return replace(source, target)
+
+        with patch.object(strategy_project.os, "replace", side_effect=fail_once):
+            with self.assertRaisesRegex(OSError, "install failed"):
+                strategy_project.init_strategy_project(demo, demo=True, rows=40, force=True)
+        self.assertEqual(original, {p: p.read_bytes() for p in paths})
+        self.assertEqual(verify_bundle(demo / "data")["rows"], 30)
+        self.assertFalse(list(demo.glob(".qianxing-init-*")))
+
+        failed = False
+        def fail_manifest_once(source, target):
+            nonlocal failed
+            if Path(target) == demo / "qianxing.strategy.json" and not failed:
+                failed = True
+                raise OSError("manifest installation failed")
+            return replace(source, target)
+
+        with patch.object(strategy_project.os, "replace", side_effect=fail_manifest_once):
+            with self.assertRaisesRegex(OSError, "manifest installation failed"):
+                strategy_project.init_strategy_project(demo, demo=True, rows=40, force=True)
+        self.assertTrue(failed)
+        self.assertEqual(original, {p: p.read_bytes() for p in paths})
+        self.assertEqual(verify_bundle(demo / "data")["rows"], 30)
+        self.assertFalse(list(demo.glob(".qianxing-init-*")))
+
+        strategy_project.init_strategy_project(demo, demo=True, rows=40, force=True)
+        self.assertEqual(verify_bundle(demo / "data")["rows"], 40)
+        self.assertEqual(extra.read_text(encoding="utf-8"), "keep me")
+
+    def test_failed_rollback_retains_mapped_backups(self):
+        from qianxing import strategy_project
+
+        demo = (Path(self.temp.name) / "manual recovery").resolve()
+        strategy_project.init_strategy_project(demo, demo=True, rows=30)
+        original_input = (demo / "input.json").read_bytes()
+        replace = os.replace
+        installation_failed = False
+
+        def fail_install_and_restore(source, target):
+            nonlocal installation_failed
+            if Path(target) == demo / "qianxing.strategy.json" and not installation_failed:
+                installation_failed = True
+                raise OSError("install failed")
+            if installation_failed and Path(target) == demo / "input.json":
+                raise OSError("restore failed")
+            return replace(source, target)
+
+        with patch.object(strategy_project.os, "replace", side_effect=fail_install_and_restore):
+            with self.assertRaisesRegex(RuntimeError, "recovery files retained"):
+                strategy_project.init_strategy_project(demo, demo=True, rows=40, force=True)
+        staging, = demo.glob(".qianxing-init-*")
+        recovery = json.loads((staging / "recovery.json").read_text(encoding="utf-8"))
+        input_entry, = (item for item in recovery if item["target"] == "input.json")
+        self.assertTrue(input_entry["originally_present"])
+        self.assertEqual((staging / input_entry["backup"]).read_bytes(), original_input)
+
+    def test_process_interruption_blocks_reuse_and_exposes_read_only_recovery_info(self):
+        from qianxing import strategy_project
+
+        demo = (Path(self.temp.name) / "interrupted demo").resolve()
+        strategy_project.init_strategy_project(demo, demo=True, rows=30)
+        script = '''
+import os, sys
+from qianxing import strategy_project
+replace = os.replace
+calls = 0
+def crash(source, target):
+    global calls
+    calls += 1
+    if calls == 4:
+        os._exit(86)
+    return replace(source, target)
+strategy_project.os.replace = crash
+strategy_project.init_strategy_project(sys.argv[1], demo=True, rows=40, force=True)
+'''
+        env = os.environ.copy()
+        python_root = str(Path(__file__).resolve().parents[1])
+        env["PYTHONPATH"] = python_root + os.pathsep + env.get("PYTHONPATH", "")
+        child = subprocess.run([sys.executable, "-c", script, str(demo)], env=env, timeout=60)
+        self.assertEqual(child.returncode, 86)
+        with self.assertRaisesRegex(ValueError, "unfinished project initialization"):
+            strategy_project.load_strategy_project(demo)
+        with self.assertRaisesRegex(ValueError, "unfinished project initialization"):
+            strategy_project.init_strategy_project(demo, demo=True, force=True)
+        with self.assertRaisesRegex(ValueError, "unfinished project initialization"):
+            strategy_project.load_strategy_project(demo / "qianxing.strategy.json")
+        before = {path: path.read_bytes() for path in demo.rglob("*") if path.is_file()}
+        output, errors = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            code = self.cli.main(["project", "init-recovery-info", str(demo)])
+        self.assertEqual(code, 0, errors.getvalue())
+        result = json.loads(output.getvalue())
+        pending, = result["pending"]
+        self.assertEqual(pending["status"], "manual_review_required")
+        self.assertTrue(any(entry["backup_present"] for entry in pending["entries"]))
+        self.assertEqual(before, {path: path.read_bytes() for path in demo.rglob("*") if path.is_file()})
+
+        stage = Path(pending["directory"])
+        journal = stage / "recovery.json"
+        entries = json.loads(journal.read_text(encoding="utf-8"))
+        entries[0]["target"] = "../outside"
+        journal.write_text(json.dumps(entries), encoding="utf-8")
+        self.assertEqual(strategy_project.project_init_recovery_info(demo)["pending"][0]["status"],
+                         "invalid_recovery_mapping")
 
     def test_native_cancellation_is_terminal_without_successful_outcome(self):
         source = self.root / "strategies" / "main.py"

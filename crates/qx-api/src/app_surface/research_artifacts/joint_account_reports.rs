@@ -10,7 +10,7 @@ pub(super) fn read_report(
         .map_err(|error| invalid_report(format!("联合账户结果 JSON 无效: {error}")))?;
     let root = std::fs::canonicalize(&paths.artifact_root)
         .map_err(|error| AppError::from_io("解析 API 联合账户产物根目录", &error))?;
-    let reader = RootedArtifactReader { root };
+    let reader = RootedArtifactReader::new(root)?;
     let context = RunContext::new(CallerCapability::Research, &outcome.run_id);
     qx_app::read_multi_account_joint_report_v1_with_reader(&outcome, &context, &reader)
 }
@@ -41,9 +41,7 @@ pub(super) fn build(
             .map_err(|error| invalid_report(format!("联合账户结果结构无效: {error}")))?;
     let artifact_root = std::fs::canonicalize(&paths.artifact_root)
         .map_err(|error| AppError::from_io("解析 API 研究产物根目录", &error))?;
-    let artifact_reader = RootedArtifactReader {
-        root: artifact_root,
-    };
+    let artifact_reader = RootedArtifactReader::new(artifact_root)?;
     let context = RunContext::new(CallerCapability::Research, &outcome.run_id);
     let report = qx_app::read_multi_account_joint_report_v1_with_reader_and_options(
         &outcome,

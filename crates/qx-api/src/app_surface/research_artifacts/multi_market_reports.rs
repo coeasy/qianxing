@@ -18,10 +18,8 @@ pub(super) fn build(
         .map_err(|error| AppError::from_io("解析 API 研究产物根目录", &error))?;
     let data_root = std::fs::canonicalize(&paths.data_root)
         .map_err(|error| AppError::from_io("解析 API 数据根目录", &error))?;
-    let artifact_reader = RootedArtifactReader {
-        root: artifact_root,
-    };
-    let data_reader = RootedArtifactReader { root: data_root };
+    let artifact_reader = RootedArtifactReader::new(artifact_root)?;
+    let data_reader = RootedArtifactReader::new(data_root)?;
     let context = RunContext::new(CallerCapability::Research, requested.run_id.clone());
     let page = requested_page.unwrap_or(EventPage {
         offset: 0,
@@ -167,10 +165,8 @@ pub(super) fn build_depth(
         .map_err(|error| AppError::from_io("解析 API 研究产物根目录", &error))?;
     let data_root = std::fs::canonicalize(&paths.data_root)
         .map_err(|error| AppError::from_io("解析 API 数据根目录", &error))?;
-    let artifact_reader = RootedArtifactReader {
-        root: artifact_root,
-    };
-    let data_reader = RootedArtifactReader { root: data_root };
+    let artifact_reader = RootedArtifactReader::new(artifact_root)?;
+    let data_reader = RootedArtifactReader::new(data_root)?;
     let page = requested_page.unwrap_or(EventPage {
         offset: 0,
         limit: MAX_EVENT_ROWS,

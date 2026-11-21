@@ -1885,15 +1885,53 @@ def project_run_status(root: Path, run_id: str) -> dict:
     return record
 
 
-def project_runs(root: Path, limit: int = 100) -> list[dict]:
-    if limit < 1 or limit > 1000:
-        raise ValueError("run list limit must be between 1 and 1000")
+def _project_run_records(root: Path) -> list[dict]:
     base = root / ".qianxing" / "runs"
     if not base.exists():
         return []
-    records = [project_run_status(root, path.name) for path in base.iterdir()
-               if path.is_dir() and _RUN_ID.fullmatch(path.name)]
+    return [project_run_status(root, path.name) for path in base.iterdir()
+            if path.is_dir() and _RUN_ID.fullmatch(path.name)]
+
+
+def project_runs(root: Path, limit: int = 100) -> list[dict]:
+    if limit < 1 or limit > 1000:
+        raise ValueError("run list limit must be between 1 and 1000")
+    records = _project_run_records(root)
     return sorted(records, key=lambda record: str(record.get("started_at", "")), reverse=True)[:limit]
+
+
+def latest_project_run_id(root: Path) -> str:
+    """Select the latest started run only when its ordering and success are clear."""
+    records = _project_run_records(root)
+    if not records:
+        raise ValueError("no project runs found; run `qianxing project run <project>` first")
+    dated = []
+    for record in records:
+        raw = record.get("started_at")
+        try:
+            if not isinstance(raw, str):
+                raise ValueError("missing start time")
+            started = datetime.fromisoformat(raw)
+            if started.tzinfo is None or started.utcoffset() is None:
+                raise ValueError("missing timezone")
+            started = started.astimezone(timezone.utc)
+        except (ValueError, OverflowError):
+            raise ValueError(
+                "cannot determine latest project run: a receipt is corrupt or has an invalid "
+                "start time; inspect `qianxing project runs <project>` and specify a run ID"
+            ) from None
+        dated.append((started, record))
+    latest_time = max(started for started, _ in dated)
+    latest = [record for started, record in dated if started == latest_time]
+    if len(latest) != 1:
+        raise ValueError("latest project runs have the same start time; specify a run ID")
+    record = latest[0]
+    if record["status"] != "succeeded":
+        raise ValueError(
+            f"latest project run {record['project_run_id']} is {record['status']}, not succeeded; "
+            "inspect it or specify an earlier run ID"
+        )
+    return record["project_run_id"]
 
 
 def cancel_project_run(root: Path, run_id: str) -> dict:

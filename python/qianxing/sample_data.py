@@ -82,8 +82,9 @@ def sample_context() -> dict[str, Any]:
         "captured_at_ms": SAMPLE_CAPTURED_AT_MS,
         "frequency_ms": FREQUENCY_MS["daily"],
         "timestamp_semantics": "bar_open",
-        "price_precision": 2,
-        "quantity_precision": 0,
+        # Both the random walk and volumes are generated in raw 1e-9 units.
+        "price_precision": 9,
+        "quantity_precision": 9,
         "price_unit": "sample_price",
         "quantity_unit": "sample_unit",
         "calendar_id": "sample-continuous-days",

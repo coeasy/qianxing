@@ -2,6 +2,7 @@
 name = "qx-protocol"
 description = "跨语言账户快照、Diff 与 QIFI 映射基础契约"
 version.workspace = true
+publish = false
 edition.workspace = true
 license.workspace = true
 

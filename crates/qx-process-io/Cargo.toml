@@ -2,6 +2,7 @@
 name = "qx-process-io"
 description = "进程管道的有界读写原语"
 version.workspace = true
+publish = false
 edition.workspace = true
 license.workspace = true
 

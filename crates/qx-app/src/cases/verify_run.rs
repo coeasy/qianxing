@@ -56,7 +56,7 @@ pub fn verify_run(
 }
 
 /// Verify a Bar run using a caller-provided artifact storage adapter.
-pub(crate) fn verify_run_with_reader(
+pub fn verify_run_with_reader(
     outcome: &BacktestOutcome,
     context: &RunContext,
     reader: &dyn ArtifactReader,

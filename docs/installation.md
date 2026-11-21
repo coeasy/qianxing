@@ -8,7 +8,7 @@ That 2026-10-29 record closed only the Windows leg at that time. The 0.4.0 candi
 
 ## 安装
 
-Rust CLI 与 Python wheel 由 tag 发布流水线构建，并随 GitHub Release 提供。Python wheel 还会在全部发布门禁通过后通过 PyPI Trusted Publishing 发布；Rust CLI 暂未发布到 crates.io，提供平台二进制与源码安装路径。
+Rust CLI 与 Python wheel 由 tag 发布流水线构建，并随 GitHub Release 提供。Python wheel 还会在全部发布门禁通过后通过 PyPI Trusted Publishing 发布。Rust CLI 提供平台二进制与源码安装路径；Rust SDK 的 14 个 crates.io 依赖包尚未上传，首次发布需按 [`qx-sdk` 发布说明](qx-sdk-migration.md#查看-rust-发布依赖) 完成 token、精确 tag 与独立消费者验收。
 只想要"装完跑第一轮"的人请先看[首跑：从安装到第一份报告](first-run.md) —— 那一页按安装方式分两支给可复制命令；本页讲的是每条路径的
 前置、构建器契约与踩过的坑。每条路径写的是**行为**与它的核对者，
 不是某一轮的计时读数：能当场重跑的行为直接写行为，跑不了的整跑读数一律写明"本轮没有重跑"，
@@ -40,6 +40,9 @@ qx-cli quickstart my-qx        # 一条命令跑完下面那五条：建 macd �
 下 `result_hash` 与逐条敲完全相同 —— 这条相等关系由 `crates/qx-cli/tests/quickstart_first_run.rs` 钉成用例，
 而不是文档上的一句承诺。
 
+内置策略的 Bar 回测在实际执行前会显示 qx-app 只读预检结果；数据不足、标的与冻结规则不匹配时会点名阻断项，
+不会把静态 doctor 通过误说成这轮回测已就绪。预检通过后，回测仍会重新读取并复核输入。
+
 同样的链条逐条敲（`quickstart` 内部执行的就是这五条）：
 
 ```bash
@@ -65,7 +68,7 @@ qx-cli quickstart my-qx --strategy macd --html
 
 Paper 是单独的本地虚拟成交模型：买单按卖一价、卖单按买一价，按该档显示数量限量成交并按 client order id 顺序处理。它不模拟隐藏流动性、排队位置、交易所撮合延迟或市场冲击，也不与 Bar/L1/L2 回测撮合等价；`paper-check --json` 会在 `paper_check.execution_model` 中输出模型与限制，并在 `paper_risk_audit` 中只读汇总 Paper 账户已持久化的风控裁决（最多展示最近 100 条，定点原始值使用字符串）。这些裁决用于审计，不代表订单成交或盈亏。文件型 Paper EventLog 大小会显示在 `paper_risk_audit.storage_observation`；默认 1 GiB 起提示，可用 `QIANXING_EVENT_LOG_WARN_BYTES` 调整。SQLite/PostgreSQL 容量需由数据库侧监控；该命令不会自动轮转或删除日志。
 
-本轮没有重跑 `cargo install` 的计时（上一轮的用时读数见归档）；能核的是行为而不是耗时：
+2026-11-22 Windows x64/MSVC 本地通过 `cargo install --path crates/qx-cli --locked --offline --root target/qx-cli-install-validation` 安装成功，优化版构建耗时 **6 分 54 秒**，安装出的 `qx-cli.exe --version` 正常返回 `0.4.0` 与构建身份。此验证复用了工作区 Cargo 构建缓存，不等于干净机器冷安装；首次使用应优先走 GitHub Release 预编译二进制，Cargo 源码安装保留给开发环境和可接受长构建时间的用户。该安装出的 binary 从仓库外目录运行 `help` 和 `quickstart <目录> --strategy macd --html` 成功：70 根示例 Bar、1 笔成交、`ready=true`、生成 HTML/SVG、项目 21 份文件，状态明确 `network_accessed=false`、`orders_sent=false`。同机三次离线示例 quickstart 用时 0.070/0.061/0.045 秒；这是本机小样例流程时间，不代表真实行情下载或大数据回测速度。构建身份带 `dirty`，它不是正式 tag 构建证据。行为链路另外由以下用例钉住：
 `help` / `init --strategy macd` / `doctor` / `backtest` / `report` / `status` 这六条在**仓库外**
 目录里的等价链路，由 `crates/qx-cli/tests/quickstart_first_run.rs` 钉成用例——同一条输入下
 `quickstart` 与逐条敲那五条的 `result_hash` 必须逐字符相同，本轮随整树测试跑绿。纯回测与 Paper

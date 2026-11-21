@@ -4,24 +4,24 @@ use pyo3::exceptions::{PyException, PyIndexError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyCapsule, PyModule, PyTuple};
 use qx_app::{
-    compare_runs, plan_algo_execution, publish_dataset_snapshot, read_depth_run_report_v1,
-    read_multi_account_joint_report_v1_with_options, read_multi_account_report_v1,
-    read_multi_leg_event_report_page_v1, read_multi_leg_report_facts_v1,
-    read_multi_leg_research_report_v1, read_multi_market_depth_event_report_page_v1,
-    read_multi_market_depth_research_report_v1, read_multi_market_event_report_page_v1,
-    read_multi_market_research_report_v1, read_provider_backtest_report_v1,
-    read_provider_depth_backtest_report_v1, read_run_report_v1, run_backtest, run_depth_backtest,
-    run_depth_experiment, run_experiment, run_multi_leg_backtest, run_multi_leg_experiment,
-    run_multi_market_backtest, run_multi_market_depth_backtest, validate_dataset,
-    validate_dataset_manifest, validate_strategy_execution_preflight_v1, verify_depth_run,
-    verify_run, AlgoExecutionSpec, AppError, BacktestOutcome, BacktestSpec, CallerCapability,
-    CompareRunsSpec, DatasetManifestValidationSpec, DatasetSnapshotPublicationSpec, DatasetSpec,
-    DepthBacktestOutcome, DepthBacktestSpec, MultiAccountJointBacktestSpec,
-    MultiAccountJointReportReadOptionsV1, MultiLegBacktestOutcome, MultiLegBacktestSpec,
-    MultiMarketBacktestSpec, MultiMarketDepthBacktestSpec, ProviderBacktestOutcome,
-    ProviderDepthBacktestOutcome, RunContext, RunDepthExperimentSpec, RunExperimentSpec,
-    RunMultiLegExperimentSpec, RunMultiMarketDepthExperimentSpec, RunMultiMarketExperimentSpec,
-    StrategyExecutionPreflightSpecV1,
+    compare_runs, plan_algo_execution, preflight_backtest_v1, publish_dataset_snapshot,
+    read_depth_run_report_v1, read_multi_account_joint_report_v1_with_options,
+    read_multi_account_report_v1, read_multi_leg_event_report_page_v1,
+    read_multi_leg_report_facts_v1, read_multi_leg_research_report_v1,
+    read_multi_market_depth_event_report_page_v1, read_multi_market_depth_research_report_v1,
+    read_multi_market_event_report_page_v1, read_multi_market_research_report_v1,
+    read_provider_backtest_report_v1, read_provider_depth_backtest_report_v1, read_run_report_v1,
+    run_backtest, run_depth_backtest, run_depth_experiment, run_experiment, run_multi_leg_backtest,
+    run_multi_leg_experiment, run_multi_market_backtest, run_multi_market_depth_backtest,
+    validate_dataset, validate_dataset_manifest, validate_strategy_execution_preflight_v1,
+    verify_depth_run, verify_run, AlgoExecutionSpec, AppError, BacktestOutcome, BacktestSpec,
+    CallerCapability, CompareRunsSpec, DatasetManifestValidationSpec,
+    DatasetSnapshotPublicationSpec, DatasetSpec, DepthBacktestOutcome, DepthBacktestSpec,
+    MultiAccountJointBacktestSpec, MultiAccountJointReportReadOptionsV1, MultiLegBacktestOutcome,
+    MultiLegBacktestSpec, MultiMarketBacktestSpec, MultiMarketDepthBacktestSpec,
+    ProviderBacktestOutcome, ProviderDepthBacktestOutcome, RunContext, RunDepthExperimentSpec,
+    RunExperimentSpec, RunMultiLegExperimentSpec, RunMultiMarketDepthExperimentSpec,
+    RunMultiMarketExperimentSpec, StrategyExecutionPreflightSpecV1,
 };
 use qx_datastruct::{ArrowArray, ArrowSchema, BarFrame, FrameError};
 use std::ffi::c_void;
@@ -65,6 +65,15 @@ fn app_validate_dataset(spec_json: &str) -> PyResult<String> {
     validate_dataset(&spec, &research_context(&spec.dataset_id))
         .and_then(|verdict| verdict.to_json())
         .map_err(app_error)
+}
+
+#[pyfunction]
+fn app_preflight_backtest(spec_json: &str) -> PyResult<String> {
+    let spec = BacktestSpec::from_json(spec_json).map_err(app_error)?;
+    let result =
+        preflight_backtest_v1(&spec, &research_context(&spec.run_id)).map_err(app_error)?;
+    serde_json::to_string(&result)
+        .map_err(|error| PyValueError::new_err(format!("预检结果 JSON 无法编码: {error}")))
 }
 
 #[pyfunction]
@@ -883,6 +892,7 @@ fn _qianxing_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<OwnedArrowArray>()?;
     module.add_function(wrap_pyfunction!(owned_arrow_array, module)?)?;
     module.add_function(wrap_pyfunction!(app_validate_dataset, module)?)?;
+    module.add_function(wrap_pyfunction!(app_preflight_backtest, module)?)?;
     module.add_function(wrap_pyfunction!(app_validate_dataset_manifest, module)?)?;
     module.add_function(wrap_pyfunction!(app_publish_dataset_snapshot, module)?)?;
     module.add_function(wrap_pyfunction!(

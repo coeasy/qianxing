@@ -1,5 +1,5 @@
 use crate::*;
-use qx_app::{CallerCapability, RunContext, TradeControlSpec, TradeWorkflow};
+use qx_app::{CallerCapability, ControlAuditRecordV1, RunContext, TradeControlSpec, TradeWorkflow};
 
 impl ApiService {
     pub(super) fn submit_workflow_command(
@@ -92,12 +92,7 @@ impl ApiService {
                     );
                 }
                 Err(ControlSubmitError::Rejected(error)) => {
-                    let status = match error {
-                        ControlError::Forbidden => 403,
-                        ControlError::Invalid(_) => 400,
-                        _ => 409,
-                    };
-                    return ApiResponse::json(status, error_json(&format!("{error:?}")));
+                    return self.control_error_response(error);
                 }
             };
             match lock_state(&self.state) {
@@ -115,7 +110,8 @@ impl ApiService {
                     eprintln!("[qx-api] 控制命令入队失败，等 worker 补入: {error}");
                 }
             }
-            return serialized_json_response(202, &audit);
+            let receipt = ControlAuditRecordV1::from(&audit);
+            return serialized_json_response(202, &receipt);
         }
         let mut state = match lock_state(&self.state) {
             Ok(state) => state,
@@ -123,15 +119,11 @@ impl ApiService {
         };
         let result = state.control.submit_as(command, granted, ts);
         match result {
-            Ok(audit) => serialized_json_response(202, &audit),
-            Err(error) => {
-                let status = match error {
-                    ControlError::Forbidden => 403,
-                    ControlError::Invalid(_) => 400,
-                    _ => 409,
-                };
-                ApiResponse::json(status, error_json(&format!("{error:?}")))
+            Ok(audit) => {
+                let receipt = ControlAuditRecordV1::from(&audit);
+                serialized_json_response(202, &receipt)
             }
+            Err(error) => self.control_error_response(error),
         }
     }
 }

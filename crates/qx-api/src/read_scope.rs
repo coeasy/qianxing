@@ -1,6 +1,6 @@
 //! 读面的收窄口径：一条入口认哪几把查询键、键怎么解析、解析结果怎么套在结果集上。
 //!
-//! 独立组织读面分类与路由名单。三张路由名单是这条契约的
+//! 独立组织读面分类与路由名单。各类路由名单是这条契约的
 //! 单点：`admission::refused_query_param` 按它决定「名单外的键当场 400 并点名」，
 //! `ApiService::handle_inner` 按 `PROJECTION_SCOPED_ROUTES` 决定「要不要先过投影缺失那道 404」。
 
@@ -38,10 +38,13 @@ pub(crate) const MODEL_FILTER_ROUTES: [(&str, &[&str]); 3] = [
     ("/account/order-groups", &REPORT_FILTER_PARAMS),
 ];
 
-/// 反过来：这两条读的是整份现读模型，且数据本身没有账户归属列（`JobRun` 是作业级、
-/// `AuditRecord` 是操作员级），没有任何收窄键。带查询串进来必须回 400 而不是照常 200——
-/// 按账户读请走 `/account/snapshot` 一族或 `MODEL_FILTER_ROUTES` 中的账户过滤入口（V13 R2 #205 / R31）。
-pub(crate) const KEYLESS_READ_ROUTES: [&str; 2] = ["/scheduler/runs", "/control/audit"];
+/// 整体读取且没有账户归属列的读面。活动作业读面没有可用过滤键；审计读面允许按
+/// `request_id` 精确恢复命令，也允许使用有界 `limit` 和稳定 `cursor` 读取审计页。
+pub(crate) const KEYLESS_READ_ROUTES: [&str; 1] = ["/scheduler/runs"];
+
+/// 控制审计只允许用请求 ID、分页游标和页大小收窄，禁止无界下载完整审计窗口。
+pub(crate) const CONTROL_AUDIT_FILTER_ROUTES: [(&str, &[&str]); 1] =
+    [("/control/audit", &CONTROL_AUDIT_FILTER_PARAMS)];
 
 /// 带键读面认的两把收窄键。
 const ACCOUNT_SCOPED_PARAMS: [&str; 2] = ["account_id", "venue_id"];
@@ -71,6 +74,7 @@ const PORTFOLIO_FILTER_PARAMS: [&str; 2] = ["portfolio_id", "reporting_currency"
 const LEDGER_FILTER_PARAMS: [&str; 1] = ["account_id"];
 /// 对账报告两条都有，可以单独按 venue 收窄。
 const REPORT_FILTER_PARAMS: [&str; 2] = ["account_id", "venue_id"];
+const CONTROL_AUDIT_FILTER_PARAMS: [&str; 3] = ["request_id", "cursor", "limit"];
 
 /// 每条入口认的收窄键名单，按路由点名。返回 `None` 的那类路径（`/health` 那一类）不判查询串。
 ///
@@ -78,6 +82,12 @@ const REPORT_FILTER_PARAMS: [&str; 2] = ["account_id", "venue_id"];
 /// `?acount_id=` 拼错时它会落到"没有收窄键"那一支，把默认账户念成调用方点名的账户（V13 R6）。
 pub(crate) fn accepted_query_params(route: &str) -> Option<&'static [&'static str]> {
     if let Some((_, params)) = MODEL_FILTER_ROUTES.iter().find(|(name, _)| *name == route) {
+        return Some(params);
+    }
+    if let Some((_, params)) = CONTROL_AUDIT_FILTER_ROUTES
+        .iter()
+        .find(|(name, _)| *name == route)
+    {
         return Some(params);
     }
     match route {

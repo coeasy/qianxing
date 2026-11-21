@@ -36,6 +36,9 @@ qx-cli quickstart my-okx --profile ccxt --days 30 --timeframe 1h --html  # 真�
 `quickstart` 内部执行的就是下面这五条；它只写 `my-qx/` 这一个目录，产物落项目内 `data/`。
 任一步失败就停下，只回显**那一步**的命令原文，以退出码 2 结束：
 
+内置策略的 Bar 回测会在运行前复用 qx-app 只读预检，显示标的、数据根数和内容指纹；预检阻断时会列出失败项，
+不会开始执行该轮策略。实际回测仍会重新读取数据并做自己的完整校验。自定义策略的 warmup 由策略运行时契约检查。
+
 `--profile` 支持 `builtin`（默认）、`ashare` 与 `ccxt`。A 股首跑使用仓库附带的 6 根样例 Bar 和冻结规格，
 完成一笔本地回测；不会连接外部行情源或发送订单。`ccxt` 首跑默认从 OKX 获取最近 30 天 BTC/USDT 永续 1h 公共 K 线，
 使用市场公开默认费率并冻结成本文件，生成可复核的回测报告；它不读取密钥、不启用执行 worker，也不提交订单。
@@ -85,6 +88,25 @@ wheel 由 `tools/build_python_wheel.ps1` / `.sh` 从当前工作树构建；它�
 
 ### B2 零配置建一个能跑的项目
 
+如果希望把“建项目 → 预检 → 回测 → 生成并核验报告”合成一步：
+
+```bash
+qianxing quickstart ./demo
+qianxing quickstart ./demo --format html,xlsx,json --report-output reports/first-run.html
+```
+
+它会在指定目录创建 600 根内置合成 Bar 样例，复用下方相同的项目快照、预检、Rust 引擎、运行回执和报告校验流程；
+成功输出会包含 `preflight`、`project_run_id`、`artifacts_verified` 和报告路径。样例数据会显式标记
+`source=sample`、`is_sample=true`，命令不会联网取行情，也不代表真实行情或策略收益。目标目录若已有项目，命令会停止并保留原文件；
+可改用新目录，或继续按下方 `project init` / `project run` / `project report` 分步操作。`--cli` 可显式指定报告渲染器，
+默认优先使用 wheel 内的 `qx-cli`，再查找 PATH。
+
+```bash
+qianxing quickstart ./demo --rows 120 --cli qx-cli
+```
+
+### B3 分步创建与运行项目
+
 ```bash
 qianxing project init ./demo --demo
 ```
@@ -103,10 +125,27 @@ data/bundle.json                # 数据集包清单 + 四枚 sha256
 .gitignore
 ```
 
-`--demo` 之外还有 `--source/--instrument/--start/--end/--cash/--currency/--frequency/--adjustment`（见 B5）、
+`--demo` 之外还有 `--source/--instrument/--start/--end/--cash/--currency/--frequency/--adjustment`（见 B6）、
 `--strategy-file` / `--input-spec`（把已有文件接进项目）、`--rows`（只作用于合成样例）。
+合成样例的策略允许小数数量，因此初始资金低于一整单位的价格时仍可产生示例交易。
+生成的策略文件包含 `QUANTITY_STEP_RAW`；接入真实标的时应根据该市场的数量精度、最小交易数量和整手规则调整，并由交易规则校验。
 
-### B3 先看，再跑
+对已有项目使用 `project init --demo --force` 会替换生成的策略、数据包、输入配置和项目清单；
+请先保存自己的策略修改。数据包会先生成并校验，数据、输入、策略和清单安装期间遇到普通文件错误时
+会尝试恢复旧文件；如果自动恢复失败，错误消息会给出保留备份和 `recovery.json` 对照表的目录。
+进程中断后，初始化和项目读取会拒绝使用包含 `.qianxing-init-*` 暂存目录的项目，避免把
+可能混合了新旧版本的文件当作完整项目。确保原初始化进程已停止后，运行：
+
+```bash
+qianxing project init-recovery-info ./demo
+```
+
+该命令只列出原文件、备份和当前文件的存在状态，不自动恢复或删除。请先复制整个项目和暂存目录，
+再结合 `recovery.json` 和备份核对并手动恢复；暂存目录没有映射时也应先人工检查。确认数据、策略、
+输入及清单一致并另存备份后，移走暂存目录，重新运行 `project doctor`。此检查不是并发锁，
+不要在初始化仍在运行时同时恢复或修改项目。
+
+### B4 先看，再跑
 
 ```bash
 qianxing project doctor ./demo          # 静态检查：issues 为空即 ready，默认不执行用户代码
@@ -125,14 +164,15 @@ qianxing project run ./demo              # 本地执行一轮，登记 run 收�
 `scope: future_fetch_only` —— 这一格管的是**以后取数**用哪个源，本轮已冻结的数据集仍以
 `datasets[].snapshot_sha256` 为准，改了源也不会换掉已经落盘的行情。
 
-### B4 出报告
+### B5 出报告
 
 ```bash
-qianxing project report ./demo PROJECT_RUN_ID                       # 默认 HTML
+qianxing project report ./demo                                      # 最近一次运行的 HTML（须成功）
+qianxing project report ./demo PROJECT_RUN_ID                       # 指定某次运行
 qianxing project report ./demo PROJECT_RUN_ID --format html,xlsx,json
 ```
 
-`PROJECT_RUN_ID` 用 `qianxing project runs ./demo` 列出的那个 id。渲染器按**单链**选中即用，不做静默替换：
+省略编号时，按记录的开始时间选择最近一次运行；若该运行未成功、记录损坏或开始时间并列，命令会提示检查记录并显式指定编号，不会回退到旧结果。并发启动新运行时，选择以读取记录时的状态为准。报告结果中包含所选 `project_run_id`。`PROJECT_RUN_ID` 可从 `qianxing project runs ./demo` 获取。渲染器按**单链**选中即用，不做静默替换：
 `--cli PATH` > wheel 内置的 `qianxing/_bin/qx-cli` > PATH 上的 `qx-cli`；三个落点都不存在就报
 `missing` 并停下，不会替你找一个。版本/模式目录摘要/平台任一不匹配同理——诊断里直接给 `--cli PATH` 的修法，
 并写明 `No fallback was attempted`。
@@ -142,7 +182,7 @@ qianxing project report ./demo PROJECT_RUN_ID --format html,xlsx,json
 产物字节先复核再渲染，落盘的 HTML/XLSX/JSON 走同一套 bundle 发布事务（见
 [回测报告布局](backtest-report-layout.md)）。
 
-### B5 换成真实数据【已实现，A 股取数需装 extra】
+### B6 换成真实数据【已实现，A 股取数需装 extra】
 
 ```bash
 qianxing data sources        # 跨源能力矩阵：市场 / 频率 / 复权 / 公司行为 / 日历 / 凭据 / extra / 许可
@@ -178,7 +218,7 @@ qianxing project report ./demo PROJECT_RUN_ID --format html,xlsx,json
 `--no-cache` 读写都关掉。缓存不参与证据链——run 读的仍是清单里的 `source_hash` 与快照摘要。
 多标的取数默认整批失败、零产物，`--allow-partial` 才落盘并逐条登记失败项。
 
-### B6 用 `run` 简写直接跑一个策略文件
+### B7 用 `run` 简写直接跑一个策略文件
 
 ```bash
 cd demo

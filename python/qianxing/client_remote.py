@@ -12,6 +12,7 @@ from .app import (
     APP_ROUTE_TEMPLATES,
     AppError,
     BacktestOutcome,
+    BacktestPreflightResultV1,
     BacktestSpec,
     BuiltinStrategyInfo,
     BuiltinStrategyRecipe,
@@ -34,6 +35,7 @@ from .app import (
     MultiMarketBacktestSpec,
     MultiMarketDepthBacktestOutcome,
     MultiMarketDepthBacktestSpec,
+    OutcomeUnknownError,
     QianxingError,
     RiskParityResult,
     RiskParitySpec,
@@ -59,6 +61,66 @@ from .app import (
 from .client_transport import _HttpJsonClient
 
 
+_RUN_START_ID_FIELDS = {
+    APP_ROUTE_TEMPLATES[name]: field
+    for field, names in (
+        ("run_id", ("backtest_start", "depth_backtest_start", "multi_leg_backtest_start",
+                    "multi_market_backtest_start", "multi_market_depth_backtest_start",
+                    "multi_account_joint_backtest_start")),
+        ("experiment_id", ("run_experiment_start", "depth_experiment_start", "multi_leg_experiment_start",
+                           "multi_market_experiment_start", "multi_market_depth_experiment_start")),
+        ("batch_id", ("multi_account_backtest_start", "multi_account_depth_backtest_start")),
+    )
+    for name in names
+}
+_RUN_STATUSES = {"starting", "running", "cancelling", "succeeded", "cancelled", "failed"}
+_PAPER_STATUSES = {"ready", "running", "cancel_requested", "completed", "cancelled", "failed", "reconcile_required"}
+_SYNC_MUTATION_ID_FIELDS = {
+    APP_ROUTE_TEMPLATES[name]: field
+    for field, names in (
+        ("run_id", ("backtest", "depth_backtest", "multi_leg_backtest", "multi_market_backtest",
+                    "multi_market_depth_backtest", "multi_account_joint_backtest")),
+        ("experiment_id", ("run_experiment", "depth_experiment", "multi_leg_experiment",
+                           "multi_market_experiment", "multi_market_depth_experiment")),
+        ("batch_id", ("multi_account_backtest", "multi_account_depth_backtest")),
+    )
+    for name in names
+}
+_SYNC_MUTATION_ID_FIELDS.update({
+    APP_ROUTE_TEMPLATES["provider_backtest"]: None,
+    APP_ROUTE_TEMPLATES["provider_depth_backtest"]: None,
+})
+_RUN_RESULT_ID_FIELDS = {
+    **{kind: "run_id" for kind in (BacktestOutcome, DepthBacktestOutcome, MultiLegBacktestOutcome,
+                                    MultiMarketBacktestOutcome, MultiMarketDepthBacktestOutcome,
+                                    MultiAccountJointBacktestOutcome)},
+    **{kind: "experiment_id" for kind in (RunExperimentResult, RunDepthExperimentResult,
+                                           RunMultiLegExperimentResult, RunMultiMarketExperimentResult,
+                                           RunMultiMarketDepthExperimentResult)},
+    **{kind: "batch_id" for kind in (MultiAccountBacktestResult, MultiAccountDepthBacktestResult)},
+}
+
+
+def _run_document(document: Any, run_id: str) -> dict[str, Any]:
+    if (not isinstance(document, dict) or document.get("run_id") != run_id
+            or not isinstance(document.get("status"), str) or document["status"] not in _RUN_STATUSES):
+        raise QianxingError("Rust API run response has a mismatched identity or invalid status",
+                            payload={"category": "REMOTE_RESPONSE_INVALID", "run_id": run_id})
+    return document
+
+
+def _paper_state(state: Any, parent_id: str) -> None:
+    if (not isinstance(state, dict) or type(state.get("schema_version")) is not int
+            or state["schema_version"] != 1 or state.get("parent_id") != parent_id
+            or not isinstance(state.get("status"), str) or state["status"] not in _PAPER_STATUSES):
+        raise QianxingError("Rust API Paper response has an invalid identity, schema, or status",
+                            payload={"category": "REMOTE_RESPONSE_INVALID", "parent_id": parent_id})
+
+
+def _spec_field(spec: Any, field: str) -> Any:
+    return spec.get(field) if isinstance(spec, Mapping) else getattr(spec, field, None)
+
+
 class RemoteRunHandle(Generic[_ResultT]):
     """Bounded HTTP lifecycle handle backed by the Rust API run registry."""
 
@@ -68,43 +130,57 @@ class RemoteRunHandle(Generic[_ResultT]):
         run_id: str,
         result_type: type[_ResultT] | None = None,
     ):
-        if not run_id or any(not (char.isascii() and (char.isalnum() or char in "-_.")) for char in run_id):
+        if (not isinstance(run_id, str) or not run_id or len(run_id) > 128 or run_id in {".", ".."}
+                or any(not (char.isascii() and (char.isalnum() or char in "-_.")) for char in run_id)):
             raise ValueError("run_id must contain only ASCII letters, digits, '.', '_' or '-'")
         self._client = client
         self.run_id = run_id
         self._result_type = result_type
 
     def document(self) -> dict[str, Any]:
-        return self._client._request_json(
+        document = self._client._request_json(
             APP_ROUTE_TEMPLATES["run_status"].format(run_id=self.run_id), method="GET"
         )
+        return _run_document(document, self.run_id)
 
     async def async_document(self) -> dict[str, Any]:
         """Read the same Rust run document without blocking the caller's event loop."""
         return await asyncio.to_thread(self.document)
 
     def events(self, after_seq: int = 0) -> list[dict[str, Any]]:
-        if isinstance(after_seq, bool) or not isinstance(after_seq, int) or after_seq < 0:
-            raise ValueError("after_seq must be a non-negative integer")
+        if type(after_seq) is not int or not 0 <= after_seq < 2**64:
+            raise ValueError("after_seq must be an unsigned 64-bit integer")
         route = APP_ROUTE_TEMPLATES["run_events"].format(run_id=self.run_id)
-        return self._client._request_json(f"{route}?after_seq={after_seq}", method="GET")
+        rows = self._client._request_json_value(f"{route}?after_seq={after_seq}", method="GET")
+        if not isinstance(rows, list):
+            raise QianxingError("Rust API returned an invalid run event page")
+        previous = after_seq
+        for row in rows:
+            if (not isinstance(row, dict) or row.get("run_id") != self.run_id
+                    or type(row.get("seq")) is not int or not previous < row["seq"] < 2**64
+                    or row.get("kind") not in ("started", "cancellation_requested", "succeeded", "cancelled", "failed")
+                    or row.get("status") not in ("running", "cancelling", "succeeded", "cancelled", "failed")):
+                raise QianxingError("Rust API returned invalid, unordered, or foreign run events")
+            previous = row["seq"]
+        return rows
 
     async def async_events(self, after_seq: int = 0) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self.events, after_seq)
 
     @property
     def status(self) -> str:
-        return str(self.document().get("status", "unknown"))
+        return self.document()["status"]
 
     async def async_status(self) -> str:
-        return str((await self.async_document()).get("status", "unknown"))
+        return (await self.async_document())["status"]
 
     def cancel(self) -> dict[str, Any]:
-        return self._client._request_json(
-            APP_ROUTE_TEMPLATES["run_cancel"].format(run_id=self.run_id),
-            method="POST",
-            payload={},
-        )
+        route = APP_ROUTE_TEMPLATES["run_cancel"].format(run_id=self.run_id)
+        document = self._client._request_mutation(route, payload={}, recovery_id=self.run_id)
+        try:
+            return _run_document(document, self.run_id)
+        except QianxingError as exc:
+            raise OutcomeUnknownError(route, self.run_id, exc) from exc
 
     async def async_cancel(self) -> dict[str, Any]:
         return await asyncio.to_thread(self.cancel)
@@ -156,7 +232,7 @@ class RemoteRunHandle(Generic[_ResultT]):
     def _result_from_document(self, document: dict[str, Any]) -> _ResultT | dict[str, Any] | None:
         status = document.get("status")
         if status == "failed":
-            error = document["error"]
+            error = document.get("error")
             if not isinstance(error, dict):
                 raise InternalInvariantError(
                     "Rust API reported a failed run without an error document",
@@ -173,7 +249,15 @@ class RemoteRunHandle(Generic[_ResultT]):
                 payload={"run_id": self.run_id, "status": status},
             )
         if self._result_type is not None:
-            return self._result_type.from_dict(result)
+            try:
+                value = self._result_type.from_dict(result)
+                identity = _RUN_RESULT_ID_FIELDS.get(self._result_type)
+                if identity is not None and getattr(value, identity, None) != self.run_id:
+                    raise ValueError("run result identity does not match its handle")
+                return value
+            except (TypeError, ValueError, KeyError) as exc:
+                raise QianxingError("Rust API returned an invalid run result",
+                                    payload={"category": "REMOTE_RESPONSE_INVALID", "run_id": self.run_id}) from exc
         return result
 
 
@@ -181,6 +265,10 @@ class AppClient(_HttpJsonClient):
     """HTTP facade over the same Rust API use cases exposed by the native SDK."""
 
     def _post(self, route: str, spec: Any) -> dict[str, Any]:
+        if route in _SYNC_MUTATION_ID_FIELDS:
+            field = _SYNC_MUTATION_ID_FIELDS[route]
+            value = spec.get(field) if field and isinstance(spec, Mapping) else getattr(spec, field, None) if field else None
+            return self._request_mutation(route, payload=spec, recovery_id=value if isinstance(value, str) else None)
         return self._request_json(route, method="POST", payload=spec)
 
     def get_strategy_deployments(self, worker_id: str | None = None) -> list[dict[str, Any]]:
@@ -593,32 +681,64 @@ class AppClient(_HttpJsonClient):
         )
 
     def _start(self, route: str, spec: Any, result_type: type[_ResultT]) -> RemoteRunHandle[_ResultT]:
-        document = self._post(route, spec)
-        run_id = document.get("run_id")
-        if not isinstance(run_id, str):
-            raise QianxingError("Rust API start response omitted run_id", payload=document)
-        return RemoteRunHandle(self, run_id, result_type)
+        field = _RUN_START_ID_FIELDS[route]
+        run_id = spec.get(field) if isinstance(spec, Mapping) else getattr(spec, field, None)
+        handle = RemoteRunHandle(self, run_id, result_type)
+        document = self._request_mutation(route, payload=spec, recovery_id=run_id)
+        try:
+            _run_document(document, run_id)
+        except QianxingError as exc:
+            raise OutcomeUnknownError(route, run_id, exc) from exc
+        return handle
 
     async def _async_start(self, method: Any, spec: Any) -> RemoteRunHandle[Any]:
         task = asyncio.create_task(asyncio.to_thread(method, spec))
         try:
             return await asyncio.shield(task)
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as cancelled:
             # The HTTP request itself cannot be interrupted once urllib has sent it. If the
             # server accepted the run, request cooperative cancellation before propagating the
             # caller's cancellation so a detached worker is not silently left behind.
             try:
-                handle = await task
-                await handle.async_cancel()
-            except Exception:
-                pass
+                handle = await asyncio.wait_for(asyncio.shield(task), timeout=self.timeout)
+                await asyncio.wait_for(handle.async_cancel(), timeout=self.timeout)
+            except Exception as error:
+                if isinstance(error, TimeoutError):
+                    identity = next((value for value in
+                                     (_spec_field(spec, key) for key in ("run_id", "experiment_id", "batch_id"))
+                                     if isinstance(value, str)), None)
+                    error = OutcomeUnknownError("async start/cancel cleanup", identity, error)
+                cancelled.remote_cleanup_error = error
+                if hasattr(cancelled, "add_note"):
+                    cancelled.add_note(f"remote start/cancellation could not be confirmed: {error}")
+                # A timed-out thread may finish later. Retrieve its exception so it
+                # does not surface as an unhandled background-task failure.
+                task.add_done_callback(lambda done: None if done.cancelled() else done.exception())
             raise
 
     def validate_dataset(self, spec: DatasetSpec | dict[str, Any]) -> DatasetVerdict:
         return DatasetVerdict.from_dict(self._post(APP_ROUTE_TEMPLATES["validate_dataset"], spec))
 
+    def preflight_backtest(
+        self, spec: BacktestSpec | dict[str, Any]
+    ) -> BacktestPreflightResultV1:
+        return BacktestPreflightResultV1.from_dict(
+            self._post(APP_ROUTE_TEMPLATES["preflight_backtest"], spec)
+        )
+
     def run_backtest(self, spec: BacktestSpec | dict[str, Any]) -> BacktestOutcome:
-        return BacktestOutcome.from_dict(self._post(APP_ROUTE_TEMPLATES["backtest"], spec))
+        route = APP_ROUTE_TEMPLATES["backtest"]
+        document = self._post(route, spec)
+        run_id = _spec_field(spec, "run_id")
+        try:
+            outcome = BacktestOutcome.from_dict(document)
+            if ((run_id is not None and outcome.run_id != run_id)
+                    or (_spec_field(spec, "instrument") is not None
+                        and outcome.instrument != _spec_field(spec, "instrument"))):
+                raise ValueError("backtest response has a mismatched run or instrument")
+            return outcome
+        except (TypeError, ValueError, KeyError) as exc:
+            raise OutcomeUnknownError(route, run_id if isinstance(run_id, str) else None, exc) from exc
 
     def run_provider_backtest_with_manifest(
         self, spec: dict[str, Any]
@@ -676,7 +796,27 @@ class AppClient(_HttpJsonClient):
         return self._start(APP_ROUTE_TEMPLATES["backtest_start"], spec, BacktestOutcome)
 
     def verify_run(self, outcome: BacktestOutcome | dict[str, Any]) -> VerificationResult:
-        return VerificationResult.from_dict(self._post(APP_ROUTE_TEMPLATES["verify"], outcome))
+        document = self._post(APP_ROUTE_TEMPLATES["verify"], outcome)
+        try:
+            if (type(document.get("verified")) is not bool
+                    or not isinstance(document.get("checks"), list)
+                    or not isinstance(document.get("mismatches"), list)
+                    or any(not isinstance(item, str) for item in document["checks"] + document["mismatches"])):
+                raise ValueError("invalid verification fields")
+            result = VerificationResult.from_dict(document)
+            expected_id = _spec_field(outcome, "run_id")
+            if ((expected_id is not None and result.run_id != expected_id)
+                    or result.verified != (not result.mismatches)
+                    or (result.verified and any(
+                        expected is not None and actual != expected
+                        for actual, expected in ((result.result_hash, _spec_field(outcome, "result_hash")),
+                                                 (result.data_fingerprint, _spec_field(outcome, "data_fingerprint")))
+                    ))):
+                raise ValueError("verification response is inconsistent with the requested run")
+            return result
+        except (TypeError, ValueError, KeyError) as exc:
+            raise QianxingError("Rust API returned an invalid verification result",
+                                payload={"category": "REMOTE_RESPONSE_INVALID"}) from exc
 
     def research_artifacts(self, outcome: BacktestOutcome | Mapping[str, Any]) -> dict[str, Any]:
         """Load replay-verified bounded research details for a completed backtest."""
@@ -703,13 +843,27 @@ class AppClient(_HttpJsonClient):
 
     def start_paper_algo_execution(self, request: dict[str, Any]) -> dict[str, Any]:
         """Persist a shared Rust TWAP/VWAP parent for the configured Paper worker."""
-        return self._post(APP_ROUTE_TEMPLATES["paper_algo_start"], request)
+        spec = request.get("spec") if isinstance(request, dict) else None
+        parent_id = spec.get("parent_id") if isinstance(spec, dict) else None
+        if not isinstance(parent_id, str) or not parent_id.strip():
+            raise ValueError("paper algorithm request needs spec.parent_id")
+        return self._paper_mutation(APP_ROUTE_TEMPLATES["paper_algo_start"], request, parent_id)
 
     def get_paper_algo_execution(self, parent_id: str) -> dict[str, Any]:
-        return self._post(APP_ROUTE_TEMPLATES["paper_algo_get"], {"parent_id": parent_id})
+        result = self._post(APP_ROUTE_TEMPLATES["paper_algo_get"], {"parent_id": parent_id})
+        _paper_state(result.get("state"), parent_id)
+        return result
 
     def cancel_paper_algo_execution(self, parent_id: str) -> dict[str, Any]:
-        return self._post(APP_ROUTE_TEMPLATES["paper_algo_cancel"], {"parent_id": parent_id})
+        return self._paper_mutation(APP_ROUTE_TEMPLATES["paper_algo_cancel"], {"parent_id": parent_id}, parent_id)
+
+    def _paper_mutation(self, route: str, payload: dict[str, Any], parent_id: str) -> dict[str, Any]:
+        result = self._request_mutation(route, payload=payload, recovery_id=parent_id)
+        try:
+            _paper_state(result, parent_id)
+        except QianxingError as exc:
+            raise OutcomeUnknownError(route, parent_id, exc) from exc
+        return result
 
     def list_paper_algo_executions(
         self, *, after_parent_id: str | None = None, limit: int = 100
@@ -880,6 +1034,11 @@ class AppClient(_HttpJsonClient):
     # This keeps schemas, error translation, and Rust routes single-sourced.
     async def async_validate_dataset(self, spec: DatasetSpec | dict[str, Any]) -> DatasetVerdict:
         return await asyncio.to_thread(self.validate_dataset, spec)
+
+    async def async_preflight_backtest(
+        self, spec: BacktestSpec | dict[str, Any]
+    ) -> BacktestPreflightResultV1:
+        return await asyncio.to_thread(self.preflight_backtest, spec)
 
     async def async_run_backtest(self, spec: BacktestSpec | dict[str, Any]) -> BacktestOutcome:
         return await asyncio.to_thread(self.run_backtest, spec)

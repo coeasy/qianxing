@@ -12,8 +12,8 @@ fn control_and_query_routes_are_audited() {
         .lines()
         .filter(|line| !line.starts_with("# "))
         .count();
-    // 4 条 `qx_api_*`、2 条控制面退场计数，以及 3 条持久运行 watcher 容量样本。
-    assert_eq!(samples, 9, "自身样本行:\n{}", metrics.body);
+    // 5 条 `qx_api_*`、2 条控制面退场计数、2 条待执行容量样本及 3 条 watcher 容量样本。
+    assert_eq!(samples, 12, "自身样本行:\n{}", metrics.body);
     assert!(metrics.body.contains("qx_app_run_watchers_active "));
     assert!(metrics.body.contains("qx_app_run_watcher_capacity 64\n"));
     assert!(metrics

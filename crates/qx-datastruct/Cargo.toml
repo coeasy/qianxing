@@ -4,6 +4,7 @@ description = "确定性 Bar/Quote 列式数据边界与 DataView facade"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
 qx-core = { version = "0.4.0", path = "../qx-core" }

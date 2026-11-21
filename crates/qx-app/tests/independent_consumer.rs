@@ -17,9 +17,8 @@
 //! 而不是在测试里现造：独立 consumer 的第一件事本来就是"拿到一份别人的数据"。
 
 use qx_app::{
-    run_backtest, validate_dataset, verify_run, BacktestDatasetInput, BacktestOutcome,
-    BacktestSpec, BuiltinStrategySpec, CallerCapability, DatasetSpec, RunContext,
-    BACKTEST_SPEC_SCHEMA_VERSION,
+    preflight_backtest_v1, run_backtest, verify_run, BacktestDatasetInput, BacktestOutcome,
+    BacktestSpec, BuiltinStrategySpec, CallerCapability, RunContext, BACKTEST_SPEC_SCHEMA_VERSION,
 };
 use qx_strategy::BuiltinStrategyKind;
 use std::path::{Path, PathBuf};
@@ -82,14 +81,15 @@ fn an_independent_consumer_completes_a_backtest_and_verifies_it_without_the_cli(
     let backtest = spec("consumer-run", &output_dir);
     assert_eq!(backtest.schema_version, BACKTEST_SPEC_SCHEMA_VERSION);
 
-    // ① 先校验数据集——独立 consumer 的第一件事。
-    let dataset = DatasetSpec::new(
-        "consumer-dataset",
-        sample_bars().to_string_lossy().into_owned(),
+    // ① 在完整回测规格上运行只读预检，确认输入身份和样本状态。
+    let readiness =
+        preflight_backtest_v1(&backtest, &research("consumer-run")).expect("回测预检成功");
+    assert!(
+        readiness.ready,
+        "样例回测必须 ready: {:?}",
+        readiness.checks
     );
-    let verdict = validate_dataset(&dataset, &research("consumer-dataset")).expect("数据集可读");
-    assert!(verdict.usable, "样例数据集必须可用: {:?}", verdict.gaps);
-    assert_eq!(verdict.rows, 70);
+    assert_eq!(readiness.data.rows, 70);
 
     // ② 跑一次回测，四份产物落盘。
     let outcome = run_backtest(&backtest, &research("consumer-run")).expect("回测跑通");

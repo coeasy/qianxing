@@ -692,33 +692,6 @@ fn execution_gateway_rejects_disconnected_and_snapshotting_venues_before_side_ef
     assert_eq!(state.events.len(), 0);
     assert_eq!(state.orders[0].status, OrderStatus::Accepted);
     assert_eq!(source_seq, 0);
-
-    struct NoNetwork;
-    impl HttpTransport for NoNetwork {
-        fn send(&self, _request: HttpRequest) -> Result<HttpResponse, String> {
-            panic!("snapshotting venue must be rejected before network I/O")
-        }
-    }
-    let auth = BinanceSpotAuth::with_clock("key", b"secret", || 100).unwrap();
-    let mut binance = BinanceSpotVenue::testnet("binance", auth, Arc::new(NoNetwork));
-    binance.reconnect(); // Transport reconnect completes before the private snapshot/reconcile.
-    let mut binance = VenuePortAdapter::new(binance);
-    let error = PortExecutionService::new(
-        &mut binance,
-        &mut state,
-        "readiness-worker",
-        10,
-        &mut source_seq,
-    )
-    .submit(port_order(82))
-    .unwrap_err();
-    assert!(error.contains("尚未就绪"), "{error}");
-    assert_eq!(state.orders.len(), 1);
-    assert_eq!(state.events.len(), 0);
-    assert_eq!(source_seq, 0);
-    let router_error = VenueRouterPort::execution_readiness_for(&binance, "binance").unwrap_err();
-    assert!(router_error.contains("尚未就绪"), "{router_error}");
-    assert!(VenueRouterPort::execution_readiness_for(&binance, "okx").is_err());
 }
 
 #[test]

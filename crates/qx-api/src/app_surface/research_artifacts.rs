@@ -1,6 +1,8 @@
 //! Read-only, verified drilldown data for the interactive research report.
 
 use super::{respond, AppPaths};
+use cap_std::{ambient_authority, fs::Dir};
+use qx_app::artifact_store::ArtifactReader;
 use qx_app::{
     AppError, AppErrorCategory, BacktestOutcome, CallerCapability, MultiLegBacktestOutcome,
     MultiMarketBacktestOutcome, MultiMarketDepthBacktestOutcome, ResearchReportRowsV1, RunContext,
@@ -9,7 +11,6 @@ use qx_app::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 
@@ -40,16 +41,35 @@ const MAX_MULTI_ACCOUNT_DIAGNOSTICS: usize = qx_app::MAX_MULTI_ACCOUNT_RUNS;
 const MAX_MULTI_MARKETS: usize = 32;
 
 /// API adapter that resolves opaque application references inside the configured artifact root.
-struct RootedArtifactReader {
+pub(super) struct RootedArtifactReader {
     root: PathBuf,
+    directory: Dir,
+}
+
+impl RootedArtifactReader {
+    pub(super) fn new(root: PathBuf) -> Result<Self, AppError> {
+        let directory = Dir::open_ambient_dir(&root, ambient_authority())
+            .map_err(|error| AppError::from_io("打开 API 产物根目录", &error))?;
+        Ok(Self { root, directory })
+    }
+
+    fn open_rooted_file(&self, path: &Path) -> Result<cap_std::fs::File, AppError> {
+        let relative = path.strip_prefix(&self.root).map_err(|_| {
+            AppError::new(
+                AppErrorCategory::InvalidInput,
+                "研究报告产物必须位于服务配置的产物根目录内",
+            )
+        })?;
+        self.directory
+            .open(relative)
+            .map_err(|error| AppError::from_io("打开已授权的研究产物", &error))
+    }
 }
 
 impl qx_app::artifact_store::ArtifactReader for RootedArtifactReader {
     fn open(&self, reference: &str) -> Result<qx_app::artifact_store::ArtifactStream, AppError> {
         let rooted = rooted_file(reference, &self.root)?;
-        let path = Path::new(&rooted);
-        let file =
-            File::open(path).map_err(|error| AppError::from_io("打开已授权的研究产物", &error))?;
+        let file = self.open_rooted_file(Path::new(&rooted))?;
         let metadata = file
             .metadata()
             .map_err(|error| AppError::from_io("读取已授权研究产物元数据", &error))?;
@@ -434,7 +454,7 @@ fn build_with_preverified_core(
     })?;
     let root = std::fs::canonicalize(&paths.artifact_root)
         .map_err(|error| AppError::from_io("解析 API 研究产物根目录", &error))?;
-    let artifact_reader = RootedArtifactReader { root: root.clone() };
+    let artifact_reader = RootedArtifactReader::new(root.clone())?;
     outcome.artifacts.run_manifest = rooted_file(&outcome.artifacts.run_manifest, &root)?;
     outcome.artifacts.summary = rooted_file(&outcome.artifacts.summary, &root)?;
     outcome.artifacts.equity = rooted_file(&outcome.artifacts.equity, &root)?;
@@ -453,9 +473,9 @@ fn build_with_preverified_core(
         &outcome.artifacts.equity,
         &outcome.artifacts.fills,
     ] {
-        check_artifact_size(Path::new(path))?;
+        check_artifact_size(&artifact_reader, path)?;
     }
-    check_artifact_size(Path::new(event_trace))?;
+    check_artifact_size(&artifact_reader, event_trace)?;
 
     let declared_summary =
         read_json_with_reader(&artifact_reader, &outcome.artifacts.summary, "研究摘要")?;
@@ -677,6 +697,7 @@ fn raw_depth_view(
 }
 
 fn ensure_declared_artifact_paths(summary: &Value, artifact_root: &Path) -> Result<(), AppError> {
+    let reader = RootedArtifactReader::new(artifact_root.to_path_buf())?;
     let mut run_record_path = None;
     for field in ["run_manifest", "run_record"] {
         let Some(path) = summary.get(field).and_then(Value::as_str) else {
@@ -688,13 +709,13 @@ fn ensure_declared_artifact_paths(summary: &Value, artifact_root: &Path) -> Resu
                 format!("摘要声明的 {field} 必须位于服务配置的产物根目录内: {error}"),
             )
         })?;
-        check_artifact_size(Path::new(&rooted))?;
+        check_artifact_size(&reader, &rooted)?;
         if field == "run_record" {
             run_record_path = Some(rooted);
         }
     }
     if let Some(record_path) = run_record_path {
-        let record = read_json(Path::new(&record_path))?;
+        let record = read_json_with_reader(&reader, &record_path, "运行记录")?;
         if record.get("schema_version").and_then(Value::as_u64) == Some(2) {
             let locations = summary
                 .get("artifact_locations")
@@ -720,7 +741,7 @@ fn ensure_declared_artifact_paths(summary: &Value, artifact_root: &Path) -> Resu
                         ),
                     )
                 })?;
-                check_artifact_size(Path::new(&rooted))?;
+                check_artifact_size(&reader, &rooted)?;
             }
             return Ok(());
         }
@@ -739,7 +760,7 @@ fn ensure_declared_artifact_paths(summary: &Value, artifact_root: &Path) -> Resu
                     format!("RunRecord 引用产物必须位于服务配置的产物根目录内: {error}"),
                 )
             })?;
-            check_artifact_size(Path::new(&rooted))?;
+            check_artifact_size(&reader, &rooted)?;
         }
     }
     Ok(())
@@ -1492,21 +1513,11 @@ fn rooted_file(path: &str, root: &Path) -> Result<String, AppError> {
     Ok(canonical.to_string_lossy().into_owned())
 }
 
-fn check_artifact_size(path: &Path) -> Result<(), AppError> {
-    let metadata = std::fs::metadata(path)
-        .map_err(|error| AppError::from_io(&format!("读取研究产物 {}", path.display()), &error))?;
-    if metadata.len() > MAX_ARTIFACT_BYTES {
-        return Err(AppError::new(
-            AppErrorCategory::Timeout,
-            format!(
-                "研究报告产物超过明细接口上限 {} MiB",
-                MAX_ARTIFACT_BYTES / 1024 / 1024
-            ),
-        ));
-    }
-    Ok(())
+fn check_artifact_size(reader: &dyn ArtifactReader, reference: &str) -> Result<(), AppError> {
+    reader.open(reference).map(|_| ())
 }
 
+#[cfg(test)]
 fn read_json(path: &Path) -> Result<Value, AppError> {
     let body = std::fs::read_to_string(path)
         .map_err(|error| AppError::from_io(&format!("读取研究摘要 {}", path.display()), &error))?;
@@ -1797,6 +1808,79 @@ mod tests {
     use crate::app_surface::{self, AppPaths};
     use std::io::Cursor;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn rooted_reader_rejects_escape_after_path_validation() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let test_root = std::env::var_os("QX_ROOTED_READER_TEST_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .parent()
+                    .unwrap()
+                    .parent()
+                    .unwrap()
+                    .join("target")
+            });
+        let workspace = test_root.join(format!("rooted-reader-{}-{nonce}", std::process::id()));
+        let root = workspace.join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        let root = std::fs::canonicalize(root).unwrap();
+        let file = root.join("allowed.json");
+        let outside = workspace.join("outside.json");
+        std::fs::write(&file, b"allowed").unwrap();
+        std::fs::write(&outside, b"private-outside-sentinel").unwrap();
+        let reader = RootedArtifactReader::new(root.clone()).unwrap();
+        let reference = file.to_string_lossy().into_owned();
+        let mut stream = reader.open(&reference).unwrap();
+        let mut content = String::new();
+        stream.reader.read_to_string(&mut content).unwrap();
+        assert_eq!(content, "allowed");
+        assert!(reader
+            .open_rooted_file(&root.join("..").join("outside.json"))
+            .is_err());
+
+        // Hold the already-authorized spelling, then replace that exact path before open.
+        let checked = rooted_file(&reference, &root).unwrap();
+        drop(stream);
+        std::fs::remove_file(&file).unwrap();
+        #[cfg(unix)]
+        let link = std::os::unix::fs::symlink(&outside, &file);
+        #[cfg(windows)]
+        let link = std::os::windows::fs::symlink_file(&outside, &file);
+        #[cfg(not(any(unix, windows)))]
+        let link: std::io::Result<()> = Err(std::io::Error::other("symlink test unsupported"));
+        if let Err(error) = link {
+            eprintln!("symlink replacement check unavailable: {error}");
+            return;
+        }
+        assert!(reader.open_rooted_file(Path::new(&checked)).is_err());
+        assert!(reader.open(&reference).is_err());
+
+        // A parent directory may also be replaced after validation.
+        let nested = root.join("nested");
+        let outside_dir = workspace.join("outside-dir");
+        std::fs::create_dir(&nested).unwrap();
+        std::fs::create_dir(&outside_dir).unwrap();
+        let nested_file = nested.join("report.json");
+        std::fs::write(&nested_file, b"allowed").unwrap();
+        std::fs::write(outside_dir.join("report.json"), b"private").unwrap();
+        let nested_ref = nested_file.to_string_lossy().into_owned();
+        let checked = rooted_file(&nested_ref, &root).unwrap();
+        std::fs::rename(&nested, root.join("nested-original")).unwrap();
+        #[cfg(unix)]
+        let link = std::os::unix::fs::symlink(&outside_dir, &nested);
+        #[cfg(windows)]
+        let link = std::os::windows::fs::symlink_dir(&outside_dir, &nested);
+        #[cfg(not(any(unix, windows)))]
+        let link: std::io::Result<()> = Err(std::io::Error::other("symlink test unsupported"));
+        link.expect("create directory replacement link");
+        assert!(reader.open_rooted_file(Path::new(&checked)).is_err());
+        assert!(reader.open(&nested_ref).is_err());
+    }
 
     struct InlineArtifactReader {
         bytes: Vec<u8>,

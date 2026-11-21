@@ -398,13 +398,16 @@ fn prometheus_exposition_is_line_separated_at_both_ends() {
             "qx_api_rate_limit_rejected_total",
             "qx_api_authentication_rejected_total",
             "qx_api_command_enqueue_failures_total",
+            "qx_api_control_capacity_rejections_total",
             "qx_control_retired_commands_total",
             "qx_control_retired_audit_records_total",
+            "qx_control_pending_commands",
+            "qx_control_pending_commands_limit",
             "qx_app_run_watchers_active",
             "qx_app_run_watcher_capacity",
             "qx_app_run_watcher_rejections_total",
         ],
-        "`/metrics` 的自身样本必须包含四条 API 计数、两条控制面退场计数和三条持久运行 watcher 容量样本"
+        "`/metrics` 的自身样本必须包含五条 API 计数、两条控制面退场计数、两条待执行容量样本和三条 watcher 容量样本"
     );
 
     // 源码侧看的是三个字符的 `\\n`：那是"渲染出字面反斜杠 + n"的写法。两个字符的 `\n` 在源码里

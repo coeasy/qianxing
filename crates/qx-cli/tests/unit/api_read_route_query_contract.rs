@@ -3,7 +3,9 @@
 use super::api_endpoint_table_routes::backticked_routes;
 use super::*;
 
-const KEYLESS_ROUTES: [&str; 2] = ["/scheduler/runs", "/control/audit"];
+const KEYLESS_ROUTES: [&str; 1] = ["/scheduler/runs"];
+const CONTROL_AUDIT_FILTER_ROUTES: [(&str, &[&str]); 1] =
+    [("/control/audit", &["request_id", "cursor", "limit"])];
 
 /// 与 `read_scope::MODEL_FILTER_ROUTES` 逐格相等：路由名 + 它真认的收窄键。接线判据那条会用
 /// 源码取数把它核回来，这里这一格是文档侧的承诺。
@@ -173,6 +175,15 @@ fn array_body(response: &qx_api::ApiResponse) -> Vec<serde_json::Value> {
         .clone()
 }
 
+fn audit_records(response: &qx_api::ApiResponse) -> Vec<serde_json::Value> {
+    serde_json::from_str::<serde_json::Value>(&response.body).unwrap()["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["record"].clone())
+        .collect()
+}
+
 /// #205 行为判据：无键整体现读端点带查询串必须 400 并点名是哪条入口，不带才 200。
 #[test]
 fn keyless_read_routes_refuse_a_query_they_cannot_honor() {
@@ -201,6 +212,46 @@ fn keyless_read_routes_refuse_a_query_they_cannot_honor() {
             "{route} 不带查询串时仍要照常可读"
         );
     }
+    let audit_row = semantics_row("/control/audit");
+    assert!(
+        audit_row.contains("[?request_id=")
+            && audit_row.contains("cursor")
+            && audit_row.contains("limit")
+            && audit_row.contains("409"),
+        "控制审计应注明 request_id 筛选、有界 cursor/limit 和过期游标 409: {audit_row}"
+    );
+}
+
+/// Exact audit recovery is filtered on the server; pagination inputs are bounded and unambiguous.
+#[test]
+fn control_audit_filter_is_exact_and_rejects_ambiguous_query_values() {
+    let service = ApiService::new(ApiState::default());
+    let rows = audit_records(&service.handle("GET", "/control/audit?request_id=missing", "", 1));
+    assert!(rows.is_empty());
+    for query in [
+        "?request_id",
+        "?request_id=",
+        "?request_id=%20",
+        "?request_id=a&request_id=b",
+        "?cursor=v1.1.2&cursor=v1.1.2",
+        "?limit=0",
+        "?limit=1001",
+        "?limit=1&request_id=one",
+        "?cursor=v1.0.0&request_id=one",
+        "?cursor=bad",
+    ] {
+        let response = service.handle("GET", &format!("/control/audit{query}"), "", 2);
+        assert_eq!(
+            response.status, 400,
+            "{query} must not be accepted ambiguously"
+        );
+    }
+    let malformed = service.handle("GET", "/control/audit?request_id=%GG", "", 3);
+    assert_eq!(malformed.status, 400);
+    let bad_limit = service.handle("GET", "/control/audit?limit=1.5", "", 3);
+    assert_eq!(bad_limit.status, 400);
+    let unsupported = service.handle("GET", "/control/audit?account_id=main", "", 4);
+    assert_eq!(unsupported.status, 400);
 }
 
 /// 模型过滤读面的收窄键真的在结果集上生效，而且跨账户互不可见。
@@ -572,7 +623,7 @@ fn endpoint_table_only_promise_query_keys_where_the_route_reads_them() {
     );
 }
 
-/// 接线判据：三张名单必须两两不相交，且都从源码取数——把一条路由从带键名单挪到无键名单
+/// 接线判据：读面名单必须两两不相交，且都从源码取数——把一条路由从带键名单挪到无键名单
 /// 会让它拒绝自己文档承诺的键，反过来则让 400 通道空转。
 #[test]
 fn keyed_and_keyless_route_lists_are_disjoint_and_both_live() {
@@ -614,6 +665,24 @@ fn keyed_and_keyless_route_lists_are_disjoint_and_both_live() {
     }
     let scoped = extract(&scope, "PROJECTION_SCOPED_ROUTES");
     let keyless = extract(&scope, "KEYLESS_READ_ROUTES");
+    let audit_filter = {
+        let start = scope
+            .find("const CONTROL_AUDIT_FILTER_ROUTES: [(&str, &[&str]);")
+            .expect("qx-api 里找不到 CONTROL_AUDIT_FILTER_ROUTES");
+        let end = scope[start..].find("];").expect("控制审计过滤名单必须闭合");
+        let source = &scope[start..start + end];
+        let mut values = Vec::new();
+        let mut cursor = source;
+        while let Some(open) = cursor.find('(') {
+            let rest = &cursor[open + 1..];
+            let Some(first) = rest.find('"') else { break };
+            let after = &rest[first + 1..];
+            let Some(close) = after.find('"') else { break };
+            values.push(after[..close].to_string());
+            cursor = &after[close + 1..];
+        }
+        values
+    };
     let set = |routes: &[String]| -> std::collections::BTreeSet<String> {
         routes.iter().cloned().collect()
     };
@@ -625,12 +694,25 @@ fn keyed_and_keyless_route_lists_are_disjoint_and_both_live() {
         "模型过滤读面是三条：账簿流水、订单组与对账报告"
     );
     assert_eq!(
+        audit_filter,
+        CONTROL_AUDIT_FILTER_ROUTES
+            .iter()
+            .map(|(route, _)| route.to_string())
+            .collect::<Vec<_>>(),
+        "控制审计应单独按 request_id 精确过滤"
+    );
+    assert_eq!(
+        extract(&scope, "CONTROL_AUDIT_FILTER_PARAMS"),
+        ["request_id"],
+        "控制审计只接受 request_id"
+    );
+    assert_eq!(
         set(&keyless),
         set(&KEYLESS_ROUTES
             .iter()
             .map(|r| (*r).to_string())
             .collect::<Vec<_>>()),
-        "无键读面名单与用例里的两条不一致：这条契约两侧各自改了口"
+        "无键读面名单与用例登记不一致：这条契约两侧各自改了口"
     );
     assert_eq!(
         filter_set,
@@ -640,7 +722,12 @@ fn keyed_and_keyless_route_lists_are_disjoint_and_both_live() {
             .collect::<Vec<_>>()),
         "模型过滤读面名单与用例里的两格不一致：这条契约两侧各自改了口"
     );
-    for (label, routes) in [("带键", &scoped), ("无键", &keyless), ("模型过滤", &filter)] {
+    for (label, routes) in [
+        ("带键", &scoped),
+        ("无键", &keyless),
+        ("模型过滤", &filter),
+        ("审计过滤", &audit_filter),
+    ] {
         for route in routes {
             assert!(
                 api.contains(&format!("(\"GET\", \"{route}\")")),
@@ -660,5 +747,11 @@ fn keyed_and_keyless_route_lists_are_disjoint_and_both_live() {
     assert!(
         keyless.iter().all(|route| !filter.contains(route)),
         "无键名单与模型过滤名单相交"
+    );
+    assert!(
+        keyless.iter().all(|route| !audit_filter.contains(route))
+            && filter.iter().all(|route| !audit_filter.contains(route))
+            && scoped.iter().all(|route| !audit_filter.contains(route)),
+        "控制审计过滤名单必须与其他路由名单不相交"
     );
 }

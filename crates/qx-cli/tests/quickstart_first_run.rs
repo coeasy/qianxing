@@ -130,6 +130,10 @@ fn one_command_lands_the_same_chain_as_the_command_by_command_chain() {
     let deploy_before = count_files(&deploy_data);
     let (code, stdout, stderr) = run(&base, &["quickstart", &project.to_string_lossy()]);
     assert_eq!(code, 0, "quickstart 首跑失败: {stderr}");
+    assert!(
+        stdout.contains("[Backtest · Preflight] ready=true instrument="),
+        "内置策略回测必须先展示只读预检结果：\n{stdout}"
+    );
     let names = program();
     let done = stdout
         .lines()
@@ -246,6 +250,10 @@ fn ashare_profile_runs_the_full_offline_quickstart_chain() {
         ],
     );
     assert_eq!(code, 0, "A 股 quickstart 失败: {stderr}");
+    assert!(
+        stdout.contains("[Backtest · Preflight] ready=true instrument=000001.SZSE"),
+        "A 股回测必须先展示标的与预检结果：\n{stdout}"
+    );
     assert!(
         stdout.contains("使用 ashare profile"),
         "缺少 profile 声明:\n{stdout}"

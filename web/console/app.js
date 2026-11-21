@@ -838,14 +838,22 @@ async function refreshTables() {
 }
 
 async function refreshReadModels() {
+  const auditRequestId = state.lastCommand?.command?.request_id;
+  const auditParams = new URLSearchParams({ limit: auditRequestId ? "2" : "100" });
+  if (auditRequestId) auditParams.set("request_id", auditRequestId);
   const [ledger, recon, sched, audit, deployments] = await Promise.all([
     getJson(API_PATHS.ledger),
     getJson(API_PATHS.reconcileReports),
     getJson(API_PATHS.schedulerRuns),
-    getJson(API_PATHS.controlAudit),
+    getJson(`${API_PATHS.controlAudit}?${auditParams.toString()}`),
     getJson(API_PATHS.strategyDeployments),
   ]);
-  const count = (r) => (Array.isArray(r.body) ? `${r.body.length} 条` : `HTTP ${r.status}`);
+  const count = (r) => {
+    const entries = r.body && Array.isArray(r.body.entries) ? r.body.entries : null;
+    return entries
+      ? `${entries.length} 条${r.body.has_more ? "（还有更多）" : ""}`
+      : `HTTP ${r.status}`;
+  };
   const readModelRows = [
     ["/account/ledger", count(ledger)],
     ["/reconcile/reports", count(recon)],
@@ -3834,8 +3842,11 @@ function describeAccepted(result) {
 // 走到 Executed / Failed 即 `CommandStatus::is_final`——命令终态退场。
 function advancePhases(audit) {
   if (!state.lastCommand) return;
-  const record = Array.isArray(audit)
-    ? audit.find((row) => row && row.request_id === state.lastCommand.command.request_id)
+  const auditRows = audit && Array.isArray(audit.entries)
+    ? audit.entries.map((entry) => entry && entry.record)
+    : Array.isArray(audit) ? audit : [];
+  const record = auditRows.length
+    ? auditRows.find((row) => row && row.request_id === state.lastCommand.command.request_id)
     : null;
   const phases = state.lastCommand.phases.slice(0, 1);
   if (!record) {

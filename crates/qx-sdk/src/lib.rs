@@ -73,6 +73,10 @@ pub use qx_app::{
     BuiltinStrategyRecipe, BuiltinStrategyRecipeCatalog, StrategyRecipeParameter,
 };
 pub use qx_app::{AppAction, AppError, AppErrorCategory, AppRetry};
+pub use qx_app::{
+    ControlAuditEntryV1, ControlAuditPageV1, ControlAuditRecordV1, ControlAuditStatus,
+    CONTROL_AUDIT_DEFAULT_PAGE_SIZE, CONTROL_AUDIT_MAX_PAGE_BYTES, CONTROL_AUDIT_MAX_PAGE_SIZE,
+};
 
 // —— §6.1「capabilities」与多源数据 Provider 端口 ——
 // DataProvider 的公开签名直接使用 RawRecord，因此同时重导出来源身份和记录类型；
@@ -155,6 +159,10 @@ pub use qx_app::{
     MultiMarketExperimentSearchReport, RunDepthExperimentResult, RunExperimentResult,
     RunMultiLegExperimentResult, RunMultiMarketDepthExperimentResult,
     RunMultiMarketExperimentResult, VerificationResult,
+};
+pub use qx_app::{
+    BacktestPreflightCheckStatusV1, BacktestPreflightCheckV1, BacktestPreflightDataV1,
+    BacktestPreflightResultV1, BACKTEST_PREFLIGHT_SCHEMA_VERSION_V1,
 };
 
 // —— 多腿归因/完整性读数（qx-app 的公开读面）——

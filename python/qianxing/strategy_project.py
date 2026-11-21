@@ -8,11 +8,14 @@ import json
 import copy
 import importlib.util
 import inspect
+import os
 import re
+import shutil
 from pathlib import Path
 from pathlib import PurePosixPath
 import subprocess
 import sys
+import tempfile
 import threading
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -29,6 +32,7 @@ PROJECT_FILE = "qianxing.strategy.json"
 PROJECT_SCHEMA_VERSION = 1
 PROJECT_KIND = "qianxing-strategy-project"
 _PROJECT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_INIT_STAGING_PREFIX = ".qianxing-init-"
 _REQUIRED = {
     "schema_version",
     "kind",
@@ -125,6 +129,8 @@ from qianxing_strategy import BaseStrategy
 STRATEGY_ID = "demo-sma-cross"
 STRATEGY_VERSION = "0.1.0"
 FAST, SLOW = 5, 20
+# Example sizing increment in raw 1e-9 units; adjust for the actual instrument.
+QUANTITY_STEP_RAW = __QUANTITY_STEP_RAW__
 STRATEGY_MANIFEST = {
     "schema_version": 1, "parameters": {}, "data_level": "bar",
     "warmup_bars": SLOW + 1,
@@ -143,9 +149,10 @@ class DemoSmaCross(BaseStrategy):
             before = sum(previous[-FAST:]) * SLOW - sum(previous[-SLOW:]) * FAST
             current = sum(closes[-FAST:]) * SLOW - sum(closes[-SLOW:]) * FAST
             position = self.position_qty(context, instrument)
-            if before <= 0 < current and position == 0:
+            if before <= 0 < current and position == 0 and closes[-1] > 0:
                 available = context["available_margin_raw"]
-                quantity = max(0, available) * 9500 // (10000 * closes[-1]) * 10 ** 9
+                quantity = max(0, available) * 9500 * 10 ** 9 // (10000 * closes[-1])
+                quantity = quantity // QUANTITY_STEP_RAW * QUANTITY_STEP_RAW
                 if quantity:
                     intents.append(self.buy(instrument, qty_raw=quantity))
             elif before >= 0 > current and position > 0:
@@ -219,6 +226,7 @@ def _write_fetched_dataset(
 def _write_demo_inputs(
     root: Path,
     *,
+    manifest_base: dict[str, Any],
     source: str | None,
     instrument: str | None,
     start: str | None,
@@ -231,7 +239,7 @@ def _write_demo_inputs(
     seed: int,
     force: bool,
 ) -> dict[str, Any]:
-    """写 ``data/`` 数据集包与 ``input.json``，返回血缘摘要。"""
+    """Generate and install the demo project, restoring prior files on errors."""
     from . import run_spec
     from qianxing_ashare.sources import resolve_source
 
@@ -252,42 +260,121 @@ def _write_demo_inputs(
         instrument = normalize_instrument(instrument)
     settlement = currency or run_spec.settlement_currency(instrument or SAMPLE_INSTRUMENT)
     data_dir = root / "data"
+    if data_dir.is_symlink() or (data_dir.exists() and not data_dir.is_dir()):
+        raise ValueError(f"data path must be a directory within the project: {data_dir}")
     if data_dir.exists() and any(data_dir.iterdir()) and not force:
         raise ValueError(f"data directory is not empty: {data_dir}; use --force to replace it")
+    if (root / "input.json").is_symlink():
+        raise ValueError("input.json must not be a symbolic link")
     if (root / "input.json").exists() and not force:
         raise ValueError("input.json already exists; use --force to replace it")
-    if sample:
-        bundle = _write_sample_dataset(data_dir, instrument=instrument, rows=rows)
-    else:
-        bundle = _write_fetched_dataset(
-            data_dir,
-            source=selected.name,
-            instrument=instrument or "",
-            start=start or "",
-            end=end or "",
-            frequency=frequency,
-            adjustment=adjustment,
+    staging = Path(tempfile.mkdtemp(prefix=_INIT_STAGING_PREFIX, dir=root))
+    clean_staging = True
+    try:
+        staged_data = staging / "data"
+        if sample:
+            bundle = _write_sample_dataset(staged_data, instrument=instrument, rows=rows)
+        else:
+            bundle = _write_fetched_dataset(
+                staged_data,
+                source=selected.name,
+                instrument=instrument or "",
+                start=start or "",
+                end=end or "",
+                frequency=frequency,
+                adjustment=adjustment,
+            )
+        from .dataset_bundle import verify_bundle
+
+        verify_bundle(staged_data)
+        spec = run_spec.compose_run_spec(
+            instrument=bundle["instrument"],
+            bars_path=data_dir / bundle["bars_path"],
+            dataset_snapshot_path=data_dir / bundle["snapshot_path"],
+            output_dir=root / "runs" / "artifacts",
+            initial_cash_raw=initial_cash_raw,
+            strategy_config={
+                "kind": "sma_cross",
+                "strategy_id": "demo-sma-cross",
+                "fast_window": 5,
+                "slow_window": 20,
+                "quantity_raw": 10 ** 9,
+            },
+            run_id="demo" if sample else "fetch",
+            settlement_currency=settlement,
+            seed=seed,
         )
-    spec = run_spec.compose_run_spec(
-        instrument=bundle["instrument"],
-        bars_path=data_dir / bundle["bars_path"],
-        dataset_snapshot_path=data_dir / bundle["snapshot_path"],
-        output_dir=root / "runs" / "artifacts",
-        initial_cash_raw=initial_cash_raw,
-        strategy_config={
-            "kind": "sma_cross",
-            "strategy_id": "demo-sma-cross",
-            "fast_window": 5,
-            "slow_window": 20,
-            "quantity_raw": 10 ** 9,
-        },
-        run_id="demo" if sample else "fetch",
-        settlement_currency=settlement,
-        seed=seed,
-    )
-    for field in ("bars_path", "dataset_snapshot_path", "output_dir"):
-        spec[field] = Path(spec[field]).relative_to(root).as_posix()
-    run_spec.write_run_spec(root, spec)
+        for field in ("bars_path", "dataset_snapshot_path", "output_dir"):
+            spec[field] = Path(spec[field]).relative_to(root).as_posix()
+        run_spec.write_run_spec(staging, spec)
+        step = 1 if bundle["is_sample"] else 10 ** 9
+        staged_strategy = staging / "strategy.py"
+        staged_strategy.write_text(
+            _DEMO_STRATEGY.replace("__QUANTITY_STEP_RAW__", str(step)), encoding="utf-8", newline="\n"
+        )
+        manifest = {**manifest_base, "input_spec": "input.json", "data": {"source": bundle.get("source")}}
+        staged_manifest = staging / PROJECT_FILE
+        staged_manifest.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8", newline="\n",
+        )
+        names = sorted(bundle["files"]) + ["bundle.json"]
+        destinations = [(staged_data / name, data_dir / name) for name in names]
+        destinations.append((staging / "input.json", root / "input.json"))
+        destinations.append((staged_strategy, root / "strategies" / "main.py"))
+        destinations.append((staged_manifest, root / PROJECT_FILE))
+        if not (root / ".gitignore").exists() and not (root / ".gitignore").is_symlink():
+            staged_ignore = staging / ".gitignore"
+            staged_ignore.write_text(".qianxing/\nruns/\n__pycache__/\n", encoding="utf-8", newline="\n")
+            destinations.append((staged_ignore, root / ".gitignore"))
+        for _, target in destinations:
+            if target.is_symlink() or (target.exists() and not target.is_file()):
+                raise ValueError(f"project output must be a regular file: {target}")
+            if target.exists() and not force:
+                raise ValueError(f"project output already exists: {target}")
+        created_data_dir = not data_dir.exists()
+        data_dir.mkdir(exist_ok=True)
+        backups = staging / "backups"
+        backups.mkdir()
+        (staging / "recovery.json").write_text(
+            json.dumps([{"target": str(target.relative_to(root)), "backup": f"backups/{index}",
+                         "originally_present": target.exists()}
+                        for index, (_, target) in enumerate(destinations)], indent=2) + "\n",
+            encoding="utf-8", newline="\n",
+        )
+        replaced = []
+        try:
+            for index, (source_path, target) in enumerate(destinations):
+                backup = backups / str(index) if target.exists() else None
+                if backup is not None:
+                    os.replace(target, backup)
+                replaced.append((target, backup))
+                os.replace(source_path, target)
+        except Exception as error:
+            rollback_errors = []
+            for target, backup in reversed(replaced):
+                try:
+                    if backup is not None:
+                        os.replace(backup, target)
+                    elif target.exists():
+                        target.unlink()
+                except OSError as rollback_error:
+                    rollback_errors.append(f"{target}: {rollback_error}")
+            if created_data_dir:
+                try:
+                    data_dir.rmdir()
+                except OSError:
+                    pass
+            if rollback_errors:
+                clean_staging = False
+                raise RuntimeError(
+                    f"project installation failed; recovery files retained at {staging}; "
+                    f"rollback errors: {'; '.join(rollback_errors)}"
+                ) from error
+            raise
+    finally:
+        if clean_staging:
+            shutil.rmtree(staging)
     return {
         "is_sample": bundle["is_sample"],
         "source": bundle.get("source"),
@@ -298,6 +385,86 @@ def _write_demo_inputs(
         "input_spec": "input.json",
         "dataset_snapshot": str(data_dir / bundle["snapshot_path"]),
     }
+
+
+def _pending_project_initializations(root: Path) -> list[Path]:
+    if not root.is_dir():
+        return []
+    return sorted(root.glob(f"{_INIT_STAGING_PREFIX}*"))
+
+
+def _require_no_pending_initialization(root: Path) -> None:
+    pending = _pending_project_initializations(root)
+    if pending:
+        raise ValueError(
+            f"unfinished project initialization found at {pending[0]}; "
+            f"ensure initialization is stopped, then inspect with "
+            f"'qianxing project init-recovery-info {str(root)!r}' before changing files"
+        )
+
+
+def project_init_recovery_info(directory: str | Path) -> dict[str, Any]:
+    """Describe retained init files without changing them or trusting stored paths."""
+    root = Path(directory).expanduser().resolve()
+    if not root.is_dir():
+        raise ValueError(f"project directory does not exist: {root}")
+    allowed = {"data/bars.json", "data/bars.manifest.json", "data/snapshot.context.json",
+               "data/snapshot.json", "data/bundle.json", "input.json", "strategies/main.py",
+               PROJECT_FILE, ".gitignore"}
+    pending = []
+    for stage in _pending_project_initializations(root):
+        result: dict[str, Any] = {"directory": str(stage), "entries": []}
+        if stage.is_symlink() or not stage.is_dir():
+            result["status"] = "unsafe_staging_path"
+            pending.append(result)
+            continue
+        journal = stage / "recovery.json"
+        if journal.is_symlink() or not journal.is_file():
+            result["status"] = "recovery_mapping_unavailable"
+            pending.append(result)
+            continue
+        try:
+            if journal.stat().st_size > 64 * 1024:
+                raise ValueError("recovery mapping too large")
+            entries = json.loads(journal.read_text(encoding="utf-8"))
+            if not isinstance(entries, list) or len(entries) > len(allowed):
+                raise ValueError("invalid recovery entries")
+            seen: set[str] = set()
+            for index, entry in enumerate(entries):
+                if not isinstance(entry, dict):
+                    raise ValueError("invalid recovery entry")
+                name = entry.get("target")
+                if not isinstance(name, str):
+                    raise ValueError("invalid recovery target")
+                # The journal is created with native Windows separators on Windows.
+                name = name.replace("\\", "/")
+                if (name not in allowed or name in seen or entry.get("backup") != f"backups/{index}"
+                        or type(entry.get("originally_present")) is not bool):
+                    raise ValueError("invalid recovery target or backup")
+                seen.add(name)
+                backup_dir = stage / "backups"
+                backup = backup_dir / str(index)
+                if backup_dir.is_symlink() or backup.is_symlink():
+                    raise ValueError("unsafe backup path")
+                target = root.joinpath(*name.split("/"))
+                if target.is_symlink() or target.parent.is_symlink():
+                    target_status = "unsafe_path"
+                elif target.is_file():
+                    target_status = "present"
+                elif target.exists():
+                    target_status = "not_a_file"
+                else:
+                    target_status = "missing"
+                result["entries"].append({"target": name, "target_status": target_status,
+                                          "originally_present": entry["originally_present"],
+                                          "backup": str(backup), "backup_present": backup.is_file()})
+        except (OSError, ValueError, UnicodeError, json.JSONDecodeError):
+            result["status"] = "invalid_recovery_mapping"
+            result["entries"] = []
+        else:
+            result["status"] = "manual_review_required"
+        pending.append(result)
+    return {"project_root": str(root), "pending": pending, "side_effects": "none"}
 
 
 def init_strategy_project(
@@ -332,13 +499,20 @@ def init_strategy_project(
     if root.exists() and not root.is_dir():
         raise ValueError(f"project path is not a directory: {root}")
     root.mkdir(parents=True, exist_ok=True)
+    _require_no_pending_initialization(root)
     manifest_path = root / PROJECT_FILE
+    if demo_mode and manifest_path.is_symlink():
+        raise ValueError("project manifest must not be a symbolic link")
     if manifest_path.exists() and not force:
         raise ValueError(f"project manifest already exists: {manifest_path}; use --force to replace it")
 
     strategies = root / "strategies"
+    if demo_mode and strategies.is_symlink():
+        raise ValueError("strategies path must not be a symbolic link")
     strategies.mkdir(exist_ok=True)
     template_path = strategies / "main.py"
+    if demo_mode and template_path.is_symlink():
+        raise ValueError("strategy file must not be a symbolic link")
     if demo_mode and template_path.exists() and not force:
         raise ValueError(f"strategy file already exists: {template_path}; use --force to replace it")
     if not demo_mode and not template_path.exists():
@@ -357,10 +531,23 @@ def init_strategy_project(
         if not project_id or not project_id[0].isalnum():
             project_id = f"qianxing-{project_id or 'strategy'}"
 
+    manifest = {
+        "schema_version": PROJECT_SCHEMA_VERSION,
+        "kind": PROJECT_KIND,
+        "project_id": project_id,
+        "strategy_file": strategy_value,
+        "input_spec": input_value,
+    }
+    if worker_id is not None:
+        manifest["worker_id"] = worker_id
+    if runtime_value is not None:
+        manifest["runtime_config"] = runtime_value
+
     data = None
     if demo_mode:
         data = _write_demo_inputs(
             root,
+            manifest_base=manifest,
             source=source,
             instrument=instrument,
             start=start,
@@ -374,29 +561,15 @@ def init_strategy_project(
             force=force,
         )
         input_value = data["input_spec"]
-        template_path.write_text(_DEMO_STRATEGY, encoding="utf-8", newline="\n")
-
-    manifest = {
-        "schema_version": PROJECT_SCHEMA_VERSION,
-        "kind": PROJECT_KIND,
-        "project_id": project_id,
-        "strategy_file": strategy_value,
-        "input_spec": input_value,
-    }
-    if worker_id is not None:
-        manifest["worker_id"] = worker_id
-    if runtime_value is not None:
-        manifest["runtime_config"] = runtime_value
-    if data is not None:
-        manifest["data"] = {"source": data["source"]}
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-        newline="\n",
-    )
-    ignore_path = root / ".gitignore"
-    if not ignore_path.exists():
-        ignore_path.write_text(".qianxing/\nruns/\n__pycache__/\n", encoding="utf-8", newline="\n")
+    else:
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        ignore_path = root / ".gitignore"
+        if not ignore_path.exists():
+            ignore_path.write_text(".qianxing/\nruns/\n__pycache__/\n", encoding="utf-8", newline="\n")
     result = {"status": "created", "project_root": str(root), "manifest": str(manifest_path), "strategy_file": strategy_value, "input_spec": input_value}
     if data is not None:
         result["data"] = data
@@ -405,8 +578,9 @@ def init_strategy_project(
 
 def load_strategy_project(path: str | Path) -> tuple[Path, dict[str, Any]]:
     requested = Path(path).expanduser().resolve()
-    root = requested.parent if requested.is_file() else requested
-    manifest_path = requested if requested.is_file() else root / PROJECT_FILE
+    root = requested.parent if requested.is_file() or requested.name == PROJECT_FILE else requested
+    _require_no_pending_initialization(root)
+    manifest_path = requested if requested.is_file() or requested.name == PROJECT_FILE else root / PROJECT_FILE
     manifest = _json_object(manifest_path, "strategy project manifest")
     unknown = set(manifest) - _REQUIRED - _OPTIONAL
     missing = _REQUIRED - set(manifest)
@@ -1140,6 +1314,7 @@ def project_deployments(
 __all__ = [
     "PROJECT_FILE",
     "init_strategy_project",
+    "project_init_recovery_info",
     "load_strategy_project",
     "show_strategy_project",
     "local_project_preflight",
