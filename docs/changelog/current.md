@@ -1,3 +1,10 @@
+# 0.4.1 发布准备（2026-11-22）
+
+- 从已合并的 `main`（PR #8，commit `c7f51f8a`）开始准备新的补丁版本；旧 `v0.4.0` 发布与证据保持不可变。
+- Rust workspace 与内部依赖、Python 包及源码版本回退、C++ SDK、成熟度基线和九个目标 profile 统一升至 `0.4.1`；发布范围单独记录在 [`release-scope-0.4.1.md`](../release-scope-0.4.1.md)。
+- 重建 0.4.1 Release CLI 并刷新报告生成、自适应搜索及费用邻域三项过期证据；所有数据绑定当前二进制、源码和驱动摘要，并更新架构门禁。报告九格与两项搜索矩阵均通过复核，仍只描述本机合成负载，不提升完整产品 profile 状态。
+- 当前仍是发布准备状态。tag 工作流、PyPI/GitHub Release 构件、14 个 crates.io crate 和独立消费者必须在 `v0.4.1` 发布流程中逐项成功后，才能记录为已发布。
+
 - `/metrics` 新增持久订单组生命周期 gauge，按账户/venue/状态聚合活动、待撤、部分成交和待对账组；读取损坏时明确 `metrics_available=0` 且不伪报零组，成功空目录仍标记可用。qx-service 126/126、架构快速门禁 373/373 通过。该读数不暴露订单标识，也不代表交易所实时健康。
 - Binance OCO 撤单新增连接器调用级契约回归：本地传输桩接收实际 `DELETE /api/v3/orderList` 请求，检查持久列表 ID、稳定列表客户 ID 与 symbol，并通过双腿终态报告后才产出目标子单撤单事实。适配器测试 108/108 通过；这是协议路径本地证据，不是 Binance Testnet 结果。
 - CCXT 原生 OCO 查询失败现在会对 OKX 和 Bitget 一致持久化 `ReconcileRequired`，并把仍活动的两条子订单写入 EventLog 为未知状态；不再让 OKX 组在远端未知时保留 `Active`。新增服务入口级 OKX RPC mock 回归：实际走 `fetch_order_group` 调用并注入超时，重载持久快照确认人工对账屏障。定向订单组测试 9/9、架构检查 1,633 项通过；没有请求真实交易所。

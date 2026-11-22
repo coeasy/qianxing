@@ -86,7 +86,7 @@ Python 策略的未来数据扰动与预热长度敏感性检查见[策略偏差
 
 ## 快速开始
 
-要把回测引擎集成到 Rust 应用，可直接运行[独立 Rust SDK 快速入门](examples/rust-sdk-quickstart/README.md)：工程内含示例数据，并固定使用 0.4.0 的 Git 版本。
+要把回测引擎集成到 Rust 应用，v0.4.1 crates.io 发布与独立消费者验收完成后，在 `Cargo.toml` 添加 `qx-sdk = "0.4.1"`；[独立 Rust SDK 快速入门](examples/rust-sdk-quickstart/README.md)保留固定到 `v0.4.0` 的可复现历史示例。
 
 下面这段是可复制的常用链路示例，写法是在**源码仓库里**直接用 cargo 跑；已经按[安装指南](docs/installation.md)装好的人会
 得到同名 binary，把 `cargo run -p qx-cli -- ` 换成 `qx-cli ` 即可，参数与行为完全一致（同一份 clap 命令表）。
@@ -99,7 +99,7 @@ Python 策略的未来数据扰动与预热长度敏感性检查见[策略偏差
 cargo build --release
 
 # Rust CLI 安装方式：从源码仓库固定 tag 编译安装；也可直接下载 GitHub Release 的平台二进制
-cargo install --git https://github.com/coeasy/qianxing --tag v0.4.0 --locked qx-cli
+cargo install --git https://github.com/coeasy/qianxing --tag v0.4.1 --locked qx-cli
 
 # 运行端到端演示（含确定性自校验）
 cargo run -p qx-cli --release

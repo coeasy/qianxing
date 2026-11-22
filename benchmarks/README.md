@@ -548,10 +548,12 @@ CI 优先下载主分支最近成功运行的基准，
 默认测有限网格；`--space continuous` 则测 fast_window 的有界步进整数范围。每组独立目录重复执行，要求提议轨迹与回测结果哈希一致：
 
 ```powershell
-python benchmarks/run_adaptive_search_capacity.py --binary target/release/qx-cli.exe --sizes 1000,8000,64000 --budgets 8,32 --repeats 2 --out maturity/evidence/adaptive-search-capacity-2026-10-23.json
+python benchmarks/run_adaptive_search_capacity.py --binary target/release/qx-cli.exe --sizes 1000,8000,64000 --budgets 8,32 --repeats 2 --out maturity/evidence/adaptive-search-capacity-2026-11-22.json
 python benchmarks/run_adaptive_search_capacity.py --binary target/release/qx-cli.exe --space continuous --sizes 8000,64000 --budgets 8,32,64 --repeats 2 --out maturity/evidence/continuous-adaptive-search-capacity-2026-10-23.json
 python benchmarks/run_adaptive_search_capacity.py --binary target/release/qx-cli.exe --space continuous --sizes 8000,64000 --budgets 8,32 --repeats 2 --robustness-subwindows 4 --out maturity/evidence/robust-continuous-adaptive-search-capacity-2026-10-23.json
 ```
+
+2026-11-22 当前 Release 有限网格复测覆盖 1k/8k/64k Bars × 8/32 候选、每格两次，共六格；提议轨迹与候选结果哈希稳定且无失败候选。64k P50 为 46.350/180.491 秒，进程树资源、耗时与结果写入 `maturity/evidence/adaptive-search-capacity-2026-11-22.json`，绑定 Release SHA-256 `4c39e916c8d642ef99d2ddb4b2091422e5f9d743757b45089302a52383eb5cdb`、源码指纹 `249c647366145557d0ac84d2bb9b2d655ede7f66347b5e10f3c8cef28d6b1c9b` 和当前 benchmark 驱动摘要。该单一策略合成 workload 不代表完整 profile。
 
 2026-10-23 步进整数范围的 SMA 滚动和优化前后配对测量仍保留为历史 A/B：64k Bar 的 8/32/64 候选 P50 从 9.912/33.828/69.987 秒降至 6.265/24.277/49.374 秒，候选提议轨迹及结果哈希一致；原始和复测证据分别为 `maturity/evidence/continuous-adaptive-search-capacity-2026-10-23.json` 与 `maturity/evidence/continuous-adaptive-search-capacity-rolling-sma-2026-10-23.json`，绑定当时二进制 SHA `c6d128ce3f7ad3bc0e26a69fd38ddf41a890405df847282c082f89b5a43dd823` 和源码指纹 `d1bf8a52dbf1ed96f5f38c12b2994fdb238e8d7501a591ebe778462bc4cc3625`。这是单一合成 SMA 搜索负载的历史 A/B，不外推到其它策略或完整 profile。
 
@@ -562,8 +564,10 @@ python benchmarks/run_adaptive_search_capacity.py --binary target/release/qx-cli
 费用邻域门单独使用 `run_cost_neighborhood_capacity.py` 测量：每个搜索候选外还会重放所选候选的费用压力运行及配置半径内的全部单维邻居。脚本要求每个邻居都被计算且基线/压力结果哈希跨重复稳定；示例：
 
 ```powershell
-python benchmarks/run_cost_neighborhood_capacity.py --binary target/release/qx-cli.exe --sizes 8000,64000 --budget 8 --repeats 2 --out maturity/evidence/adaptive-search-cost-neighborhood-capacity-2026-10-23.json
+python benchmarks/run_cost_neighborhood_capacity.py --binary target/release/qx-cli.exe --sizes 8000,64000 --budget 8 --repeats 2 --out maturity/evidence/adaptive-search-cost-neighborhood-capacity-2026-11-22.json
 ```
+
+2026-11-22 当前 Release 复测两种 Bar 规模、每格两次；所有中心候选、压力回测和理论邻居均成功，哈希在重复运行间一致。64k P50/P95 为 50.312/50.693 秒，证据绑定 Release SHA-256 `4c39e916c8d642ef99d2ddb4b2091422e5f9d743757b45089302a52383eb5cdb`、源码指纹 `249c647366145557d0ac84d2bb9b2d655ede7f66347b5e10f3c8cef28d6b1c9b` 和当前驱动摘要。
 
 该证据只测合成单标的费用压力邻域重放，不计为连续浮点参数或完整产品 profile 的容量结果。
 
@@ -575,12 +579,14 @@ python benchmarks/run_cost_neighborhood_capacity.py --binary target/release/qx-c
 并覆盖 1k/8k/64k Bar。运行示例：
 
 ```powershell
-python benchmarks/run_report_capacity.py --binary target/release/qx-cli.exe --sizes 1000,8000,64000 --repeats 3 --out maturity/evidence/report-generation-capacity-2026-10-23.json
+python benchmarks/run_report_capacity.py --binary target/release/qx-cli.exe --sizes 1000,8000,64000 --repeats 2 --out maturity/evidence/report-generation-capacity-2026-11-22.json
 ```
 
 证据记录报告耗时、主进程与进程树 RSS、进程数、可用的 CPU/I/O 计数、报告字节数与哈希；同一规模的三种格式共用同一回测结果。该工作负载是合成 crypto-spot 与单一内置策略，只描述报告生成，不改变完整市场 profile 状态，也未覆盖多市场/深度报告、PDF、参数搜索内部并发或 Paper/live 生命周期。
 
-当前 Release 的 1k/8k/64k JSON P50 为 310.280/334.960/392.620 ms，HTML 为 335.020/333.660/432.340 ms，XLSX 为 314.470/339.250/492.600 ms；证据绑定 Release SHA-256 `f555cbae14d56e4d0a45f31aff5339bd49d44993bb2e4f636632c5bdef074619` 与源码指纹 `4d5c8285d90e83952cb3a518857abc997805184f0723675adb1921b118fe216a`。更新覆盖了已复核诊断附件 XLSX 路径，同时不提升完整 profile 状态。
+2026-10-23 的 Release 结果为 JSON P50 310.280/334.960/392.620 ms、HTML 335.020/333.660/432.340 ms、XLSX 314.470/339.250/492.600 ms；历史证据绑定 Release SHA-256 `f555cbae14d56e4d0a45f31aff5339bd49d44993bb2e4f636632c5bdef074619` 与源码指纹 `4d5c8285d90e83952cb3a518857abc997805184f0723675adb1921b118fe216a`，不再代表当前驱动。
+
+2026-11-22 重新构建的 Release CLI 已用当前驱动复测九格矩阵，每格两次且同一规模跨格式复用回测结果；64k JSON/HTML/XLSX P50 分别为 187.176/316.702/388.477 ms，P95 分别为 190.105/348.720/400.538 ms。证据 `maturity/evidence/report-generation-capacity-2026-11-22.json` 绑定 Release SHA-256 `4c39e916c8d642ef99d2ddb4b2091422e5f9d743757b45089302a52383eb5cdb`、源码指纹 `249c647366145557d0ac84d2bb9b2d655ede7f66347b5e10f3c8cef28d6b1c9b` 与当前 benchmark 驱动摘要。该测量只描述合成 crypto-spot 报告生成，不提升完整 profile 状态。
 
 诊断附件导出也可单独测量：传入 `--with-diagnostics` 后，脚本会为每档回测摘要生成绑定策略 ID、标的、已复核数据指纹和终点时间的有界合成诊断报告，额外测 `html-diagnostics` 与 `xlsx-diagnostics` 两种单进程导出。诊断 JSON 的字节数计入报告输入，产物照常记录哈希、主进程/进程树 RSS、CPU 和 I/O。它测量的是已生成诊断附件的报告呈现成本，不包含诊断策略重放时间，也不是完整产品 profile：
 

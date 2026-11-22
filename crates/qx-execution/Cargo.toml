@@ -7,11 +7,11 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-qx-core = { version = "0.4.0", path = "../qx-core" }
-qx-control = { version = "0.4.0", path = "../qx-control" }
-qx-guanxing = { version = "0.4.0", path = "../qx-guanxing" }
-qx-risk = { version = "0.4.0", path = "../qx-risk" }
-qx-zhenlu = { version = "0.4.0", path = "../qx-zhenlu" }
+qx-core = { version = "0.4.1", path = "../qx-core" }
+qx-control = { version = "0.4.1", path = "../qx-control" }
+qx-guanxing = { version = "0.4.1", path = "../qx-guanxing" }
+qx-risk = { version = "0.4.1", path = "../qx-risk" }
+qx-zhenlu = { version = "0.4.1", path = "../qx-zhenlu" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 

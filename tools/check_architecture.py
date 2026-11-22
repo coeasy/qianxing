@@ -16052,7 +16052,7 @@ def performance_baseline_check() -> None:
 def report_generation_capacity_check() -> None:
     """报告生成必须有复现驱动器和绑定同一回测结果的实测证据。"""
     driver = ROOT / "benchmarks" / "run_report_capacity.py"
-    evidence_path = ROOT / "maturity/evidence/report-generation-capacity-2026-10-23.json"
+    evidence_path = ROOT / "maturity/evidence/report-generation-capacity-2026-11-22.json"
     source = driver.read_text(encoding="utf-8") if driver.is_file() else ""
     has_driver_contract = all(
         token in source
@@ -16120,7 +16120,7 @@ def report_generation_capacity_check() -> None:
     benchmark_readme = ROOT / "benchmarks/README.md"
     readme_text = benchmark_readme.read_text(encoding="utf-8") if benchmark_readme.is_file() else ""
     evidence_registered = (
-        "report-generation-capacity-2026-10-23.json" in capabilities_text
+        "report-generation-capacity-2026-11-22.json" in capabilities_text
         and "run_report_capacity.py" in capabilities_text
         and "run_report_capacity.py" in readme_text
     )
@@ -16134,7 +16134,7 @@ def report_generation_capacity_check() -> None:
 def adaptive_search_capacity_check() -> None:
     """Adaptive-search capacity evidence must cover multiple sizes/budgets reproducibly."""
     driver = ROOT / "benchmarks" / "run_adaptive_search_capacity.py"
-    evidence_path = ROOT / "maturity/evidence/adaptive-search-capacity-2026-10-23.json"
+    evidence_path = ROOT / "maturity/evidence/adaptive-search-capacity-2026-11-22.json"
     source = driver.read_text(encoding="utf-8") if driver.is_file() else ""
     has_driver_contract = all(
         token in source
@@ -16197,7 +16197,7 @@ def adaptive_search_capacity_check() -> None:
     benchmark_readme = ROOT / "benchmarks/README.md"
     readme_text = benchmark_readme.read_text(encoding="utf-8") if benchmark_readme.is_file() else ""
     registered = (
-        "adaptive-search-capacity-2026-10-23.json" in capabilities_text
+        "adaptive-search-capacity-2026-11-22.json" in capabilities_text
         and "run_adaptive_search_capacity.py" in capabilities_text
         and "run_adaptive_search_capacity.py" in readme_text
     )
@@ -16211,7 +16211,7 @@ def adaptive_search_capacity_check() -> None:
 def adaptive_search_cost_neighborhood_capacity_check() -> None:
     """Fee-neighborhood capacity evidence must measure complete, deterministic stress replays."""
     driver = ROOT / "benchmarks" / "run_cost_neighborhood_capacity.py"
-    evidence_path = ROOT / "maturity/evidence/adaptive-search-cost-neighborhood-capacity-2026-10-23.json"
+    evidence_path = ROOT / "maturity/evidence/adaptive-search-cost-neighborhood-capacity-2026-11-22.json"
     source = driver.read_text(encoding="utf-8") if driver.is_file() else ""
     driver_valid = all(
         token in source
@@ -16277,7 +16277,7 @@ def adaptive_search_cost_neighborhood_capacity_check() -> None:
     benchmark_readme = ROOT / "benchmarks/README.md"
     readme_text = benchmark_readme.read_text(encoding="utf-8") if benchmark_readme.is_file() else ""
     registered = (
-        "adaptive-search-cost-neighborhood-capacity-2026-10-23.json" in capabilities_text
+        "adaptive-search-cost-neighborhood-capacity-2026-11-22.json" in capabilities_text
         and "run_cost_neighborhood_capacity.py" in capabilities_text
         and "run_cost_neighborhood_capacity.py" in readme_text
     )

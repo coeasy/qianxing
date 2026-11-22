@@ -26,7 +26,14 @@
 
 ### 1. 依赖
 
-目前应使用下面的 Git 依赖，直到 registry 发布及独立消费者验收完成。
+v0.4.1 crates.io 发布和独立消费者验收完成后，普通用户可使用 registry 依赖：
+
+```toml
+[dependencies]
+qx-sdk = "0.4.1"
+```
+
+在该闭环完成前，使用下面的 Git 依赖；即使 crates.io 包已上传，也应等发布工作流的独立消费者验证通过后再切换。
 
 仓库外消费者在内部 crate 尚未发布到公开 registry 时，可以直接锁定已推送的 Git 提交；SDK 及其同仓路径依赖都从同一个不可变提交解析：
 
@@ -35,7 +42,7 @@
 qx-sdk = { git = "https://github.com/coeasy/qianxing.git", rev = "e7fec623ffbb1b55acec3b4ce414f26b1a3ac961", package = "qx-sdk" }
 ```
 
-该 Git 来源示例固定到正式版 `v0.4.0` 标签指向的提交。新版本发布时应替换为对应的完整提交哈希，并提交 `Cargo.lock`。验证独立消费者可运行：
+该 Git 来源示例固定到已发布的 `v0.4.0` 标签指向的提交，用于可复现的历史消费路径。需要测试当前源码时应固定完整提交哈希并提交 `Cargo.lock`。验证独立消费者可运行：
 
 ```powershell
 python tools/check_rust_sdk_git_consumer.py
@@ -93,8 +100,8 @@ python tools/check_crates_io_artifacts.py qx-sdk --json
 `qx-sdk@X.Y.Z`。工作流会要求 tag、token 和发布确认同时成立，再执行完整 14 包依赖闭包的预检、顺序上传、逐包
 checksum 等待与独立 crates.io quickstart。不要从分支运行，也不要把 token 写入仓库文件或命令参数。
 首次发布会永久占用成功上传的 crate 名称和版本；如果中途失败，先检查 crates.io 已发布记录与 checksum，修复权限或
-名称冲突后从同一 tag 重跑，工具只会跳过字节完全一致且未撤回的版本。当前 HEAD 尚未打 `v0.4.0` tag，工作树也有未提交变更，
-所以这份工作流只是发布入口，尚不能在当前工作树执行真实上传。
+名称冲突后从同一 tag 重跑，工具只会跳过字节完全一致且未撤回的版本。v0.4.1 发布必须从 `v0.4.1` tag 运行，确认值为
+`qx-sdk@0.4.1`；先完成 tag 工作流，再执行本工作流。请以 GitHub Actions 的逐包 checksum 和独立 crates.io quickstart 结果作为发布证据。
 
 ### 2. 导入前缀
 
