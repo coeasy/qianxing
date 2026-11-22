@@ -322,7 +322,7 @@ Linux 本机补充验收：
 
 历史验收当时的交付边界是本机可重放的研究/回测与 Paper 工作流，以及 Linux/Windows 候选构建和 PostgreSQL/NATS 集成路径。该快照中的 CI、候选预检和逻辑审计链接仅说明对应提交的测试结果；不能再据此说正式发布尚未发生。
 
-**当前发行状态（2026-11-22）：** GitHub 最新 Release 为 [`v0.4.1`](https://github.com/coeasy/qianxing/releases/tag/v0.4.1)，包含 34 个发行附件；PyPI 已发布 `qianxing==0.4.1`。Rust SDK 的 14 包 crates.io 闭包现已全部发布，且发布工作流 [45019067095](https://github.com/coeasy/qianxing/actions/runs/45019067095) 逐包核验 checksum，并从 crates.io 独立安装 `qx-sdk 0.4.1` 运行 70 根教学 Bar quickstart（1 笔成交，`Verified: true`）。源码主分支的 Python `quickstart --profile ccxt` 入口已通过 OKX/Bitget 公共行情验收，但晚于 `v0.4.1` tag，尚未进入 PyPI 0.4.1 wheel；当前 PyPI 用户仍可按上方指南经 `qx-cli` 运行真实公开行情回测。能力范围、sandbox 与 production 证据等级仍以当前成熟度台账为准；包发布不等于 sandbox 或生产批准。
+**当前发行状态（2026-11-22）：** GitHub 最新 Release 为 [`v0.4.1`](https://github.com/coeasy/qianxing/releases/tag/v0.4.1)，包含 34 个发行附件；PyPI 已发布 `qianxing==0.4.1`。Rust SDK 的 14 包 crates.io 闭包现已全部发布，且发布工作流 [45019067095](https://github.com/coeasy/qianxing/actions/runs/45019067095) 逐包核验 checksum。独立 consumer workflow [45030066158](https://github.com/coeasy/qianxing/actions/runs/45030066158) 在 Ubuntu、Windows、macOS 的干净 Cargo home 中分别从 crates.io 安装 `qx-sdk 0.4.1`，每个平台都运行 70 根教学 Bar quickstart（1 笔成交、`Verified: true`）。源码主分支的 Python `quickstart --profile ccxt` 入口已通过 OKX/Bitget 公共行情验收，但晚于 `v0.4.1` tag，尚未进入 PyPI 0.4.1 wheel；当前 PyPI 用户仍可按上方指南经 `qx-cli` 运行真实公开行情回测。能力范围、sandbox 与 production 证据等级仍以当前成熟度台账为准；包发布不等于 sandbox 或生产批准。
 
 运行时插件目前只支持启动期静态装配，不支持动态加载或热替换。Paper 成交与 Bar、Tick、订单簿回测使用各自的数据档位内核；共享风控与归约规则不表示撮合实现相同。详细能力、限制和各项证据请查阅能力目录与成熟度台账。
 ## 许可

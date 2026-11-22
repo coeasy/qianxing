@@ -8,7 +8,7 @@ The 2026-10-29 record and the following v0.4.0 candidate checks are historical s
 
 ## Current release status (2026-11-22)
 
-GitHub Release [`v0.4.1`](https://github.com/coeasy/qianxing/releases/tag/v0.4.1) provides Windows x64, Linux x64, and macOS Apple Silicon CLI binaries plus platform wheels. PyPI `qianxing==0.4.1` is published. All 14 Rust SDK crates, including `qx-sdk 0.4.1`, are published to crates.io and checksum-verified by workflow [45019067095](https://github.com/coeasy/qianxing/actions/runs/45019067095). Its clean registry consumer installed the published SDK independently and passed the 70-bar quickstart with 1 fill and `Verified: true`. Current capability and venue evidence is in [`maturity/capabilities.yaml`](../maturity/capabilities.yaml); this package and consumer verification does not imply sandbox or production approval.
+GitHub Release [`v0.4.1`](https://github.com/coeasy/qianxing/releases/tag/v0.4.1) provides Windows x64, Linux x64, and macOS Apple Silicon CLI binaries plus platform wheels. PyPI `qianxing==0.4.1` is published. All 14 Rust SDK crates, including `qx-sdk 0.4.1`, are published to crates.io and checksum-verified by workflow [45019067095](https://github.com/coeasy/qianxing/actions/runs/45019067095). The independent registry consumer matrix [45030066158](https://github.com/coeasy/qianxing/actions/runs/45030066158) passed on Ubuntu, Windows, and macOS from clean Cargo homes; each run completed the 70-bar quickstart with 1 fill and `Verified: true`. The project has not declared an MSRV, so this matrix is not an MSRV claim. Current capability and venue evidence is in [`maturity/capabilities.yaml`](../maturity/capabilities.yaml); package and consumer verification does not imply sandbox or production approval.
 
 ## 安装
 
