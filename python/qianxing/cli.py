@@ -302,16 +302,31 @@ def _parser() -> argparse.ArgumentParser:
                           help="run directory for bars/spec/artifacts (default: runs/<strategy>)")
     quickstart = commands.add_parser(
         "quickstart",
-        help="create an offline sample project, run it, and render a verified report",
+        help="create a sample or public-CCXT project, run a backtest, and render a report",
     )
     quickstart.add_argument("directory", help="new project directory; must not contain an existing project")
-    quickstart.add_argument("--rows", type=int, default=600, help="sample bars to generate (default: 600)")
     quickstart.add_argument(
-        "--format", default="html", metavar="LIST",
+        "--profile", choices=("sample", "ccxt"), default="sample",
+        help="sample: offline synthetic bars; ccxt: real public exchange candles, read-only",
+    )
+    quickstart.add_argument("--rows", type=int, default=None, help="sample bars to generate (default: 600)")
+    quickstart.add_argument(
+        "--format", default=None, metavar="LIST",
         help="comma-separated report formats: html, xlsx, json (default: html)",
     )
     quickstart.add_argument("--report-output", help="HTML report path relative to the project root")
     quickstart.add_argument("--cli", help="report renderer executable; defaults to the bundled qx-cli, then PATH")
+    quickstart.add_argument(
+        "--exchange",
+        choices=("okx", "binance", "bitget"),
+        help="public CCXT market source (ccxt profile only; default: okx)",
+    )
+    quickstart.add_argument("--instrument", help="settled perpetual symbol, e.g. BTC/USDT:USDT.OKX")
+    quickstart.add_argument("--days", type=int, help="public candle history (1..365; default: 30)")
+    quickstart.add_argument("--timeframe", help="candle interval (default: 1h)")
+    quickstart.add_argument("--as-of-ms", type=int, help="exclusive UTC cutoff in Unix milliseconds (ccxt only)")
+    quickstart.add_argument("--strategy", help="built-in single-market strategy (ccxt defaults to ema_cross)")
+    quickstart.add_argument("--force", action="store_true", help="replace generated files in an existing project")
     project = commands.add_parser(
         "project",
         help="initialize, inspect, and run a versioned local strategy project",
@@ -762,7 +777,25 @@ def _run_strategy_project(project_path: str | Path) -> tuple[int, Any, Any]:
 
 def _run_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any] | None]:
     """Create a deterministic offline demo and carry it through verified reporting."""
-    created = init_strategy_project(args.directory, demo=True, rows=args.rows)
+    if args.profile == "ccxt":
+        return _run_ccxt_quickstart(args)
+    if any(
+        value is not None
+        for value in (
+            args.exchange,
+            args.instrument,
+            args.days,
+            args.timeframe,
+            args.as_of_ms,
+            args.strategy,
+        )
+    ) or args.force:
+        raise ValueError(
+            "--exchange/--instrument/--days/--timeframe/--strategy/--force require --profile ccxt"
+        )
+    rows = 600 if args.rows is None else args.rows
+    formats = "html" if args.format is None else args.format
+    created = init_strategy_project(args.directory, demo=True, rows=rows)
     status, run_result, preflight = _run_strategy_project(args.directory)
     if status != 0:
         return status, None
@@ -774,7 +807,7 @@ def _run_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any] | Non
             run_id,
             executable=args.cli,
             output=args.report_output,
-            formats=args.format,
+            formats=formats,
         )
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         raise ValueError(
@@ -787,6 +820,7 @@ def _run_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any] | Non
     return 0, {
         "status": "succeeded",
         "project_root": str(root),
+        "profile": "sample",
         "data": {
             "source": "sample",
             "is_sample": True,
@@ -798,6 +832,117 @@ def _run_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any] | Non
         "project_run_id": run_id,
         "artifacts_verified": integrity["verified"],
         "report": report,
+    }
+
+
+def _run_ccxt_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any] | None]:
+    """Run the bundled Rust public-market quickstart with this wheel's Python environment."""
+    if args.rows is not None:
+        raise ValueError("--rows 仅适用于 sample profile")
+    if args.report_output is not None:
+        raise ValueError("--report-output 目前仅适用于 sample profile")
+    formats = "html" if args.format is None else args.format
+    if formats != "html":
+        raise ValueError("ccxt profile 目前生成 HTML 报告；请使用 --format html")
+
+    # Fail before creating a project or opening a network connection when the optional
+    # exchange dependency is absent or differs from the version covered by request-shape checks.
+    from qianxing_ccxt import CcxtExchangeClient
+
+    CcxtExchangeClient._load_ccxt()
+
+    from .report_renderer import require_report_renderer
+
+    renderer = require_report_renderer(args.cli)
+    executable = renderer["path"]
+    if not executable:
+        raise ValueError("匹配当前 Python wheel 的 qx-cli 不可用；请重新安装 qianxing wheel 或传入 --cli PATH")
+
+    exchange = args.exchange or "okx"
+    days = args.days if args.days is not None else 30
+    timeframe = args.timeframe or "1h"
+    instrument = args.instrument or f"BTC/USDT:USDT.{exchange.upper()}"
+    project = Path(args.directory).expanduser().resolve(strict=False)
+    command = [
+        executable,
+        "quickstart",
+        str(project),
+        "--profile",
+        "ccxt",
+        "--exchange",
+        exchange,
+        "--instrument",
+        instrument,
+        "--days",
+        str(days),
+        "--timeframe",
+        timeframe,
+        "--html",
+    ]
+    if args.as_of_ms is not None:
+        command.extend(("--as-of-ms", str(args.as_of_ms)))
+    if args.strategy is not None:
+        command.extend(("--strategy", args.strategy))
+    if args.force:
+        command.append("--force")
+
+    environment = os.environ.copy()
+    environment["QX_PYTHON"] = sys.executable
+    completed = subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=environment,
+    )
+    if completed.returncode != 0:
+        if completed.stdout:
+            print(completed.stdout, file=sys.stderr, end="" if completed.stdout.endswith("\n") else "\n")
+        if completed.stderr:
+            print(completed.stderr, file=sys.stderr, end="" if completed.stderr.endswith("\n") else "\n")
+        return completed.returncode or 2, None
+
+    html_report_path = next(
+        (
+            line.removeprefix("[Report] html=")
+            for line in completed.stdout.splitlines()
+            if line.startswith("[Report] html=")
+        ),
+        None,
+    )
+    if html_report_path is None:
+        raise ValueError("Rust quickstart exited successfully without reporting its HTML report path")
+    report_path = Path(html_report_path).expanduser()
+    if not report_path.is_absolute():
+        report_path = (Path.cwd() / report_path).resolve(strict=False)
+    if not report_path.is_file() or report_path.stat().st_size == 0:
+        raise ValueError(f"Rust quickstart did not produce a non-empty HTML report: {report_path}")
+    return 0, {
+        "status": "succeeded",
+        "profile": "ccxt",
+        "project_root": str(project),
+        "data": {
+            "source": f"ccxt:{exchange}",
+            "is_sample": False,
+            "access": "public_read_only",
+            "credentials_loaded": False,
+            "orders_submitted": False,
+        },
+        "market": {
+            "exchange": exchange,
+            "instrument": instrument,
+            "days": days,
+            "timeframe": timeframe,
+            "as_of_ms": args.as_of_ms,
+            "strategy": args.strategy or "ema_cross",
+        },
+        "report_renderer": renderer,
+        "report_format": "html",
+        "report_html_path": str(report_path),
+        "quickstart_output": completed.stdout,
+        "quickstart_diagnostics": completed.stderr,
     }
 
 

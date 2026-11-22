@@ -70,6 +70,21 @@ HTML 和三张独立 SVG，`-o reports/latest.html` 改输出前缀。
 
 ### B1 装
 
+普通使用直接从 PyPI 安装当前稳定包：
+
+```bash
+python -m pip install "qianxing==0.4.1"
+qianxing doctor
+```
+
+需要交易所真实公共行情时安装带 CCXT 的可选依赖：
+
+```bash
+python -m pip install "qianxing[ccxt]==0.4.1"
+```
+
+只有从 GitHub Release 下载 wheel 或测试本地构建时，才需要按文件名安装指定 wheel：
+
 ```bash
 python -m pip install dist/qianxing-0.4.1-cp310-abi3-win_amd64.whl    # 平台换成你的那份
 python -c "import qianxing as qx; print(qx.doctor()['status'])"
@@ -88,7 +103,9 @@ wheel 由 `tools/build_python_wheel.ps1` / `.sh` 从当前工作树构建；它�
 
 ### B2 零配置建一个能跑的项目
 
-如果希望把“建项目 → 预检 → 回测 → 生成并核验报告”合成一步：
+#### 离线样例（默认）
+
+把“建项目 → 预检 → 回测 → 生成并核验报告”合成一步：
 
 ```bash
 qianxing quickstart ./demo
@@ -104,6 +121,22 @@ qianxing quickstart ./demo --format html,xlsx,json --report-output reports/first
 ```bash
 qianxing quickstart ./demo --rows 120 --cli qx-cli
 ```
+
+#### 真实公共行情（只读 CCXT）
+
+当前 PyPI `qianxing==0.4.1` 用户先用 A 节的 `qx-cli quickstart --profile ccxt` 完成这条链路；v0.4.1 已支持 OKX、Binance
+和 Bitget 的真实公开永续合约行情。本文新增的 Python 便捷入口会随包含本次改动的后续 wheel 发布，发布后可直接运行：
+
+```bash
+qianxing quickstart ./okx-btc --profile ccxt --exchange okx --days 30 --timeframe 1h
+qianxing quickstart ./bitget-btc --profile ccxt --exchange bitget --days 52 --timeframe 15m
+```
+
+发布后，省略 `--instrument` 时会按交易所自动选用对应的 `BTC/USDT:USDT.<EXCHANGE>` 永续标的；策略默认 `ema_cross`，可用
+`--strategy` 指定单标的内置策略。该路径调用公共行情 API，不读取账户凭据、不启用执行 worker、不提交订单；结果中的
+`report_html_path` 给出报告文件路径，`quickstart_output` 保留完整 Rust CLI 首跑日志。默认只生成 HTML，因此 `--format` 仅接受 `html`。
+窗口限制、Bar 数量上限、缺失数据校验和
+费用来源沿用 Rust CLI 的 CCXT 首跑实现，详见上方 A 节。
 
 ### B3 分步创建与运行项目
 

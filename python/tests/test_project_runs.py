@@ -576,6 +576,109 @@ class ProjectRunTests(unittest.TestCase):
             self.assertEqual(cli.main(["quickstart", str(self.root)]), 7)
         render.assert_not_called()
 
+    def test_ccxt_quickstart_delegates_to_matching_cli_and_current_python(self):
+        from qianxing_ccxt import CcxtExchangeClient
+
+        output = io.StringIO()
+        renderer = {"path": "qx-cli", "origin": "bundled", "status": "ready"}
+        report_file = self.root / "report.html"
+        report_file.write_text("<html>verified report</html>", encoding="utf-8")
+        process = types.SimpleNamespace(
+            returncode=0,
+            stdout=f"[真实公开行情] exchange=bitget\n[Report] html={report_file}\n",
+            stderr="",
+        )
+        with patch.object(CcxtExchangeClient, "_load_ccxt"), \
+             patch("qianxing.report_renderer.require_report_renderer", return_value=renderer), \
+             patch("subprocess.run", return_value=process) as run, \
+             contextlib.redirect_stdout(output):
+            self.assertEqual(
+                cli.main([
+                    "quickstart", str(self.root / "crypto"), "--profile", "ccxt",
+                    "--exchange", "bitget", "--days", "52", "--timeframe", "15m",
+                    "--as-of-ms", "1700001000000",
+                ]),
+                0,
+            )
+
+        command = run.call_args.args[0]
+        self.assertEqual(command[:2], ["qx-cli", "quickstart"])
+        self.assertEqual(command[command.index("--exchange") + 1], "bitget")
+        self.assertEqual(command[command.index("--instrument") + 1], "BTC/USDT:USDT.BITGET")
+        self.assertEqual(command[command.index("--days") + 1], "52")
+        self.assertEqual(command[command.index("--as-of-ms") + 1], "1700001000000")
+        self.assertIn("--html", command)
+        self.assertEqual(run.call_args.kwargs["env"]["QX_PYTHON"], sys.executable)
+        self.assertEqual(run.call_args.kwargs["check"], False)
+        document = json.loads(output.getvalue())
+        self.assertEqual(document["profile"], "ccxt")
+        self.assertEqual(document["data"]["source"], "ccxt:bitget")
+        self.assertFalse(document["data"]["is_sample"])
+        self.assertFalse(document["data"]["orders_submitted"])
+        self.assertEqual(document["report_html_path"], str(report_file))
+        self.assertIn(f"[Report] html={report_file}", document["quickstart_output"])
+
+    def test_ccxt_quickstart_checks_extra_before_resolving_renderer_or_running(self):
+        from qianxing_ccxt import CcxtExchangeClient
+
+        with patch.object(CcxtExchangeClient, "_load_ccxt", side_effect=RuntimeError("install qianxing[ccxt]")), \
+             patch("qianxing.report_renderer.require_report_renderer") as renderer, \
+             patch("subprocess.run") as process, \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                cli.main(["quickstart", str(self.root / "crypto"), "--profile", "ccxt"]),
+                2,
+            )
+        renderer.assert_not_called()
+        process.assert_not_called()
+        self.assertIn("install qianxing[ccxt]", self.output.getvalue())
+
+    def test_quickstart_rejects_ccxt_options_in_sample_profile_before_writing(self):
+        with patch.object(cli, "init_strategy_project") as initialize, \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                cli.main(["quickstart", str(self.root / "sample"), "--exchange", "okx"]),
+                2,
+            )
+        initialize.assert_not_called()
+        self.assertIn("require --profile ccxt", self.output.getvalue())
+
+    def test_ccxt_quickstart_rejects_unsupported_report_formats_before_network(self):
+        from qianxing_ccxt import CcxtExchangeClient
+
+        with patch.object(CcxtExchangeClient, "_load_ccxt"), \
+             patch("qianxing.report_renderer.require_report_renderer") as renderer, \
+             patch("subprocess.run") as process, \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                cli.main([
+                    "quickstart", str(self.root / "crypto"), "--profile", "ccxt",
+                    "--format", "html,json",
+                ]),
+                2,
+            )
+        renderer.assert_not_called()
+        process.assert_not_called()
+        self.assertIn("请使用 --format html", self.output.getvalue())
+
+    def test_ccxt_quickstart_does_not_report_success_without_a_written_html_file(self):
+        from qianxing_ccxt import CcxtExchangeClient
+
+        process = types.SimpleNamespace(
+            returncode=0,
+            stdout="[真实公开行情] exchange=okx\n[Report] html=missing-report.html\n",
+            stderr="",
+        )
+        with patch.object(CcxtExchangeClient, "_load_ccxt"), \
+             patch("qianxing.report_renderer.require_report_renderer", return_value={"path": "qx-cli"}), \
+             patch("subprocess.run", return_value=process), \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                cli.main(["quickstart", str(self.root / "crypto"), "--profile", "ccxt"]),
+                2,
+            )
+        self.assertIn("did not produce a non-empty HTML report", self.output.getvalue())
+
     def test_latest_report_refuses_failed_corrupt_or_ambiguous_runs(self):
         with self.assertRaisesRegex(ValueError, "no project runs"):
             runs.latest_project_run_id(self.root)

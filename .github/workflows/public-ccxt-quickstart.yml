@@ -14,7 +14,9 @@ on:
       - "crates/qx-xingban/src/backtest/**"
       - "crates/qx-risk/src/**"
       - "crates/qx-adapter/src/ccxt.rs"
+      - "python/qianxing/cli.py"
       - "python/qianxing_ccxt/**"
+      - "python/tests/test_project_runs.py"
       - "tools/build_python_wheel.sh"
       - "python/pyproject.toml"
       - "deploy/qianxing.runtime.ccxt.example.json"
@@ -127,7 +129,7 @@ jobs:
           test -n "$(find dist -maxdepth 1 -type f -name '*.whl' -print -quit)"
           target/release/qx-cli version
           mkdir -p "$RUNNER_TEMP/public-ccxt-acceptance"
-      - name: Fetch real public market data, backtest, and render report
+      - name: Run the installed Python wheel through real public data and render a report
         env:
           EXCHANGE: ${{ matrix.exchange }}
           INSTRUMENT: ${{ matrix.instrument }}
@@ -142,7 +144,6 @@ jobs:
           "$PYTHON_BIN" -m pip install --disable-pip-version-check --no-deps "$GITHUB_WORKSPACE"/dist/*.whl
           "$PYTHON_BIN" -c 'import qianxing_bridge; print("native_extension=loaded")'
           "$PYTHON_BIN" -m pip install --disable-pip-version-check ccxt==4.5.89
-          cli="$GITHUB_WORKSPACE/target/release/qx-cli"
           project="$ACCEPTANCE_ROOT/$EXCHANGE/project"
           home="$ACCEPTANCE_ROOT/$EXCHANGE/home"
           mkdir -p "$home"
@@ -151,9 +152,9 @@ jobs:
           export QX_PYTHON="$PYTHON_BIN"
           log="$ACCEPTANCE_ROOT/$EXCHANGE/quickstart.log"
           mkdir -p "$(dirname "$log")"
-          "$cli" quickstart "$project" \
+          "$PYTHON_BIN" -m qianxing.cli quickstart "$project" \
             --profile ccxt --days "$ACCEPTANCE_DAYS" --timeframe 15m --as-of-ms "$AS_OF_MS" \
-            --exchange "$EXCHANGE" --instrument "$INSTRUMENT" --html \
+            --exchange "$EXCHANGE" --instrument "$INSTRUMENT" \
             2>&1 | tee "$log"
           test -s "$project/qianxing.project.json"
           test -s "$project/qianxing.ccxt.public.json"
@@ -191,7 +192,7 @@ jobs:
           PY
           printf 'exchange=%s\ninstrument=%s\nreport=%s\n' "$EXCHANGE" "$INSTRUMENT" "$report" \
             > "$ACCEPTANCE_ROOT/$EXCHANGE/result.txt"
-          sha256sum "$cli" > "$ACCEPTANCE_ROOT/$EXCHANGE/qx-cli.sha256"
+          sha256sum "$GITHUB_WORKSPACE/target/release/qx-cli" > "$ACCEPTANCE_ROOT/$EXCHANGE/qx-cli.sha256"
           python --version > "$ACCEPTANCE_ROOT/$EXCHANGE/python-version.txt" 2>&1
           "$PYTHON_BIN" -c 'import ccxt; print(ccxt.__version__)' > "$ACCEPTANCE_ROOT/$EXCHANGE/ccxt-version.txt"
       - name: Upload quickstart project, real-data lineage, report, and logs

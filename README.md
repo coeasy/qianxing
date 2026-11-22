@@ -86,6 +86,27 @@ Python 策略的未来数据扰动与预热长度敏感性检查见[策略偏差
 
 ## 快速开始
 
+### 从 PyPI 安装并完成首跑
+
+只体验回测与离线图表：
+
+```bash
+python -m pip install "qianxing==0.4.1"
+qianxing quickstart ./qianxing-demo
+```
+
+用交易所真实公开 K 线回测（需要网络，不需要账户密钥，也不会下单）：
+
+```bash
+cargo install --git https://github.com/coeasy/qianxing --tag v0.4.1 --locked qx-cli
+python -m pip install "qianxing[ccxt]==0.4.1"
+qx-cli quickstart ./qianxing-okx --profile ccxt --exchange okx --days 30 --timeframe 1h --html
+```
+
+第一条使用明确标注的离线样例数据；第二条使用当前 v0.4.1 Rust CLI 支持的 OKX、Binance 和 Bitget 公开永续行情。
+Python `qianxing quickstart --profile ccxt` 的便捷入口正在本次开发中，会随包含该改动的后续 wheel 发布；当前 PyPI
+0.4.1 用户请使用上面的 `qx-cli` 命令。完整参数、Python 策略与分步数据工作流见[首跑指南](docs/first-run.md)。
+
 要把回测引擎集成到 Rust 应用，v0.4.1 crates.io 发布与独立消费者验收完成后，在 `Cargo.toml` 添加 `qx-sdk = "0.4.1"`；[独立 Rust SDK 快速入门](examples/rust-sdk-quickstart/README.md)保留固定到 `v0.4.0` 的可复现历史示例。
 
 下面这段是可复制的常用链路示例，写法是在**源码仓库里**直接用 cargo 跑；已经按[安装指南](docs/installation.md)装好的人会
