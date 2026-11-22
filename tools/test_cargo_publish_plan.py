@@ -201,6 +201,7 @@ class RustSdkPublisherGuardTest(unittest.TestCase):
         )
         self.assertIn("path: publisher", workflow)
         self.assertIn("path: release-source", workflow)
+        self.assertIn("ref: ${{ github.event.repository.default_branch }}", workflow)
         self.assertIn("ref: ${{ inputs.release_tag }}", workflow)
         self.assertIn("--root release-source", workflow)
 
