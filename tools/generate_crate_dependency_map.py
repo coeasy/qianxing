@@ -313,6 +313,13 @@ def main() -> int:
                 print(f"stale generated file: {path.relative_to(ROOT).as_posix()}", file=sys.stderr)
             print("Run `python tools/generate_crate_dependency_map.py` and commit the results.", file=sys.stderr)
             return 1
+        cycles = dependency_map["cycles"]
+        if cycles["normal_build"] or cycles["dev_involving"]:
+            print("Cargo workspace dependency cycles are not allowed:", file=sys.stderr)
+            for group_name, components in cycles.items():
+                for component in components:
+                    print(f"- {group_name}: {' -> '.join(component)}", file=sys.stderr)
+            return 1
         print(
             f"Crate dependency map is current: {dependency_map['workspace_package_count']} packages, "
             f"{dependency_map['internal_edge_count']} internal edges."
