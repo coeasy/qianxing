@@ -6,8 +6,8 @@
 `crates/qx-sdk/examples/quickstart.rs`，独立消费者在 `crates/qx-sdk/tests/independent_consumer.rs`，
 本文是迁移指南。
 
-初次使用 Rust SDK 可直接运行[独立快速入门工程](../examples/rust-sdk-quickstart/README.md)，
-它自带教学数据并固定到 `v0.4.0` 提交，不依赖本仓库的其他文件。
+初次体验可运行[独立快速入门工程](../examples/rust-sdk-quickstart/README.md)，
+它自带教学数据并固定到 `v0.4.0` 提交，用于复现历史 Git 安装路径；当前正式版本请使用下方 crates.io 依赖。
 需要连接运行中的 API，可参考源码工作区内的[可选 HTTP 适配器](../crates/qx-sdk-http/README.md)；
 该适配器尚未发布，必须使用包含它的源码版本。
 
@@ -33,7 +33,7 @@ v0.4.1 crates.io 发布和独立消费者验收完成后，普通用户可使用
 qx-sdk = "0.4.1"
 ```
 
-在该闭环完成前，使用下面的 Git 依赖；即使 crates.io 包已上传，也应等发布工作流的独立消费者验证通过后再切换。
+需要复现旧版源码或测试尚未发布的源码时，可使用下面固定到完整提交的 Git 依赖；一般用户应使用上面的 crates.io 版本。
 
 仓库外消费者在内部 crate 尚未发布到公开 registry 时，可以直接锁定已推送的 Git 提交；SDK 及其同仓路径依赖都从同一个不可变提交解析：
 
@@ -190,7 +190,7 @@ Bar Provider 的 `ProviderBarFrame::dataset_manifest(...)` 与 Python `fetch_bar
 
 ## 已知缺口（不要在发布文案里说成"已有"）
 
-**crates.io 状态更新（2026-11-22）：** PR [#11](https://github.com/coeasy/qianxing/pull/11) 已合并；续发工作流 [run #3](https://github.com/coeasy/qianxing/actions/runs/45015034546) 从 `main` 读取发布器、从不可变 `v0.4.1` tag 读取源码。修复旧 package-closure 归档误用后，Cargo 在 `qx-datastruct 0.4.1` 成功上传并可查询后移除了 `target/package` 归档，发布器因此安全停止。crates.io 当前有 4/14 个闭包包版本：`qx-core`、`qx-control`、`qx-guanxing`、`qx-datastruct`；另 10 个（含 `qx-sdk`）未发布。新修复会在上传前使用正式 crates.io 配置重新生成 canonical Cargo 归档并保存 checksum，清理旧归档后调用 `cargo publish`，再将预先保存的 checksum 与 registry 响应比对，不依赖 Cargo 上传后保留本地归档。需在 CI 通过并合并后，继续使用 `release_tag=v0.4.1`、确认值 `qx-sdk@0.4.1` 从默认分支续发。独立 Cargo home 的 crates.io consumer（70 根 Bar 快速入门）仍待验收；`CARGO_REGISTRY_TOKEN` 与发布权限已配置，异常时流程继续失败关闭，不会重复上传已确认版本。
+**crates.io 状态更新（2026-11-22，已完成）：** PR [#13](https://github.com/coeasy/qianxing/pull/13) 已合并。发布工作流 [run #4](https://github.com/coeasy/qianxing/actions/runs/45019067095) 从默认分支读取发布器、从不可变 `v0.4.1` tag 读取源码，依序发布了 14 个 crate，并逐包核对 canonical SHA-256 与 crates.io。工作流还在独立 Cargo home 中从 crates.io 安装 `qx-sdk 0.4.1`，运行 70 根教学 Bar 快速入门并复核结果：1 笔成交，`Verified: true`。由于 crates.io 上传限流，工作流按服务器给出的时间从同一 tag 安全续跑；已确认 checksum 一致的版本会跳过，不会重复上传。样例使用教学数据，不代表真实历史行情或交易所验收。
 
 ## Rust 远端 Paper 算法生命周期与事件游标
 
