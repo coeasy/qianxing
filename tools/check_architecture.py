@@ -16052,7 +16052,7 @@ def performance_baseline_check() -> None:
 def report_generation_capacity_check() -> None:
     """报告生成必须有复现驱动器和绑定同一回测结果的实测证据。"""
     driver = ROOT / "benchmarks" / "run_report_capacity.py"
-    evidence_path = ROOT / "maturity/evidence/report-generation-capacity-2026-10-23.json"
+    evidence_path = ROOT / "maturity/evidence/report-generation-capacity-2026-11-22.json"
     source = driver.read_text(encoding="utf-8") if driver.is_file() else ""
     has_driver_contract = all(
         token in source
@@ -16097,7 +16097,8 @@ def report_generation_capacity_check() -> None:
                 and row.get("scope_claim") == "report_generation_only"
                 for row in workloads
             )
-            script_hash_matches = evidence.get("benchmark_script_sha256") == hashlib.sha256(driver.read_bytes()).hexdigest()
+            source = driver.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+            script_hash_matches = evidence.get("benchmark_script_sha256") == hashlib.sha256(source).hexdigest()
             evidence_valid = (
                 evidence.get("evidence_kind") == "verified_research_report_generation_capacity"
                 and bool(evidence.get("binary_sha256"))
@@ -16120,7 +16121,7 @@ def report_generation_capacity_check() -> None:
     benchmark_readme = ROOT / "benchmarks/README.md"
     readme_text = benchmark_readme.read_text(encoding="utf-8") if benchmark_readme.is_file() else ""
     evidence_registered = (
-        "report-generation-capacity-2026-10-23.json" in capabilities_text
+        "report-generation-capacity-2026-11-22.json" in capabilities_text
         and "run_report_capacity.py" in capabilities_text
         and "run_report_capacity.py" in readme_text
     )
@@ -16134,7 +16135,7 @@ def report_generation_capacity_check() -> None:
 def adaptive_search_capacity_check() -> None:
     """Adaptive-search capacity evidence must cover multiple sizes/budgets reproducibly."""
     driver = ROOT / "benchmarks" / "run_adaptive_search_capacity.py"
-    evidence_path = ROOT / "maturity/evidence/adaptive-search-capacity-2026-10-23.json"
+    evidence_path = ROOT / "maturity/evidence/adaptive-search-capacity-2026-11-22.json"
     source = driver.read_text(encoding="utf-8") if driver.is_file() else ""
     has_driver_contract = all(
         token in source
@@ -16174,7 +16175,8 @@ def adaptive_search_capacity_check() -> None:
                 for row in workloads
                 if isinstance(row, dict)
             )
-            script_hash_matches = evidence.get("benchmark_script_sha256") == hashlib.sha256(driver.read_bytes()).hexdigest()
+            source = driver.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+            script_hash_matches = evidence.get("benchmark_script_sha256") == hashlib.sha256(source).hexdigest()
             evidence_valid = (
                 evidence.get("evidence_kind") == "verified_adaptive_search_capacity"
                 and evidence.get("replay_verified") is True
@@ -16197,7 +16199,7 @@ def adaptive_search_capacity_check() -> None:
     benchmark_readme = ROOT / "benchmarks/README.md"
     readme_text = benchmark_readme.read_text(encoding="utf-8") if benchmark_readme.is_file() else ""
     registered = (
-        "adaptive-search-capacity-2026-10-23.json" in capabilities_text
+        "adaptive-search-capacity-2026-11-22.json" in capabilities_text
         and "run_adaptive_search_capacity.py" in capabilities_text
         and "run_adaptive_search_capacity.py" in readme_text
     )
@@ -16211,7 +16213,7 @@ def adaptive_search_capacity_check() -> None:
 def adaptive_search_cost_neighborhood_capacity_check() -> None:
     """Fee-neighborhood capacity evidence must measure complete, deterministic stress replays."""
     driver = ROOT / "benchmarks" / "run_cost_neighborhood_capacity.py"
-    evidence_path = ROOT / "maturity/evidence/adaptive-search-cost-neighborhood-capacity-2026-10-23.json"
+    evidence_path = ROOT / "maturity/evidence/adaptive-search-cost-neighborhood-capacity-2026-11-22.json"
     source = driver.read_text(encoding="utf-8") if driver.is_file() else ""
     driver_valid = all(
         token in source
@@ -16255,7 +16257,8 @@ def adaptive_search_cost_neighborhood_capacity_check() -> None:
                 for row in workloads
                 if isinstance(row, dict)
             )
-            script_hash_matches = evidence.get("benchmark_script_sha256") == hashlib.sha256(driver.read_bytes()).hexdigest()
+            source = driver.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+            script_hash_matches = evidence.get("benchmark_script_sha256") == hashlib.sha256(source).hexdigest()
             evidence_valid = (
                 evidence.get("evidence_kind") == "verified_adaptive_search_cost_neighborhood_capacity"
                 and bool(evidence.get("binary_sha256"))
@@ -16277,7 +16280,7 @@ def adaptive_search_cost_neighborhood_capacity_check() -> None:
     benchmark_readme = ROOT / "benchmarks/README.md"
     readme_text = benchmark_readme.read_text(encoding="utf-8") if benchmark_readme.is_file() else ""
     registered = (
-        "adaptive-search-cost-neighborhood-capacity-2026-10-23.json" in capabilities_text
+        "adaptive-search-cost-neighborhood-capacity-2026-11-22.json" in capabilities_text
         and "run_cost_neighborhood_capacity.py" in capabilities_text
         and "run_cost_neighborhood_capacity.py" in readme_text
     )

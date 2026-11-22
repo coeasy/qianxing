@@ -21,7 +21,7 @@ Rust CLI 与 Python wheel 由 tag 发布流水线构建，并随 GitHub Release 
 前置只有一样：Rust 工具链（本轮实测 `cargo 1.98.1` / `rustc 1.98.1`）。稳定安装优先下载 GitHub Release 对应平台的 `qx-cli` 二进制；从源码仓库固定 tag 安装可在仓库外执行：
 
 ```bash
-cargo install --git https://github.com/coeasy/qianxing --tag v0.4.0 --locked qx-cli
+cargo install --git https://github.com/coeasy/qianxing --tag v0.4.1 --locked qx-cli
 ```
 
 在仓库根目录开发时可用 `cargo install --path crates/qx-cli --locked`；完全离线且依赖缓存齐全时再加 `--offline`。当前没有 `cargo install qianxing` 的 crates.io 发布包。
@@ -128,8 +128,8 @@ uv venv .venv-qx --python 3.12
 # #276：基础安装零强制第三方依赖，离线也能装成，不再需要 --no-deps
 uv pip install --offline dist/qianxing-0.4.0-cp310-abi3-win_amd64.whl
 python -c "import qianxing as qx; print(qx.doctor())"
-# PyPI 安装（v0.4.0 发布工作流完成后）
-python -m pip install "qianxing==0.4.0"
+# PyPI 安装（v0.4.1 发布工作流完成后）
+python -m pip install "qianxing==0.4.1"
 # PyPI 可选 extras 示例
 python -m pip install "qianxing[a-share]"
 # 本地 wheel 已进入缓存时，也可离线安装可选 extras

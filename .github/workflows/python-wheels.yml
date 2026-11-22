@@ -77,7 +77,7 @@ jobs:
       contents: read
     uses: ./.github/workflows/public-ccxt-quickstart.yml
     with:
-      # The 0.4.0 public release is scoped to backtest/Paper. Use the explicit
+      # Public releases are scoped to backtest/Paper. Use the explicit
       # release profile so the reusable workflow runs real OKX + Bitget data
       # without adding geo-restricted Binance hosted acceptance.
       public_profile: release

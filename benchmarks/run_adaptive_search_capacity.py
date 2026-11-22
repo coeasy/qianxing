@@ -33,6 +33,11 @@ def sha256_file(path: Path) -> str:
     return sha256_bytes(path.read_bytes())
 
 
+def sha256_source_file(path: Path) -> str:
+    source = path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    return sha256_bytes(source)
+
+
 def percentile(values: list[float], percent: float) -> float:
     ordered = sorted(values)
     index = min(len(ordered) - 1, round(percent * (len(ordered) - 1)))
@@ -247,7 +252,7 @@ def main() -> int:
         "binary_sha256": sha256_file(binary),
         "measurement_source_fingerprint_schema": MEASUREMENT_SOURCE_FINGERPRINT_SCHEMA,
         "measurement_source_fingerprint": measurement_source_fingerprint(ROOT),
-        "benchmark_script_sha256": sha256_file(Path(__file__).resolve()),
+        "benchmark_script_sha256": sha256_source_file(Path(__file__).resolve()),
         "scenario": (
             "qx-cli app run-experiment using seeded TPE-KDE over an adaptive stepped-integer fast_window range"
             if args.space == "continuous"
