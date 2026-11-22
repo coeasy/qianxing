@@ -235,8 +235,14 @@ class RustSdkPublisherGuardTest(unittest.TestCase):
             target = root / "target"
             archive = target / "package" / "qx-core-0.4.1.crate"
             archive.parent.mkdir(parents=True)
-            archive.write_bytes(b"canonical cargo package")
-            with patch("tools.publish_rust_sdk.subprocess.run") as run:
+            archive.write_bytes(b"stale local-patch archive")
+
+            def cargo_package(command, *, cwd, env, check):
+                self.assertEqual(command[:3], ["cargo", "package", "-p"])
+                self.assertFalse(archive.exists(), "canonical packaging must not reuse a preflight archive")
+                archive.write_bytes(b"canonical cargo package")
+
+            with patch("tools.publish_rust_sdk.subprocess.run", side_effect=cargo_package) as run:
                 checksum = package_registry_archive(
                     root, "qx-core", "0.4.1", target=target,
                     cargo_home=Path(temporary) / "cargo-home", environment={},
@@ -247,7 +253,7 @@ class RustSdkPublisherGuardTest(unittest.TestCase):
             self.assertNotIn("--config", command)
             self.assertEqual(checksum, hashlib.sha256(b"canonical cargo package").hexdigest())
 
-    def test_upload_checksum_comes_from_cargo_archive_created_by_publish(self):
+    def test_upload_checksum_comes_from_canonical_package_before_publish_consumes_it(self):
         from unittest.mock import patch
 
         with tempfile.TemporaryDirectory() as temporary:
@@ -256,19 +262,28 @@ class RustSdkPublisherGuardTest(unittest.TestCase):
             archive = target / "package" / "qx-core-0.4.1.crate"
             archive.parent.mkdir(parents=True)
             archive.write_bytes(b"stale local-patch archive")
+            canonical_archive = b"fresh canonical crates.io archive"
+            commands = []
 
-            def cargo_publish(command, *, cwd, env, check):
-                self.assertEqual(command[:3], ["cargo", "publish", "-p"])
-                self.assertFalse(archive.exists(), "publish must not reuse a preflight archive")
-                archive.write_bytes(b"fresh archive cargo publish uploads")
+            def cargo_run(command, *, cwd, env, check):
+                commands.append(command)
+                self.assertEqual(command[:2], ["cargo", command[1]])
+                if command[1] == "package":
+                    self.assertIn("--registry", command)
+                    self.assertIn("crates-io", command)
+                    archive.write_bytes(canonical_archive)
+                else:
+                    self.assertEqual(command[1], "publish")
+                    self.assertFalse(archive.exists(), "publish must not reuse the preflight archive")
+                    # Cargo removes the generated archive after a successful upload.
 
-            with patch("tools.publish_rust_sdk.subprocess.run", side_effect=cargo_publish) as run:
+            with patch("tools.publish_rust_sdk.subprocess.run", side_effect=cargo_run):
                 checksum = publish_one(
                     root, "qx-core", "0.4.1", target=target,
                     cargo_home=Path(temporary) / "cargo-home", environment={},
                 )
-            self.assertEqual(run.call_args.args[0][:3], ["cargo", "publish", "-p"])
-            self.assertEqual(checksum, hashlib.sha256(b"fresh archive cargo publish uploads").hexdigest())
+            self.assertEqual([command[1] for command in commands], ["package", "publish"])
+            self.assertEqual(checksum, hashlib.sha256(canonical_archive).hexdigest())
 
     def test_publish_requires_exact_package_version_clean_tag_and_token(self):
         valid = {"package": "qx-sdk", "version": "0.4.0", "publish": True,

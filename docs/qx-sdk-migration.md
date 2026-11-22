@@ -190,7 +190,7 @@ Bar Provider 的 `ProviderBarFrame::dataset_manifest(...)` 与 Python `fetch_bar
 
 ## 已知缺口（不要在发布文案里说成"已有"）
 
-**当前 crates.io 状态（2026-11-22）：** merged PR [#10](https://github.com/coeasy/qianxing/pull/10) 后，续发 run [45010778341](https://github.com/coeasy/qianxing/actions/runs/45010778341) 在 14 包闭包中验证了已存在的 `qx-core`、`qx-control`，随后发布 `qx-guanxing`，但因本地归档 checksum 与 crates.io 记录不一致而停止。因此 registry 现在有 3 个包版本，剩余 11 个（包括 `qx-sdk`）尚未发布。直接从 crates.io 下载的 `qx-guanxing 0.4.1` 归档与 registry API checksum 一致；包内 Cargo VCS metadata 指向 `v0.4.1` 的源码提交。排查发现，发布器此前可能复用了本地 package-closure 检查留下的 `target/package` 归档；修复将先删除这个旧归档，再让 `cargo publish` 生成本次上传文件。该修复通过 CI 并合并后，需从默认分支重派发工作流，`release_tag=v0.4.1`、确认值 `qx-sdk@0.4.1`。工作流将从默认分支读取发布器，从不可变 tag 读取源码，先核对 registry 中已有版本，再按依赖顺序续发，最后从独立 Cargo home 只经 crates.io 安装并运行 70 根 Bar 的消费者示例。仍需 Actions Secret `CARGO_REGISTRY_TOKEN` 和 crate 发布权限；token 不得用于 PR 分支。
+**crates.io 状态更新（2026-11-22）：** PR [#11](https://github.com/coeasy/qianxing/pull/11) 已合并；续发工作流 [run #3](https://github.com/coeasy/qianxing/actions/runs/45015034546) 从 `main` 读取发布器、从不可变 `v0.4.1` tag 读取源码。修复旧 package-closure 归档误用后，Cargo 在 `qx-datastruct 0.4.1` 成功上传并可查询后移除了 `target/package` 归档，发布器因此安全停止。crates.io 当前有 4/14 个闭包包版本：`qx-core`、`qx-control`、`qx-guanxing`、`qx-datastruct`；另 10 个（含 `qx-sdk`）未发布。新修复会在上传前使用正式 crates.io 配置重新生成 canonical Cargo 归档并保存 checksum，清理旧归档后调用 `cargo publish`，再将预先保存的 checksum 与 registry 响应比对，不依赖 Cargo 上传后保留本地归档。需在 CI 通过并合并后，继续使用 `release_tag=v0.4.1`、确认值 `qx-sdk@0.4.1` 从默认分支续发。独立 Cargo home 的 crates.io consumer（70 根 Bar 快速入门）仍待验收；`CARGO_REGISTRY_TOKEN` 与发布权限已配置，异常时流程继续失败关闭，不会重复上传已确认版本。
 
 ## Rust 远端 Paper 算法生命周期与事件游标
 
