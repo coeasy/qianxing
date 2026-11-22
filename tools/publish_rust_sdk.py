@@ -116,11 +116,17 @@ def package_registry_archive(root, name, version, *, target, cargo_home, environ
 
 
 def publish_one(root, name, version, *, target, cargo_home, environment):
+    archive = Path(target) / "package" / f"{name}-{version}.crate"
+    # The local package-closure preflight uses [patch.crates-io] overrides and
+    # leaves archives under target/package. Cargo may consider that archive
+    # fresh during publish and reuse it even though the registry dependency
+    # resolution differs. Force cargo publish to create the exact archive it
+    # uploads, then compare that artifact with the registry response.
+    archive.unlink(missing_ok=True)
     command = ["cargo", "publish", "-p", name, "--registry", "crates-io", "--locked"]
     child_env = environment.copy()
     child_env["CARGO_HOME"] = str(cargo_home)
     subprocess.run(command, cwd=root, env=child_env, check=True)
-    archive = Path(target) / "package" / f"{name}-{version}.crate"
     if not archive.is_file():
         raise ValueError(f"Cargo did not leave the uploaded registry archive for {name} {version}")
     return sha256_file(archive)
