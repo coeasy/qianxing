@@ -55,6 +55,64 @@ class MeasurementSourceFingerprintTests(unittest.TestCase):
             source.write_text("pub fn value() -> u8 { 2 }\n", encoding="utf-8")
             self.assertNotEqual(before, measurement_source_fingerprint(root))
 
+    def test_rust_comments_do_not_change_fingerprint_but_string_data_does(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "Cargo.toml").write_text(
+                '[workspace.package]\nversion = "0.2.1"\n', encoding="utf-8"
+            )
+            source = root / "crates" / "qx-demo" / "src" / "lib.rs"
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                '//! Initial module docs\n'
+                'pub const TEXT: &str = r###"\n'
+                '/// literal string content\n'
+                '/* literal string content */\n'
+                '"###;\n'
+                'pub const QUOTE: char = \'"\';\n'
+                'pub fn value() -> u8 { 1 }\n',
+                encoding="utf-8",
+            )
+            before = measurement_source_fingerprint(root)
+            source.write_text(
+                '//! Revised module docs with a different length\n'
+                '/// Added line docs\n'
+                'pub const TEXT: &str = r###"\n'
+                '/// literal string content\n'
+                '/* literal string content */\n'
+                '"###;\n'
+                'pub const QUOTE: char = \'"\';\n'
+                'pub fn value() -> u8 { 1 } // implementation comment\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(before, measurement_source_fingerprint(root))
+
+            source.write_text(
+                '//! Revised module docs with a different length\n'
+                '/// Added line docs\n'
+                'pub const TEXT: &str = r###"\n'
+                '/// changed literal string content\n'
+                '/* literal string content */\n'
+                '"###;\n'
+                'pub const QUOTE: char = \'"\';\n'
+                'pub fn value() -> u8 { 1 } // implementation comment\n',
+                encoding="utf-8",
+            )
+            self.assertNotEqual(before, measurement_source_fingerprint(root))
+
+            source.write_text(
+                '//! Revised module docs with a different length\n'
+                '/// Added line docs\n'
+                'pub const TEXT: &str = r###"\n'
+                '/// literal string content\n'
+                '/* literal string content */\n'
+                '"###;\n'
+                'pub const QUOTE: char = \'"\';\n'
+                'pub fn value() -> u8 { 2 } // implementation comment\n',
+                encoding="utf-8",
+            )
+            self.assertNotEqual(before, measurement_source_fingerprint(root))
+
     def test_build_and_task_scratch_rust_files_do_not_change_fingerprint(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
