@@ -190,7 +190,7 @@ Bar Provider 的 `ProviderBarFrame::dataset_manifest(...)` 与 Python `fetch_bar
 
 ## 已知缺口（不要在发布文案里说成"已有"）
 
-**当前 crates.io 状态（2026-11-22）：** 首次 v0.4.1 上传已成功发布 `qx-core` 和 `qx-control`，随后因归档 checksum 核验不一致而停止；`qx-sdk` 和依赖闭包中的其余 12 个 crate 尚未发布。修复后的续发工作流与发布器在 PR [#10](https://github.com/coeasy/qianxing/pull/10)，PR 尚未合并，因此该版本的注册表 clean-consumer 验收也尚未完成。合并后应从 GitHub Actions 默认分支手动调度工作流，将 `release_tag` 指定为 `v0.4.1`、确认值填写 `qx-sdk@0.4.1`；工作流会从默认分支读取发布器，并从不可变 tag 读取待发布源码。它先核对已发布版本，再按依赖顺序续发，最后从独立 Cargo home 只经 crates.io 安装并运行 70 根 Bar 的消费者示例。工作流仍要求 Actions Secret `CARGO_REGISTRY_TOKEN` 和 crate 发布权限；token 不得用于 PR 分支。
+**当前 crates.io 状态（2026-11-22）：** 首次 v0.4.1 上传在 14 包闭包中成功发布 `qx-core` 和 `qx-control`，随后因归档 checksum 核验不一致而停止；其余 12 个包（包括 `qx-sdk`）尚未发布。修复后的续发工作流与发布器在 PR [#10](https://github.com/coeasy/qianxing/pull/10)，PR 尚未合并，因此该版本的注册表 clean-consumer 验收也尚未完成。合并后应从 GitHub Actions 默认分支手动调度工作流，将 `release_tag` 指定为 `v0.4.1`、确认值填写 `qx-sdk@0.4.1`；工作流会从默认分支读取发布器，并从不可变 tag 读取待发布源码。它先核对已发布版本，再按依赖顺序续发，最后从独立 Cargo home 只经 crates.io 安装并运行 70 根 Bar 的消费者示例。工作流仍要求 Actions Secret `CARGO_REGISTRY_TOKEN` 和 crate 发布权限；token 不得用于 PR 分支。
 
 ## Rust 远端 Paper 算法生命周期与事件游标
 
