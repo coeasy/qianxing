@@ -8,11 +8,11 @@ The 2026-10-29 record and the following v0.4.0 candidate checks are historical s
 
 ## Current release status (2026-11-22)
 
-GitHub Release [`v0.4.1`](https://github.com/coeasy/qianxing/releases/tag/v0.4.1) is the current release and provides Windows x64, Linux x64, and macOS Apple Silicon CLI binaries plus platform wheels. PyPI `qianxing==0.4.1` is published. The independent Rust SDK is still not available from crates.io: `qx-sdk 0.4.1` has not been published, and the old `v0.4.0` tag cannot be reused. Registry publication remains a separate workflow and requires a new exact tag, the configured `CARGO_REGISTRY_TOKEN`, and an independent registry consumer check. The current capability and venue evidence remains in [`maturity/capabilities.yaml`](../maturity/capabilities.yaml); a GitHub Release or a green local test suite does not imply sandbox or production approval.
+GitHub Release [`v0.4.1`](https://github.com/coeasy/qianxing/releases/tag/v0.4.1) is the current release and provides Windows x64, Linux x64, and macOS Apple Silicon CLI binaries plus platform wheels. PyPI `qianxing==0.4.1` is published. The Rust SDK is not yet consumable from crates.io: the first v0.4.1 attempt published `qx-core` and `qx-control`, then stopped before publishing `qx-sdk` and the remaining 12 closure crates. PR [#10](https://github.com/coeasy/qianxing/pull/10) contains the resumable publisher fix; after merge, dispatch the workflow from the default branch with `release_tag=v0.4.1`, the configured `CARGO_REGISTRY_TOKEN`, and confirmation `qx-sdk@0.4.1`. The release tag is the source snapshot; the publisher code comes from the reviewed default branch. Registry clean-consumer validation remains pending. Current capability and venue evidence is in [`maturity/capabilities.yaml`](../maturity/capabilities.yaml); a GitHub Release or green local test suite does not imply sandbox or production approval.
 
 ## 安装
 
-Rust CLI 与 Python wheel 由 tag 发布流水线构建，并随 GitHub Release 提供。Python wheel 还会在全部发布门禁通过后通过 PyPI Trusted Publishing 发布。Rust CLI 提供平台二进制与源码安装路径；Rust SDK 的 14 个 crates.io 依赖包尚未上传，首次发布需按 [`qx-sdk` 发布说明](qx-sdk-migration.md#查看-rust-发布依赖) 完成 token、精确 tag 与独立消费者验收。
+Rust CLI 与 Python wheel 由 tag 发布流水线构建，并随 GitHub Release 提供。Python wheel 还会在全部发布门禁通过后通过 PyPI Trusted Publishing 发布。Rust CLI 提供平台二进制与源码安装路径；Rust SDK 的 14 包 crates.io 闭包已有 2 个包上传，剩余包及独立消费者验收需按 [`qx-sdk` 发布说明](qx-sdk-migration.md#查看-rust-发布依赖) 完成。
 只想要"装完跑第一轮"的人请先看[首跑：从安装到第一份报告](first-run.md) —— 那一页按安装方式分两支给可复制命令；本页讲的是每条路径的
 前置、构建器契约与踩过的坑。每条路径写的是**行为**与它的核对者，
 不是某一轮的计时读数：能当场重跑的行为直接写行为，跑不了的整跑读数一律写明"本轮没有重跑"，

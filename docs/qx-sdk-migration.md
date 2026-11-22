@@ -96,12 +96,13 @@ python tools/check_crates_io_artifacts.py qx-sdk --json
 任何预检都不保证 crate 名可注册或账户有权发布；无权/名称冲突时发布会停止并保留已成功部分，修复权限或包名后可重新核验。
 
 仓库另提供手动 GitHub Actions 工作流 `.github/workflows/publish-rust-crates.yml`：先在仓库 Actions secrets
-配置 crates.io 上传 token `CARGO_REGISTRY_TOKEN`，再从 `vX.Y.Z` tag 手动运行，并把确认输入精确填写为
-`qx-sdk@X.Y.Z`。工作流会要求 tag、token 和发布确认同时成立，再执行完整 14 包依赖闭包的预检、顺序上传、逐包
-checksum 等待与独立 crates.io quickstart。不要从分支运行，也不要把 token 写入仓库文件或命令参数。
+配置 crates.io 上传 token `CARGO_REGISTRY_TOKEN`，然后从**默认分支**运行 `workflow_dispatch`，将 `release_tag`
+设为精确的 `vX.Y.Z`，并把确认输入填写为 `qx-sdk@X.Y.Z`。工作流从默认分支读取已审阅的发布器，另行 checkout
+精确源码 tag，再执行依赖闭包预检、顺序上传、逐包 checksum 等待与独立 crates.io quickstart。不得从 PR 分支调度，
+也不要把 token 写入仓库文件或命令参数。
 首次发布会永久占用成功上传的 crate 名称和版本；如果中途失败，先检查 crates.io 已发布记录与 checksum，修复权限或
-名称冲突后从同一 tag 重跑，工具只会跳过字节完全一致且未撤回的版本。v0.4.1 发布必须从 `v0.4.1` tag 运行，确认值为
-`qx-sdk@0.4.1`；先完成 tag 工作流，再执行本工作流。请以 GitHub Actions 的逐包 checksum 和独立 crates.io quickstart 结果作为发布证据。
+名称冲突后从同一源码 tag 重新调度，工具只会跳过字节完全一致且未撤回的版本。续发 v0.4.1 时将 `release_tag` 设为
+`v0.4.1`、确认值设为 `qx-sdk@0.4.1`。请以 GitHub Actions 的逐包 checksum 和独立 crates.io quickstart 结果作为发布证据。
 
 ### 2. 导入前缀
 
@@ -189,6 +190,8 @@ Bar Provider 的 `ProviderBarFrame::dataset_manifest(...)` 与 Python `fetch_bar
 
 ## 已知缺口（不要在发布文案里说成"已有"）
 
+**当前 crates.io 状态（2026-11-22）：** 首次 v0.4.1 上传已成功发布 `qx-core` 和 `qx-control`，随后因归档 checksum 核验不一致而停止；`qx-sdk` 和依赖闭包中的其余 12 个 crate 尚未发布。修复后的续发工作流与发布器在 PR [#10](https://github.com/coeasy/qianxing/pull/10)，PR 尚未合并，因此该版本的注册表 clean-consumer 验收也尚未完成。合并后应从 GitHub Actions 默认分支手动调度工作流，将 `release_tag` 指定为 `v0.4.1`、确认值填写 `qx-sdk@0.4.1`；工作流会从默认分支读取发布器，并从不可变 tag 读取待发布源码。它先核对已发布版本，再按依赖顺序续发，最后从独立 Cargo home 只经 crates.io 安装并运行 70 根 Bar 的消费者示例。工作流仍要求 Actions Secret `CARGO_REGISTRY_TOKEN` 和 crate 发布权限；token 不得用于 PR 分支。
+
 ## Rust 远端 Paper 算法生命周期与事件游标
 
 `qx_sdk::RemoteApiClient<T>` 提供 Paper TWAP/VWAP 的 start/get/cancel/list 四个方法，
@@ -256,7 +259,7 @@ exclusive（仅返回 `seq > N`）。Rust `RemoteApiClient::get_run_events`、Py
 1. **RunHandle 的事件仅覆盖生命周期。** Rust/Python 本地句柄从 Rust worker 读取
    started / cancellation_requested / terminal 事件；远端按 Run 事件随运行快照保存，但不保证逐事件原子落盘。
    订单/成交级事实事件与账簿变更仍不在此事件列表中；`/events/live` 依然是全局服务端流。
-2. **Git 安装已做独立消费者验收；crates.io 上传与 registry consumer 验收仍未做。**
+2. **历史发布前快照（2026-11-21）：当时 Git 安装已做独立消费者验收，crates.io 上传与 registry consumer 验收尚未完成。**
    `python tools/check_rust_sdk_git_consumer.py` 会从 GitHub 拉取当前完整提交哈希，在 workspace 外构建真实消费者并运行数据校验、回测和结果复核。
    `python tools/cargo_publish_plan.py qx-sdk` 当前生成包含 14 个包的拓扑顺序；
    `python tools/check_rust_sdk_packages.py qx-sdk --offline --allow-dirty` 已离线打包并构建完整闭包，
@@ -266,16 +269,17 @@ exclusive（仅返回 `seq > N`）。Rust `RemoteApiClient::get_run_events`、Py
    `qx-spec`、`qx-strategy`、`qx-zhenlu`、`qx-xingban`、`qx-app`、`qx-execution`、`qx-sdk` 返回状态均为
    `crate_name_not_found_at_query_time`：当时没有任何同名 crate 的公开注册记录。
    这不代表名称已保留给本项目、名称一定可注册或账户有上传权；仍须以实际注册和发布权限为准。
-   checksum 核验器已能在版本记录存在时拦截已撤回版本和同版本异构件。当前没有已发布记录可供校验。
-   本机 Cargo dry-run 被全局 `crates-io → tuna` 源替换及索引连接问题挡住；所以在线 API 元数据可查，Cargo 正式 registry
-   解析/安装链仍未验收。未执行任何上传。
+    checksum 核验器当时可在版本记录存在时拦截已撤回版本和同版本异构件。该次只读检查早于随后发布的 `qx-core 0.4.1` 和
+    `qx-control 0.4.1`；发布后的部分失败与当前续发步骤以上方状态为准。本机 Cargo dry-run 曾被全局 `crates-io → tuna`
+    源替换及索引连接问题挡住，故当时没有完成正式 registry 解析/安装链，也没有上传任何 crate。
 3. **统一启动能力预检尚未闭环。** 现有能力是分层实现的：`BacktestSpec::validate` 校验显式产品规格、
    费用/成本模型与 tick/lot 约束；Provider `DataRequest` 有不发起 I/O 的候选匹配；Live 服务提交前有
    精确订单形状/成熟度预检，私有账户读取也有操作范围预检。缺口是没有一个面向用户的统一 readiness 报告，
    把数据源候选、venue/产品/账户模式、市场规则有效期、身份与风险输入、订阅/账户权限汇总成一份启动结果；
    上述纯目录预检也不验证凭据是否可用、上游是否连通或 testnet 实际验收。对应各局部检查仍需保留 fail-closed。
-4. **Live 未验收。** 门面不改变实盘授权边界：`CallerCapability::Live` 仍是默认关闭的独立授权，
-   且没有任何 testnet conformance 记录。
+4. **Live 与 testnet 未验收。** 门面不改变实盘授权边界：`CallerCapability::Live` 仍是默认关闭的独立授权。
+   最新 CI 的 Binance testnet 作业只运行无凭据 fail-closed 检查；API key/secret 未配置，所以真实 testnet 步骤被跳过，
+   不构成订单 conformance 证据。OKX/Bitget 当前通过的是无凭据的公共历史行情回测，不是 testnet 或生产下单验收。
 
 ## 兼容性承诺
 
