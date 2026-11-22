@@ -251,6 +251,11 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      - name: Validate benchmark fingerprint and regression comparator
+        run: >-
+          python3 -m unittest
+          benchmarks.tests.test_source_fingerprint
+          benchmarks.tests.test_compare_baseline
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
