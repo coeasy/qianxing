@@ -11182,7 +11182,7 @@ ENVELOPE_PRIMITIVES = (
 
 # 借用统一策略的三方（连接器重连 / 调度器重试 / 存储尝试计数）。
 RETRY_CONSUMERS = (
-    "crates/qx-adapter/src/binance.rs",
+    "crates/qx-adapter/src/binance/user_stream.rs",
     "crates/qx-scheduler/src/retry_policy.rs",
     "crates/qx-storage/src/lib.rs",
 )
@@ -26841,7 +26841,9 @@ def venue_stream_idle_pacing_check() -> None:
         _text_or_empty(ROOT / "crates/qx-service/src/ccxt_stream_retry.rs")
     )
     websocket = production_text(_text_or_empty(ROOT / "crates/qx-adapter/src/lib.rs"))
-    binance = production_text(_text_or_empty(ROOT / "crates/qx-adapter/src/binance.rs"))
+    binance = production_text(
+        _text_or_empty(ROOT / "crates/qx-adapter/src/binance/user_stream.rs")
+    )
     ccxt_tests = _text_or_empty(ROOT / "crates/qx-cli/tests/unit/ccxt_stream_retry_budget.rs")
     websocket_tests = _text_or_empty(ROOT / "crates/qx-adapter/src/tests.rs")
     idle_start = ccxt.find("if ccxt_watch_reply_is_idle(event)")

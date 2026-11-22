@@ -455,7 +455,7 @@ enum FramePoll {
 const MAX_WEBSOCKET_FRAME_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_WEBSOCKET_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
 /// 一次 `poll_websocket_message` 里最多消费多少条帧：调用方的停机令牌只在 poll 返回之后
-/// 才读得到（`binance.rs` 的 `while !should_stop()`），对端持续塞 ping 或续帧时这条是唯一的出口。
+/// 才读得到（`binance/user_stream.rs` 的 `while !should_stop()`），对端持续塞 ping 或续帧时这条是唯一的出口。
 const MAX_WEBSOCKET_FRAMES_PER_POLL: usize = 64;
 
 /// 套接字读超时不是断链：`set_read_timeout` 之后 `read_exact` 以 `WouldBlock`/`TimedOut` 返回，把它当成会话故障会让"连着但没数据"的账户在几个窗口内被判死。
