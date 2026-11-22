@@ -23,15 +23,42 @@ A 支自带一份样例 BarFrame，B 支要么用内置合成样例，要么装�
 
 ## A. 只装 CLI（不需要 Python）【已实现】
 
-前置只有 Rust 工具链。装好后 `qx-cli` 落在 `~/.cargo/bin`，**在任意目录**都能跑，不需要把仓库带着走：
+最快方式是从 [GitHub 最新 Release](https://github.com/coeasy/qianxing/releases/latest) 下载对应平台的预编译 CLI，无需安装 Rust 或 Python。
+v0.4.1 对应资产名为 Windows x64 `qx-cli-v0.4.1-Windows-X64.exe`、Linux x64 `qx-cli-v0.4.1-Linux-X64`、
+Apple Silicon `qx-cli-v0.4.1-macOS-ARM64`；Release 同时提供 SHA-256 校验文件。下载后在文件所在目录直接运行：
+
+```powershell
+# Windows x64
+Invoke-WebRequest https://github.com/coeasy/qianxing/releases/download/v0.4.1/qx-cli-v0.4.1-Windows-X64.exe -OutFile qx-cli.exe
+.\qx-cli.exe quickstart my-qx --html
+```
 
 ```bash
-cargo install --path crates/qx-cli --locked     # 完全离线的机器再加 --offline
+# Linux x64（Debian 12 / Ubuntu 22.04 基线）
+curl -L https://github.com/coeasy/qianxing/releases/download/v0.4.1/qx-cli-v0.4.1-Linux-X64 -o qx-cli
+chmod +x qx-cli
+./qx-cli quickstart my-qx --html
+```
+
+```bash
+# macOS Apple Silicon
+curl -L https://github.com/coeasy/qianxing/releases/download/v0.4.1/qx-cli-v0.4.1-macOS-ARM64 -o qx-cli
+chmod +x qx-cli
+./qx-cli quickstart my-qx --html
+```
+
+要将 `qx-cli` 安装到 PATH 并由 Cargo 编译，可在仓库外固定到当前 tag：
+
+```bash
+cargo install --git https://github.com/coeasy/qianxing --tag v0.4.1 --locked qx-cli
 qx-cli quickstart my-qx                          # 建 macd 项目 → 静态检查 → 回测 → 读回摘要 → 安全状态
 qx-cli quickstart my-rsi --strategy rsi           # 同一条链路直接运行 RSI 内置策略
 qx-cli quickstart my-ashare --profile ashare     # 建 A 股样例项目 → 静态检查 → 回测 → 读回摘要 → 安全状态
 qx-cli quickstart my-okx --profile ccxt --days 30 --timeframe 1h --html  # 真实公开行情 → 成本冻结 → 回测 → HTML 报告
 ```
+
+已在仓库内开发时可用 `cargo install --path crates/qx-cli --locked`；该方式需要完整源码和 Rust 工具链。Release 二进制没有
+仓库相对路径依赖，可从任意工作目录运行。
 
 `quickstart` 内部执行的就是下面这五条；它只写 `my-qx/` 这一个目录，产物落项目内 `data/`。
 任一步失败就停下，只回显**那一步**的命令原文，以退出码 2 结束：
