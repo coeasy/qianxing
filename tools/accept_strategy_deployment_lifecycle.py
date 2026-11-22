@@ -9,6 +9,7 @@ import http.cookiejar
 import json
 import os
 import platform
+import re
 import signal
 import socket
 import ssl
@@ -32,6 +33,30 @@ def free_loopback_port() -> int:
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise RuntimeError(message)
+
+
+def diagnostic_log_tail(path: Path, secret_values: list[str], limit: int = 8192) -> str:
+    """Return a bounded, credential-redacted tail for failed CI evidence."""
+    with path.open("rb") as stream:
+        stream.seek(0, os.SEEK_END)
+        size = stream.tell()
+        stream.seek(max(0, size - limit))
+        text = stream.read(limit).decode("utf-8", errors="replace")
+    if size > limit:
+        text = f"[earlier log content omitted; showing last {limit} bytes]\n{text}"
+    for secret in sorted((item for item in secret_values if len(item) >= 4), key=len, reverse=True):
+        text = text.replace(secret, "[REDACTED]")
+    text = re.sub(
+        r"(?i)(authorization\s*[:=]\s*(?:bearer\s+)?)[^\s,;]+",
+        r"\1[REDACTED]",
+        text,
+    )
+    text = re.sub(
+        r"(?i)(password|token|secret|api[_-]?key)(\s*[:=]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)",
+        r"\1\2[REDACTED]",
+        text,
+    )
+    return text
 
 
 def openssl(binary: Path, *args: str) -> None:
@@ -694,6 +719,34 @@ def main() -> int:
         for label, path in (("supervisor", work_dir / "supervisor.log"), ("console", work_dir / "console.log")):
             if path.exists():
                 result.setdefault("log_sha256", {})[label] = hashlib.sha256(path.read_bytes()).hexdigest()
+        if result.get("outcome") == "failed":
+            secret_values = [token]
+            secret_markers = ("TOKEN", "SECRET", "PASSWORD", "CREDENTIAL", "API_KEY", "DSN")
+            secret_values.extend(
+                value
+                for name, value in child_env.items()
+                if value and any(marker in name.upper() for marker in secret_markers)
+            )
+            diagnostic_paths: list[tuple[str, Path]] = [
+                ("supervisor", work_dir / "supervisor.log"),
+                ("console", work_dir / "console.log"),
+            ]
+            worker_logs = sorted(
+                (work_dir / "data" / "process-logs").glob("*.err.log"),
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )[:3]
+            diagnostic_paths.extend((f"worker_stderr_{path.name}", path) for path in worker_logs)
+            tails: dict[str, str] = {}
+            for label, path in diagnostic_paths:
+                if not path.is_file():
+                    continue
+                try:
+                    tails[label] = diagnostic_log_tail(path, secret_values, limit=6144)
+                except OSError as error:
+                    tails[label] = f"[unable to read diagnostic log: {type(error).__name__}]"
+            if tails:
+                result["diagnostic_log_tails"] = tails
     evidence_path.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({key: value for key, value in result.items() if key != "final_projection"}, ensure_ascii=False))
     try:

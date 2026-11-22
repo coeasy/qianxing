@@ -9,7 +9,10 @@ import urllib.error
 from tools.cargo_publish_plan import build_plan, check_crates_io, inspect_crates_io
 from tools.check_crates_io_artifacts import compare_artifacts
 from tools.publish_rust_sdk import (
+    inspect_registry_decisions,
+    package_registry_archive,
     publication_decision,
+    publish_one,
     validate_publish_request,
     validate_registry_consumer_output,
     wait_for_published_checksum,
@@ -196,14 +199,70 @@ class RustSdkPublisherGuardTest(unittest.TestCase):
             r"(?ms)^      - name: Publish crates in dependency order and verify a clean registry consumer\n"
             r"        env:\n          CARGO_REGISTRY_TOKEN: \$\{\{ secrets\.CARGO_REGISTRY_TOKEN \}\}",
         )
+        self.assertIn("path: publisher", workflow)
+        self.assertIn("path: release-source", workflow)
+        self.assertIn("ref: ${{ github.event.repository.default_branch }}", workflow)
+        self.assertIn("ref: ${{ inputs.release_tag }}", workflow)
+        self.assertIn("--root release-source", workflow)
 
     def test_registry_decision_is_resumable_but_conflicts_fail_closed(self):
-        self.assertEqual(publication_decision("published_artifact_matches"), "skip")
+        self.assertEqual(publication_decision("version_exists"), "verify_existing")
         self.assertEqual(publication_decision("version_not_registered"), "publish")
         self.assertEqual(publication_decision("crate_name_not_found_at_query_time"), "publish")
         for status in ("published_artifact_mismatch", "published_version_yanked", "query_failed"):
             with self.subTest(status=status), self.assertRaisesRegex(ValueError, "refusing to publish"):
                 publication_decision(status)
+
+    def test_registry_inventory_rejects_yanked_and_keeps_existing_versions_for_archive_verification(self):
+        plan = {"packages": [package("a"), package("b")]}
+        responses = iter(({"status": "version_exists", "checksum": "a" * 64, "yanked": False},
+                          {"status": "no_registry_record"}))
+        decisions = inspect_registry_decisions(plan, inspect=lambda *_: next(responses), sleep=lambda _: None)
+        self.assertEqual([item["action"] for item in decisions], ["verify_existing", "publish"])
+        self.assertEqual(decisions[0]["registry_checksum"], "a" * 64)
+        with self.assertRaisesRegex(ValueError, "published_version_yanked"):
+            inspect_registry_decisions(
+                {"packages": [package("a")]},
+                inspect=lambda *_: {"status": "version_exists", "checksum": "a" * 64, "yanked": True},
+                sleep=lambda _: None,
+            )
+
+    def test_existing_registry_archive_is_rebuilt_without_preflight_patches(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "source"
+            target = root / "target"
+            archive = target / "package" / "qx-core-0.4.1.crate"
+            archive.parent.mkdir(parents=True)
+            archive.write_bytes(b"canonical cargo package")
+            with patch("tools.publish_rust_sdk.subprocess.run") as run:
+                checksum = package_registry_archive(
+                    root, "qx-core", "0.4.1", target=target,
+                    cargo_home=Path(temporary) / "cargo-home", environment={},
+                )
+            command = run.call_args.args[0]
+            self.assertIn("--registry", command)
+            self.assertIn("crates-io", command)
+            self.assertNotIn("--config", command)
+            self.assertEqual(checksum, hashlib.sha256(b"canonical cargo package").hexdigest())
+
+    def test_upload_checksum_comes_from_cargo_archive_created_by_publish(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "source"
+            target = root / "target"
+            archive = target / "package" / "qx-core-0.4.1.crate"
+            archive.parent.mkdir(parents=True)
+            archive.write_bytes(b"archive cargo publish uploads")
+            with patch("tools.publish_rust_sdk.subprocess.run") as run:
+                checksum = publish_one(
+                    root, "qx-core", "0.4.1", target=target,
+                    cargo_home=Path(temporary) / "cargo-home", environment={},
+                )
+            self.assertEqual(run.call_args.args[0][:3], ["cargo", "publish", "-p"])
+            self.assertEqual(checksum, hashlib.sha256(b"archive cargo publish uploads").hexdigest())
 
     def test_publish_requires_exact_package_version_clean_tag_and_token(self):
         valid = {"package": "qx-sdk", "version": "0.4.0", "publish": True,

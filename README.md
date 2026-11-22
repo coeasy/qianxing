@@ -86,6 +86,29 @@ Python 策略的未来数据扰动与预热长度敏感性检查见[策略偏差
 
 ## 快速开始
 
+### 从 PyPI 安装并完成首跑
+
+只体验回测与离线图表：
+
+```bash
+python -m pip install "qianxing==0.4.1"
+qianxing quickstart ./qianxing-demo
+```
+
+用交易所真实公开 K 线回测（需要网络，不需要账户密钥，也不会下单）：
+
+先从 [GitHub 最新 Release](https://github.com/coeasy/qianxing/releases/latest) 下载对应平台的预编译 `qx-cli`，放进 PATH 或在命令里写完整路径；这条首跑不需要 Rust 工具链。
+同时将 `QX_PYTHON` 指向安装了 `qianxing[ccxt]` 的 Python 解释器。平台资产名、校验文件和环境设置命令见[首跑指南](docs/first-run.md)。
+
+```bash
+python -m pip install "qianxing[ccxt]==0.4.1"
+qx-cli quickstart ./qianxing-okx --profile ccxt --exchange okx --days 30 --timeframe 1h --html
+```
+
+第一条使用明确标注的离线样例数据；第二条使用当前 v0.4.1 Rust CLI 支持的 OKX、Binance 和 Bitget 公开永续行情。
+Python `qianxing quickstart --profile ccxt` 的便捷入口正在本次开发中，会随包含该改动的后续 wheel 发布；当前 PyPI
+0.4.1 用户请使用上面的 `qx-cli` 命令。完整参数、Python 策略与分步数据工作流见[首跑指南](docs/first-run.md)。
+
 要把回测引擎集成到 Rust 应用，v0.4.1 crates.io 发布与独立消费者验收完成后，在 `Cargo.toml` 添加 `qx-sdk = "0.4.1"`；[独立 Rust SDK 快速入门](examples/rust-sdk-quickstart/README.md)保留固定到 `v0.4.0` 的可复现历史示例。
 
 下面这段是可复制的常用链路示例，写法是在**源码仓库里**直接用 cargo 跑；已经按[安装指南](docs/installation.md)装好的人会
@@ -282,7 +305,7 @@ CI 作业说明与完整文档索引见[项目指南](docs/project-guide.md)。
 
 ## 版本与现状
 
-> 本节读数对应 2026-11-10 的 0.4.0 候选快照。功能成熟度以 [`maturity/capabilities.yaml`](maturity/capabilities.yaml) 为准；可检索的产品能力目录见[能力目录](docs/capability-catalog.md)，每条未完成项的说明与收口条件保留在机器可读台账中。
+> 下列测试数量、候选产物和 CI 编号对应 2026-11-10 的 0.4.0 候选快照，不是当前发行盘点。当前能力成熟度以 [`maturity/capabilities.yaml`](maturity/capabilities.yaml) 为准；可检索的产品能力目录见[能力目录](docs/capability-catalog.md)，每条未完成项的说明与收口条件保留在机器可读台账中。
 
 本机 Windows 验收结果：
 
@@ -296,9 +319,11 @@ Linux 本机补充验收：
 
 - Debian 12 x86_64 Podman 中，workspace 全目标测试、Python crate 测试、PostgreSQL 16/NATS JetStream 集成合同、Release CLI 与 `cp310-abi3-manylinux_2_34_x86_64` wheel 均通过；wheel 结构审计、隔离安装、端到端 smoke、包内 CLI 启动及重复构建哈希一致。记录见 [Linux Podman 发布预检](maturity/evidence/linux-podman-release-preflight-2026-11-09.json)。
 
-成熟度台账目前登记 **33** 项能力，其中 `implementation=true` 为 **29** 项、`code_tested=true` 为 **29** 项；另有 2 项仅在 feature matrix 条件下验证。`sandbox_tested` 与 `production_approved` 均为 **0**。台账记录 **126** 条限制项和 **797** 条证据路径，其中 **115** 条明确标记为未收口。实现与 CI/本机测试证据不能替代外部环境验收。
+在该 0.4.0 候选快照中，成熟度台账登记 **33** 项能力，其中 `implementation=true` 为 **29** 项、`code_tested=true` 为 **29** 项；另有 2 项仅在 feature matrix 条件下验证。`sandbox_tested` 与 `production_approved` 均为 **0**。台账记录 **126** 条限制项和 **797** 条证据路径，其中 **115** 条标记为未收口。实现与 CI/本机测试证据不能替代外部环境验收。
 
-当前已验证的交付边界是本机可重放的研究/回测与 Paper 工作流、Linux 和 Windows x86_64 的 0.4.0 候选构建，以及 PostgreSQL/NATS 集成路径。代码提交 `7c3cf30b` 的 PR CI run #458 通过 33/33 jobs；文档收尾后的 PR head `856dc4e7` 之 run #461 attempt 4 也通过 33/33 jobs，覆盖 Rust workspace、架构分片、SQLite/PostgreSQL/NATS 特性、三平台 Python wheel、三平台 C++ SDK、Linux/PostgreSQL 恢复及性能回归；证据见[最新托管 CI](https://github.com/coeasy/qianxing/actions/runs/42852812040)。Windows x64 0.4.0 CLI 与 CPython stable-ABI wheel 已从干净源码提交 `7c3cf30b` 重建，通过 wheel 结构审计、全新 Python 3.13 venv 离线安装、完整 wheel smoke、A 股 quickstart 及重复构建一致性检查；构件哈希与环境记录见[Windows 候选预检](maturity/evidence/windows-wheel-release-preflight-2026-11-11-7c3cf30b.json)。本机主链、前后端对拍、孤儿与停机审计记录见[逻辑完整性审计](maturity/evidence/release-logic-integrity-audit-2026-11-11.json)。此前 Linux C ABI 签名加载验收见[签名加载证据](maturity/evidence/linux-c-abi-signature-acceptance-2026-11-10.json)。正式发布仍需 tag 工作流生成并复核最终发行资产与来源证明、供应商签名角色目录及市场规格审阅、授权测试网往返、生产批准与发布签名。授权测试网往返与生产批准仍是外部发布门槛；Live 保证金语义仍未关闭；CI 性能回归通过不代表已达到所有性能目标。
+历史验收当时的交付边界是本机可重放的研究/回测与 Paper 工作流，以及 Linux/Windows 候选构建和 PostgreSQL/NATS 集成路径。该快照中的 CI、候选预检和逻辑审计链接仅说明对应提交的测试结果；不能再据此说正式发布尚未发生。
+
+**当前发行状态（2026-11-22）：** GitHub 最新 Release 为 [`v0.4.1`](https://github.com/coeasy/qianxing/releases/tag/v0.4.1)，包含 34 个发行附件；PyPI 已发布 `qianxing==0.4.1`。`qx-sdk 0.4.1` 尚未出现在 crates.io，SDK 的 registry 安装和独立消费者验收仍未完成。能力范围、sandbox 与 production 证据等级仍以当前成熟度台账为准；GitHub/PyPI 发布不等于 sandbox 或生产批准。当前 Python `quickstart --profile ccxt` 入口在开发中，尚未进入 PyPI 0.4.1 wheel；现版 Python 用户可按上方指南经 `qx-cli` 运行真实公共行情回测。
 
 运行时插件目前只支持启动期静态装配，不支持动态加载或热替换。Paper 成交与 Bar、Tick、订单簿回测使用各自的数据档位内核；共享风控与归约规则不表示撮合实现相同。详细能力、限制和各项证据请查阅能力目录与成熟度台账。
 ## 许可

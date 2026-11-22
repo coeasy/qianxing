@@ -1,14 +1,18 @@
 # 安装与构建指南
 
-## R20 clean-install acceptance — historical Windows record
+## R20 clean-install acceptance — historical Windows record (2026-10-29)
 
 2026-10-29 recorded acceptance `R20-AC01` run `b82ef62c-d3a3-47ad-bbb3-ffca6901ccd7` on Windows 11 AMD64 with CPython 3.12.13. The mixed Python/Rust project metadata produced `qianxing-0.3.0-cp310-abi3-win_amd64.whl`; it installed in a fresh venv with no source-tree imports. `qx-cli` installed from the same source revision in an isolated root. SDK doctor reported native extension `matched`, app use cases `complete`, CLI `matched`, and schema catalog SHA-256 `c7e5863e86f7be138e7b90a91564c2fc664e53bdf39b5b29b5b5204e1e4510fa`. The CLI quickstart exited 0 and created the documented 16 project files; all 13 Python example modules compiled and the momentum strategy callback contract ran. The captured command log is `maturity/acceptance-artifacts/b82ef62c-d3a3-47ad-bbb3-ffca6901ccd7.log`.
 
-That 2026-10-29 record closed only the Windows leg at that time. The 0.4.0 candidate has since passed a Linux Debian 12 Podman workspace/CLI/Python wheel preflight ([Linux evidence](../maturity/evidence/linux-podman-release-preflight-2026-11-09.json)) and a clean Windows x64 wheel/CLI rebuild with isolated install and full smoke ([latest Windows evidence](../maturity/evidence/windows-wheel-release-preflight-2026-11-11-7c3cf30b.json)). Hosted CI also passed all 33 jobs for the release-candidate code and its subsequent documentation head, including Linux, macOS and Windows Python wheel jobs ([run #461](https://github.com/coeasy/qianxing/actions/runs/42852812040)). This supersedes the old pending-Linux sentence; it does not mean v0.4.0 has been tagged or published, or that the external venue/data/production approval gates are complete. The later [CI run #598](https://github.com/coeasy/qianxing/actions/runs/43362326534) also passed the Linux CPython 3.12 clean wheel/CLI install acceptance (R01 + R20), including doctor, package/schema checks, documented examples, and quickstart. The overall run was still in progress when this record was written; this Linux job result does not close venue or production approval gates.
+The 2026-10-29 record and the following v0.4.0 candidate checks are historical snapshots. They closed only the Windows leg at the time; the subsequent Linux Podman preflight, 33-job hosted CI run, and Linux clean-wheel acceptance are archived in the linked evidence. Those records do not describe the current release state.
+
+## Current release status (2026-11-22)
+
+GitHub Release [`v0.4.1`](https://github.com/coeasy/qianxing/releases/tag/v0.4.1) is the current release and provides Windows x64, Linux x64, and macOS Apple Silicon CLI binaries plus platform wheels. PyPI `qianxing==0.4.1` is published. The Rust SDK is not yet consumable from crates.io: the first v0.4.1 attempt published 2 of 14 closure crates (`qx-core` and `qx-control`), then stopped before publishing the remaining 12, including `qx-sdk`. PR [#10](https://github.com/coeasy/qianxing/pull/10) contains the resumable publisher fix; after merge, dispatch the workflow from the default branch with `release_tag=v0.4.1`, the configured `CARGO_REGISTRY_TOKEN`, and confirmation `qx-sdk@0.4.1`. The release tag is the source snapshot; the publisher code comes from the reviewed default branch. Registry clean-consumer validation remains pending. Current capability and venue evidence is in [`maturity/capabilities.yaml`](../maturity/capabilities.yaml); a GitHub Release or green local test suite does not imply sandbox or production approval.
 
 ## 安装
 
-Rust CLI 与 Python wheel 由 tag 发布流水线构建，并随 GitHub Release 提供。Python wheel 还会在全部发布门禁通过后通过 PyPI Trusted Publishing 发布。Rust CLI 提供平台二进制与源码安装路径；Rust SDK 的 14 个 crates.io 依赖包尚未上传，首次发布需按 [`qx-sdk` 发布说明](qx-sdk-migration.md#查看-rust-发布依赖) 完成 token、精确 tag 与独立消费者验收。
+Rust CLI 与 Python wheel 由 tag 发布流水线构建，并随 GitHub Release 提供。Python wheel 还会在全部发布门禁通过后通过 PyPI Trusted Publishing 发布。Rust CLI 提供平台二进制与源码安装路径；Rust SDK 的 14 包 crates.io 闭包已有 2 个包上传，剩余包及独立消费者验收需按 [`qx-sdk` 发布说明](qx-sdk-migration.md#查看-rust-发布依赖) 完成。
 只想要"装完跑第一轮"的人请先看[首跑：从安装到第一份报告](first-run.md) —— 那一页按安装方式分两支给可复制命令；本页讲的是每条路径的
 前置、构建器契约与踩过的坑。每条路径写的是**行为**与它的核对者，
 不是某一轮的计时读数：能当场重跑的行为直接写行为，跑不了的整跑读数一律写明"本轮没有重跑"，
@@ -18,7 +22,7 @@ Rust CLI 与 Python wheel 由 tag 发布流水线构建，并随 GitHub Release 
 
 ### A. 只装 CLI —— 最短路径，不需要 Python
 
-前置只有一样：Rust 工具链（本轮实测 `cargo 1.98.1` / `rustc 1.98.1`）。稳定安装优先下载 GitHub Release 对应平台的 `qx-cli` 二进制；从源码仓库固定 tag 安装可在仓库外执行：
+预编译 Release 二进制无需 Rust 工具链，首次使用优先下载[对应平台的 `qx-cli`](https://github.com/coeasy/qianxing/releases/latest)。从源码仓库固定 tag 编译安装时，需要 Rust 工具链（本轮实测 `cargo 1.98.1` / `rustc 1.98.1`），命令可在仓库外执行：
 
 ```bash
 cargo install --git https://github.com/coeasy/qianxing --tag v0.4.1 --locked qx-cli
@@ -68,7 +72,7 @@ qx-cli quickstart my-qx --strategy macd --html
 
 Paper 是单独的本地虚拟成交模型：买单按卖一价、卖单按买一价，按该档显示数量限量成交并按 client order id 顺序处理。它不模拟隐藏流动性、排队位置、交易所撮合延迟或市场冲击，也不与 Bar/L1/L2 回测撮合等价；`paper-check --json` 会在 `paper_check.execution_model` 中输出模型与限制，并在 `paper_risk_audit` 中只读汇总 Paper 账户已持久化的风控裁决（最多展示最近 100 条，定点原始值使用字符串）。这些裁决用于审计，不代表订单成交或盈亏。文件型 Paper EventLog 大小会显示在 `paper_risk_audit.storage_observation`；默认 1 GiB 起提示，可用 `QIANXING_EVENT_LOG_WARN_BYTES` 调整。SQLite/PostgreSQL 容量需由数据库侧监控；该命令不会自动轮转或删除日志。
 
-2026-11-22 Windows x64/MSVC 本地通过 `cargo install --path crates/qx-cli --locked --offline --root target/qx-cli-install-validation` 安装成功，优化版构建耗时 **6 分 54 秒**，安装出的 `qx-cli.exe --version` 正常返回 `0.4.0` 与构建身份。此验证复用了工作区 Cargo 构建缓存，不等于干净机器冷安装；首次使用应优先走 GitHub Release 预编译二进制，Cargo 源码安装保留给开发环境和可接受长构建时间的用户。该安装出的 binary 从仓库外目录运行 `help` 和 `quickstart <目录> --strategy macd --html` 成功：70 根示例 Bar、1 笔成交、`ready=true`、生成 HTML/SVG、项目 21 份文件，状态明确 `network_accessed=false`、`orders_sent=false`。同机三次离线示例 quickstart 用时 0.070/0.061/0.045 秒；这是本机小样例流程时间，不代表真实行情下载或大数据回测速度。构建身份带 `dirty`，它不是正式 tag 构建证据。行为链路另外由以下用例钉住：
+2026-11-22 的 Windows x64/MSVC 本地源码安装记录来自 0.4.0 候选快照：`cargo install --path ... --offline` 用时 **6 分 54 秒**，版本播报为 `0.4.0`，复用了工作区缓存且构建身份带 `dirty`。这只是历史开发构建读数，不是 v0.4.1 冷安装或发布件验收；首次使用应优先走上方 GitHub Release 预编译二进制。该历史 binary 从仓库外运行 quickstart 成功，记录只证明当时的离线样例路径。
 `help` / `init --strategy macd` / `doctor` / `backtest` / `report` / `status` 这六条在**仓库外**
 目录里的等价链路，由 `crates/qx-cli/tests/quickstart_first_run.rs` 钉成用例——同一条输入下
 `quickstart` 与逐条敲那五条的 `result_hash` 必须逐字符相同，本轮随整树测试跑绿。纯回测与 Paper
@@ -126,9 +130,9 @@ PYTHON=python/.venv/bin/python bash tools/build_python_wheel.sh
 ```bash
 uv venv .venv-qx --python 3.12
 # #276：基础安装零强制第三方依赖，离线也能装成，不再需要 --no-deps
-uv pip install --offline dist/qianxing-0.4.0-cp310-abi3-win_amd64.whl
+uv pip install --offline dist/qianxing-0.4.1-cp310-abi3-win_amd64.whl
 python -c "import qianxing as qx; print(qx.doctor())"
-# PyPI 安装（v0.4.1 发布工作流完成后）
+# PyPI 安装（v0.4.1）
 python -m pip install "qianxing==0.4.1"
 # PyPI 可选 extras 示例
 python -m pip install "qianxing[a-share]"

@@ -4,8 +4,8 @@
 Default mode is read-only except for building local Cargo package archives. An
 upload requires --publish, an exact confirmation string, a clean vX.Y.Z tag,
 and CARGO_REGISTRY_TOKEN in the environment. A failed partial release is safe
-to resume: already-published packages are skipped only when their registry
-checksum matches the local archive byte-for-byte.
+to resume: already-published packages are skipped only after Cargo regenerates
+the canonical registry archive and its checksum matches crates.io byte-for-byte.
 """
 import argparse
 import json
@@ -20,17 +20,18 @@ from pathlib import Path
 try:
     from .cargo_publish_plan import build_plan, inspect_crates_io
     from .check_package_distribution import validate_distribution
-    from .check_crates_io_artifacts import compare_artifacts
+    from .check_crates_io_artifacts import sha256_file
 except ImportError:
     from cargo_publish_plan import build_plan, inspect_crates_io
     from check_package_distribution import validate_distribution
-    from check_crates_io_artifacts import compare_artifacts
+    from check_crates_io_artifacts import sha256_file
 
 
 def publication_decision(status):
-    if status == "published_artifact_matches":
-        return "skip"
-    if status in {"version_not_registered", "crate_name_not_found_at_query_time"}:
+    if status == "version_exists":
+        return "verify_existing"
+    if status in {"name_exists", "no_registry_record", "version_not_registered",
+                  "crate_name_not_found_at_query_time"}:
         return "publish"
     raise ValueError(f"refusing to publish after registry status {status!r}")
 
@@ -95,11 +96,52 @@ def package_closure(root, package, allow_dirty, offline_package_check, *, json_m
                    stdout=sys.stderr if json_mode else None)
 
 
-def publish_one(root, name, *, cargo_home, environment):
+def package_registry_archive(root, name, version, *, target, cargo_home, environment):
+    """Regenerate the canonical registry package after its dependencies are published.
+
+    The closure preflight uses local [patch.crates-io] overrides so it can build
+    unpublished dependencies. Those overrides must not supply the checksum used
+    to verify a registry release: Cargo may normalize a dependent crate archive
+    differently when publishing it against the real registry.
+    """
+    command = ["cargo", "package", "-p", name, "--registry", "crates-io",
+               "--locked", "--no-verify"]
+    child_env = environment.copy()
+    child_env["CARGO_HOME"] = str(cargo_home)
+    subprocess.run(command, cwd=root, env=child_env, check=True)
+    archive = Path(target) / "package" / f"{name}-{version}.crate"
+    if not archive.is_file():
+        raise ValueError(f"Cargo did not create the canonical registry archive for {name} {version}")
+    return sha256_file(archive)
+
+
+def publish_one(root, name, version, *, target, cargo_home, environment):
     command = ["cargo", "publish", "-p", name, "--registry", "crates-io", "--locked"]
     child_env = environment.copy()
     child_env["CARGO_HOME"] = str(cargo_home)
     subprocess.run(command, cwd=root, env=child_env, check=True)
+    archive = Path(target) / "package" / f"{name}-{version}.crate"
+    if not archive.is_file():
+        raise ValueError(f"Cargo did not leave the uploaded registry archive for {name} {version}")
+    return sha256_file(archive)
+
+
+def inspect_registry_decisions(plan, *, inspect=inspect_crates_io, sleep=time.sleep, progress=None):
+    """Read every registry version before upload; verify archive identity per package later."""
+    decisions = []
+    for index, item in enumerate(plan["packages"]):
+        if index:
+            sleep(1)
+        name, version = item["name"], item["version"]
+        if progress is not None:
+            progress(index + 1, len(plan["packages"]), name)
+        remote = inspect(name, version)
+        if remote.get("status") == "version_exists" and remote.get("yanked"):
+            raise ValueError(f"refusing to publish after registry status 'published_version_yanked' for {name} {version}")
+        action = publication_decision(remote.get("status"))
+        decisions.append({"name": name, "version": version, "action": action,
+                          "status": remote.get("status"), "registry_checksum": remote.get("checksum")})
+    return decisions
 
 
 def wait_for_published_checksum(name, version, expected, *, inspect=inspect_crates_io,
@@ -158,15 +200,15 @@ def main():
     parser.add_argument("package", nargs="?", default="qx-sdk")
     parser.add_argument("--publish", action="store_true", help="upload the complete dependency closure")
     parser.add_argument("--confirm", help="exactly PACKAGE@VERSION; required with --publish")
+    parser.add_argument("--root", type=Path, default=None,
+                        help="release source checkout (must be clean and exactly tagged when publishing)")
     parser.add_argument("--allow-dirty", action="store_true", help="preflight only: package uncommitted changes")
     parser.add_argument("--offline-package-check", action="store_true",
                         help="build the local package closure from cached dependencies; registry checks remain online")
     parser.add_argument("--json", action="store_true", help="emit registry decisions as JSON")
     args = parser.parse_args()
-    root = Path(__file__).resolve().parents[1]
-    comparison = None
+    root = (args.root or Path(__file__).resolve().parents[1]).resolve()
     decisions = []
-    checksums = {}
     try:
         plan, version, target = load_publish_plan(root, args.package)
         clean, tag = git_release_identity(root)
@@ -178,35 +220,16 @@ def main():
         print("Building and verifying the complete local package closure.", file=sys.stderr if args.json else sys.stdout,
               flush=True)
         package_closure(root, args.package, args.allow_dirty, args.offline_package_check, json_mode=args.json)
-        comparison = compare_artifacts(
-            plan, target / "package",
+        decisions = inspect_registry_decisions(
+            plan,
             progress=lambda index, total, name: print(
-                f"Checking crates.io artifact {index}/{total}: {name}", file=sys.stderr, flush=True
+                f"Checking crates.io version {index}/{total}: {name}", file=sys.stderr, flush=True
             ),
         )
-        if comparison["registry_checked"]:
-            for item in comparison["packages"]:
-                action = publication_decision(item["status"])
-                decisions.append({"name": item["name"], "version": item["version"], "action": action,
-                                  "status": item["status"], "local_checksum": item["local_checksum"]})
-                checksums[item["name"]] = item["local_checksum"]
     except (OSError, ValueError, KeyError, json.JSONDecodeError, subprocess.CalledProcessError) as error:
         print(f"Rust SDK release preflight failed: {error}", file=sys.stderr)
         if isinstance(error, subprocess.CalledProcessError) and error.stderr:
             print(error.stderr.strip(), file=sys.stderr)
-        return 2
-
-    if not comparison["registry_checked"]:
-        if args.json:
-            print(json.dumps({"package": args.package, "version": version, "registry_check": comparison,
-                              "upload_enabled": False}, indent=2, ensure_ascii=False))
-        else:
-            print("Registry verification is incomplete or a published artifact conflicts:")
-            for item in comparison["packages"]:
-                print(f"  {item['name']} {item['version']}: {item['status']}")
-                if item.get("error"):
-                    print(f"    {item['error']}")
-            print("No upload was attempted.")
         return 2
 
     if args.json:
@@ -231,12 +254,20 @@ def main():
             cargo_home = Path(temporary) / "cargo-home"
             cargo_home.mkdir()
             for decision in decisions:
-                if decision["action"] == "skip":
+                if decision["action"] == "verify_existing":
+                    checksum = package_registry_archive(
+                        root, decision["name"], version, target=target,
+                        cargo_home=cargo_home, environment=environment,
+                    )
+                    wait_for_published_checksum(decision["name"], version, checksum)
                     print(f"Already published with matching checksum: {decision['name']} {version}", flush=True)
                     continue
                 print(f"Publishing {decision['name']} {version}", flush=True)
-                publish_one(root, decision["name"], cargo_home=cargo_home, environment=environment)
-                wait_for_published_checksum(decision["name"], version, checksums[decision["name"]])
+                checksum = publish_one(
+                    root, decision["name"], version, target=target,
+                    cargo_home=cargo_home, environment=environment,
+                )
+                wait_for_published_checksum(decision["name"], version, checksum)
             run_registry_consumer(root, version, cargo_home=cargo_home)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         print(f"Rust SDK release stopped; rerun after resolving the reported package: {error}", file=sys.stderr)

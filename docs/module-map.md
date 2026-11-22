@@ -1,5 +1,7 @@
 # 模块地图
 
+> 本页保留 crate 与关键内部模块的职责索引。Cargo workspace 的实际依赖边、依赖类型、目标条件、发布渠道和 owner 由 [生成的依赖图](crate-dependency-map.md) 汇总；机器可读版本在 [`maturity/crate-dependency-map.json`](../maturity/crate-dependency-map.json)，CI 会检查两者是否与锁定 Cargo 元数据一致。
+
 ## 模块
 
 | 模块 | 职责 |

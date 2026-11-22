@@ -23,15 +23,42 @@ A 支自带一份样例 BarFrame，B 支要么用内置合成样例，要么装�
 
 ## A. 只装 CLI（不需要 Python）【已实现】
 
-前置只有 Rust 工具链。装好后 `qx-cli` 落在 `~/.cargo/bin`，**在任意目录**都能跑，不需要把仓库带着走：
+最快方式是从 [GitHub 最新 Release](https://github.com/coeasy/qianxing/releases/latest) 下载对应平台的预编译 CLI，无需安装 Rust 或 Python。
+v0.4.1 对应资产名为 Windows x64 `qx-cli-v0.4.1-Windows-X64.exe`、Linux x64 `qx-cli-v0.4.1-Linux-X64`、
+Apple Silicon `qx-cli-v0.4.1-macOS-ARM64`；Release 同时提供 SHA-256 校验文件。下载后在文件所在目录直接运行：
+
+```powershell
+# Windows x64
+Invoke-WebRequest https://github.com/coeasy/qianxing/releases/download/v0.4.1/qx-cli-v0.4.1-Windows-X64.exe -OutFile qx-cli.exe
+.\qx-cli.exe quickstart my-qx --html
+```
 
 ```bash
-cargo install --path crates/qx-cli --locked     # 完全离线的机器再加 --offline
+# Linux x64（Debian 12 / Ubuntu 22.04 基线）
+curl -L https://github.com/coeasy/qianxing/releases/download/v0.4.1/qx-cli-v0.4.1-Linux-X64 -o qx-cli
+chmod +x qx-cli
+./qx-cli quickstart my-qx --html
+```
+
+```bash
+# macOS Apple Silicon
+curl -L https://github.com/coeasy/qianxing/releases/download/v0.4.1/qx-cli-v0.4.1-macOS-ARM64 -o qx-cli
+chmod +x qx-cli
+./qx-cli quickstart my-qx --html
+```
+
+要将 `qx-cli` 安装到 PATH 并由 Cargo 编译，可在仓库外固定到当前 tag：
+
+```bash
+cargo install --git https://github.com/coeasy/qianxing --tag v0.4.1 --locked qx-cli
 qx-cli quickstart my-qx                          # 建 macd 项目 → 静态检查 → 回测 → 读回摘要 → 安全状态
 qx-cli quickstart my-rsi --strategy rsi           # 同一条链路直接运行 RSI 内置策略
 qx-cli quickstart my-ashare --profile ashare     # 建 A 股样例项目 → 静态检查 → 回测 → 读回摘要 → 安全状态
 qx-cli quickstart my-okx --profile ccxt --days 30 --timeframe 1h --html  # 真实公开行情 → 成本冻结 → 回测 → HTML 报告
 ```
+
+已在仓库内开发时可用 `cargo install --path crates/qx-cli --locked`；该方式需要完整源码和 Rust 工具链。Release 二进制没有
+仓库相对路径依赖，可从任意工作目录运行。
 
 `quickstart` 内部执行的就是下面这五条；它只写 `my-qx/` 这一个目录，产物落项目内 `data/`。
 任一步失败就停下，只回显**那一步**的命令原文，以退出码 2 结束：
@@ -70,6 +97,21 @@ HTML 和三张独立 SVG，`-o reports/latest.html` 改输出前缀。
 
 ### B1 装
 
+普通使用直接从 PyPI 安装当前稳定包：
+
+```bash
+python -m pip install "qianxing==0.4.1"
+qianxing doctor
+```
+
+需要交易所真实公共行情时安装带 CCXT 的可选依赖：
+
+```bash
+python -m pip install "qianxing[ccxt]==0.4.1"
+```
+
+只有从 GitHub Release 下载 wheel 或测试本地构建时，才需要按文件名安装指定 wheel：
+
 ```bash
 python -m pip install dist/qianxing-0.4.1-cp310-abi3-win_amd64.whl    # 平台换成你的那份
 python -c "import qianxing as qx; print(qx.doctor()['status'])"
@@ -88,7 +130,9 @@ wheel 由 `tools/build_python_wheel.ps1` / `.sh` 从当前工作树构建；它�
 
 ### B2 零配置建一个能跑的项目
 
-如果希望把“建项目 → 预检 → 回测 → 生成并核验报告”合成一步：
+#### 离线样例（默认）
+
+把“建项目 → 预检 → 回测 → 生成并核验报告”合成一步：
 
 ```bash
 qianxing quickstart ./demo
@@ -104,6 +148,22 @@ qianxing quickstart ./demo --format html,xlsx,json --report-output reports/first
 ```bash
 qianxing quickstart ./demo --rows 120 --cli qx-cli
 ```
+
+#### 真实公共行情（只读 CCXT）
+
+当前 PyPI `qianxing==0.4.1` 用户先用 A 节的 `qx-cli quickstart --profile ccxt` 完成这条链路；v0.4.1 已支持 OKX、Binance
+和 Bitget 的真实公开永续合约行情。本文新增的 Python 便捷入口会随包含本次改动的后续 wheel 发布，发布后可直接运行：
+
+```bash
+qianxing quickstart ./okx-btc --profile ccxt --exchange okx --days 30 --timeframe 1h
+qianxing quickstart ./bitget-btc --profile ccxt --exchange bitget --days 52 --timeframe 15m
+```
+
+发布后，省略 `--instrument` 时会按交易所自动选用对应的 `BTC/USDT:USDT.<EXCHANGE>` 永续标的；策略默认 `ema_cross`，可用
+`--strategy` 指定单标的内置策略。该路径调用公共行情 API，不读取账户凭据、不启用执行 worker、不提交订单；结果中的
+`report_html_path` 给出报告文件路径，`quickstart_output` 保留完整 Rust CLI 首跑日志。默认只生成 HTML，因此 `--format` 仅接受 `html`。
+窗口限制、Bar 数量上限、缺失数据校验和
+费用来源沿用 Rust CLI 的 CCXT 首跑实现，详见上方 A 节。
 
 ### B3 分步创建与运行项目
 
