@@ -255,14 +255,20 @@ class RustSdkPublisherGuardTest(unittest.TestCase):
             target = root / "target"
             archive = target / "package" / "qx-core-0.4.1.crate"
             archive.parent.mkdir(parents=True)
-            archive.write_bytes(b"archive cargo publish uploads")
-            with patch("tools.publish_rust_sdk.subprocess.run") as run:
+            archive.write_bytes(b"stale local-patch archive")
+
+            def cargo_publish(command, *, cwd, env, check):
+                self.assertEqual(command[:3], ["cargo", "publish", "-p"])
+                self.assertFalse(archive.exists(), "publish must not reuse a preflight archive")
+                archive.write_bytes(b"fresh archive cargo publish uploads")
+
+            with patch("tools.publish_rust_sdk.subprocess.run", side_effect=cargo_publish) as run:
                 checksum = publish_one(
                     root, "qx-core", "0.4.1", target=target,
                     cargo_home=Path(temporary) / "cargo-home", environment={},
                 )
             self.assertEqual(run.call_args.args[0][:3], ["cargo", "publish", "-p"])
-            self.assertEqual(checksum, hashlib.sha256(b"archive cargo publish uploads").hexdigest())
+            self.assertEqual(checksum, hashlib.sha256(b"fresh archive cargo publish uploads").hexdigest())
 
     def test_publish_requires_exact_package_version_clean_tag_and_token(self):
         valid = {"package": "qx-sdk", "version": "0.4.0", "publish": True,
