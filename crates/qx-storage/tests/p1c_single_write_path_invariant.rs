@@ -70,7 +70,7 @@ fn exponential_backoff_arithmetic_exists_once() {
     assert!(normalized.contains("1_u128<<exponent"));
 
     // 调用方必须确实委托统一策略，而不是保留平行实现。
-    assert!(read("crates/qx-adapter/src/binance.rs").contains("retry::RetryPolicy"));
+    assert!(read("crates/qx-adapter/src/binance/user_stream.rs").contains("retry::RetryPolicy"));
     assert!(read("crates/qx-scheduler/src/retry_policy.rs").contains("qx_core::retry"));
 }
 
