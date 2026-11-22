@@ -41,9 +41,10 @@
 //!
 //! 另外两点如实记下，免得被读成"已经有了"：
 //! - **"异步"是句柄式不是 `Future` 式**：`qx-app` 的引擎是线程 + 通道，没有 executor。
-//! - **v0.4.1 发布验收已完成**：14 个 crates.io 包逐包 checksum 核验通过；干净 consumer 从
-//!   crates.io 安装 `qx-sdk 0.4.1` 后运行 70 根示例 Bar，结果为 1 笔成交且 `Verified: true`。
-//!   这是 Linux consumer 证据；尚未据此承诺 MSRV 或 Windows/macOS registry consumer 矩阵。
+//! - **v0.4.1 发布验收已完成**：14 个 crates.io 包逐包 checksum 核验通过；独立消费者在
+//!   Ubuntu、Windows、macOS 的干净 Cargo home 中安装 `qx-sdk 0.4.1`，均运行 70 根示例 Bar，
+//!   结果为 1 笔成交且 `Verified: true`（[consumer workflow](https://github.com/coeasy/qianxing/actions/runs/45030066158)）。
+//!   这不代表 MSRV 已验收；项目尚未声明最低 Rust 版本。
 //!
 //! ## 上手与迁移
 //!

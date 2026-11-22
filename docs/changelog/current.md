@@ -1,9 +1,9 @@
-# 0.4.1 发布准备（2026-11-22）
+# 0.4.1 正式发布与当前实现变更（2026-11-22）
 
 - 从已合并的 `main`（PR #8，commit `c7f51f8a`）开始准备新的补丁版本；旧 `v0.4.0` 发布与证据保持不可变。
 - Rust workspace 与内部依赖、Python 包及源码版本回退、C++ SDK、成熟度基线和九个目标 profile 统一升至 `0.4.1`；发布范围单独记录在 [`release-scope-0.4.1.md`](../release-scope-0.4.1.md)。
 - 重建 0.4.1 Release CLI 并刷新报告生成、自适应搜索及费用邻域三项过期证据；所有数据绑定当前二进制、源码和驱动摘要，并更新架构门禁。报告九格与两项搜索矩阵均通过复核，仍只描述本机合成负载，不提升完整产品 profile 状态。
-- 当前仍是发布准备状态。tag 工作流、PyPI/GitHub Release 构件、14 个 crates.io crate 和独立消费者必须在 `v0.4.1` 发布流程中逐项成功后，才能记录为已发布。
+- **v0.4.1 已正式发布：** GitHub Release、PyPI `qianxing==0.4.1` 和 crates.io 上的 14 个 Rust crate 均已完成；发布工作流 [45019067095](https://github.com/coeasy/qianxing/actions/runs/45019067095) 逐包校验 checksum。后续独立 consumer matrix [45030066158](https://github.com/coeasy/qianxing/actions/runs/45030066158) 在 Ubuntu、Windows、macOS 的干净 Cargo home 中均通过 70-bar quickstart（1 fill，`Verified: true`）。最低 Rust 版本尚未声明，MSRV 仍未验收；公开行情验收不代表 sandbox 或 production 批准。
 
 - `/metrics` 新增持久订单组生命周期 gauge，按账户/venue/状态聚合活动、待撤、部分成交和待对账组；读取损坏时明确 `metrics_available=0` 且不伪报零组，成功空目录仍标记可用。qx-service 126/126、架构快速门禁 373/373 通过。该读数不暴露订单标识，也不代表交易所实时健康。
 - Binance OCO 撤单新增连接器调用级契约回归：本地传输桩接收实际 `DELETE /api/v3/orderList` 请求，检查持久列表 ID、稳定列表客户 ID 与 symbol，并通过双腿终态报告后才产出目标子单撤单事实。适配器测试 108/108 通过；这是协议路径本地证据，不是 Binance Testnet 结果。
