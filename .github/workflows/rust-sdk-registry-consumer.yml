@@ -12,6 +12,12 @@ on:
 permissions:
   contents: read
 
+# Tracked fixtures include deterministic names that exceed the legacy Windows path limit.
+env:
+  GIT_CONFIG_COUNT: 1
+  GIT_CONFIG_KEY_0: core.longpaths
+  GIT_CONFIG_VALUE_0: 'true'
+
 jobs:
   consumer:
     name: Clean crates.io consumer (${{ matrix.os }})
