@@ -16097,7 +16097,8 @@ def report_generation_capacity_check() -> None:
                 and row.get("scope_claim") == "report_generation_only"
                 for row in workloads
             )
-            script_hash_matches = evidence.get("benchmark_script_sha256") == hashlib.sha256(driver.read_bytes()).hexdigest()
+            source = driver.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+            script_hash_matches = evidence.get("benchmark_script_sha256") == hashlib.sha256(source).hexdigest()
             evidence_valid = (
                 evidence.get("evidence_kind") == "verified_research_report_generation_capacity"
                 and bool(evidence.get("binary_sha256"))
@@ -16174,7 +16175,8 @@ def adaptive_search_capacity_check() -> None:
                 for row in workloads
                 if isinstance(row, dict)
             )
-            script_hash_matches = evidence.get("benchmark_script_sha256") == hashlib.sha256(driver.read_bytes()).hexdigest()
+            source = driver.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+            script_hash_matches = evidence.get("benchmark_script_sha256") == hashlib.sha256(source).hexdigest()
             evidence_valid = (
                 evidence.get("evidence_kind") == "verified_adaptive_search_capacity"
                 and evidence.get("replay_verified") is True
@@ -16255,7 +16257,8 @@ def adaptive_search_cost_neighborhood_capacity_check() -> None:
                 for row in workloads
                 if isinstance(row, dict)
             )
-            script_hash_matches = evidence.get("benchmark_script_sha256") == hashlib.sha256(driver.read_bytes()).hexdigest()
+            source = driver.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+            script_hash_matches = evidence.get("benchmark_script_sha256") == hashlib.sha256(source).hexdigest()
             evidence_valid = (
                 evidence.get("evidence_kind") == "verified_adaptive_search_cost_neighborhood_capacity"
                 and bool(evidence.get("binary_sha256"))

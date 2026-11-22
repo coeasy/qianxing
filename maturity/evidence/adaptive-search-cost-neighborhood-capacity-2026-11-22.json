@@ -16,7 +16,7 @@
   "binary_sha256": "4c39e916c8d642ef99d2ddb4b2091422e5f9d743757b45089302a52383eb5cdb",
   "measurement_source_fingerprint_schema": 4,
   "measurement_source_fingerprint": "249c647366145557d0ac84d2bb9b2d655ede7f66347b5e10f3c8cef28d6b1c9b",
-  "benchmark_script_sha256": "a7029f1ae4203d55aab85db63c945524fd3575f3df94f72e3fc6a8d37518925c",
+  "benchmark_script_sha256": "62b031736b934627883eedda1df842e2f7efb723057d65ac9eff48388498b582",
   "scenario": "seeded finite-grid TPE-KDE plus complete radius-1 fee-stress neighborhood replays",
   "profile_coverage_claim": false,
   "profile_target_statuses_updated": false,

@@ -16,7 +16,7 @@
   "binary_sha256": "4c39e916c8d642ef99d2ddb4b2091422e5f9d743757b45089302a52383eb5cdb",
   "measurement_source_fingerprint_schema": 4,
   "measurement_source_fingerprint": "249c647366145557d0ac84d2bb9b2d655ede7f66347b5e10f3c8cef28d6b1c9b",
-  "benchmark_script_sha256": "63bc4409205401968ad36c85287ee5849493f79da9c9858e7a3b11e5a512d858",
+  "benchmark_script_sha256": "86f2303ef8c71e595006177d4f55eeb566f253307fcb853db2f02ac79b52c9f7",
   "scenario": "qx-cli app run-experiment using seeded TPE-KDE over a finite fast_window grid",
   "objective": {
     "kind": "full_training_return"

@@ -16,7 +16,7 @@
   "binary_sha256": "4c39e916c8d642ef99d2ddb4b2091422e5f9d743757b45089302a52383eb5cdb",
   "measurement_source_fingerprint_schema": 4,
   "measurement_source_fingerprint": "249c647366145557d0ac84d2bb9b2d655ede7f66347b5e10f3c8cef28d6b1c9b",
-  "benchmark_script_sha256": "816d64033d4161325aa606077ab1b5e48fdc50867dabf072e8ffdcaf4441e91a",
+  "benchmark_script_sha256": "d6cf293b6f7a2e5e65551827fee3863c7d5e29bad30b1e2035524927d0066d70",
   "scenario": "qx-cli report JSON/HTML/XLSX with optional identity-bound diagnostic attachment over one replay-verified synthetic crypto-spot SMA backtest",
   "report_input_is_reused_across_formats": true,
   "profile_coverage_claim": false,
