@@ -32,8 +32,25 @@ async function renderReadModels(reports) {
     errorOf: () => "fixture error",
     async getJson(url) {
       if (url === paths.reconcileReports) return { ok: true, status: 200, body: reports };
+      if (url.startsWith(paths.controlAudit)) {
+        return {
+          ok: true,
+          status: 200,
+          body: {
+            schema_version: 1,
+            entries: [],
+            next_cursor: null,
+            has_more: false,
+            snapshot_through_sequence: 0,
+            oldest_available_sequence: null,
+            retired_records: 0,
+          },
+        };
+      }
       return { ok: true, status: 200, body: [] };
     },
+    state: { lastCommand: null },
+    URLSearchParams,
     advancePhases() {},
     renderControl() {},
   };

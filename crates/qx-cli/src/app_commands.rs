@@ -48,8 +48,9 @@ mod use_cases;
 pub(crate) fn dispatch(action: Option<AppCommand>) {
     let Some(action) = action else {
         eprintln!(
-            "[qx-cli · CLI] app 需要一个子命令：app <validate-dataset|backtest|provider-backtest|provider-depth-backtest|verify|read-report|read-depth-report|read-provider-report|read-provider-depth-report|read-multi-account-report|read-multi-account-joint-report|read-multi-leg-report|read-multi-leg-research-report|read-multi-leg-event-page|read-multi-market-event-page|read-multi-market-depth-event-page|read-multi-market-depth-research-report|compare-runs|plan-risk-parity|plan-algo-execution|run-experiment|run-depth-experiment|run-multi-leg-experiment|run-multi-market-experiment|depth-backtest|verify-depth|multi-leg-backtest|multi-market-backtest|multi-account-backtest|multi-account-depth-backtest> <spec.json>\n  \
+            "[qx-cli · CLI] app 需要一个子命令：app <validate-dataset|preflight-backtest|backtest|provider-backtest|provider-depth-backtest|verify|read-report|read-depth-report|read-provider-report|read-provider-depth-report|read-multi-account-report|read-multi-account-joint-report|read-multi-leg-report|read-multi-leg-research-report|read-multi-leg-event-page|read-multi-market-event-page|read-multi-market-depth-event-page|read-multi-market-depth-research-report|compare-runs|plan-risk-parity|plan-algo-execution|run-experiment|run-depth-experiment|run-multi-leg-experiment|run-multi-market-experiment|depth-backtest|verify-depth|multi-leg-backtest|multi-market-backtest|multi-account-backtest|multi-account-depth-backtest> <spec.json>\n  \
              validate-dataset <DatasetSpec.json>  校验一份数据集能否支撑 Bar 回测\n  \
+             preflight-backtest <BacktestSpec.json>  只读检查数据、策略预热与规则覆盖\n  \
              backtest <BacktestSpec.json>         跑一次 Bar 回测并落四份产物\n  \
              provider-backtest <RuntimeConfig.json> <ProviderBacktestSpec.json>  Run a shared Rust Provider backtest\n  \
              provider-depth-backtest <RuntimeConfig.json> <ProviderDepthBacktestSpec.json>  Run a shared Rust Provider depth backtest\n  \
@@ -83,6 +84,7 @@ pub(crate) fn dispatch(action: Option<AppCommand>) {
     };
     let result = match &action {
         AppCommand::ValidateDataset { spec } => use_cases::validate(spec),
+        AppCommand::PreflightBacktest { spec } => use_cases::preflight_backtest(spec),
         AppCommand::Backtest { spec } => use_cases::backtest(spec),
         AppCommand::ProviderBacktest { runtime, spec } => {
             use_cases::provider_backtest(runtime, spec)

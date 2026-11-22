@@ -2,6 +2,7 @@
 name = "qx-cli"
 description = "牵星 CLI：端到端回测演示与确定性自校验"
 version.workspace = true
+publish = false
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

@@ -2,6 +2,7 @@
 name = "qx-storage"
 description = "EventLog 与运行事实的可恢复文件存储边界"
 version.workspace = true
+publish = false
 edition.workspace = true
 license.workspace = true
 

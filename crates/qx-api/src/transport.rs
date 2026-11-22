@@ -214,6 +214,7 @@ pub(crate) fn write_http_response<S: Write>(
         403 => "Forbidden",
         404 => "Not Found",
         409 => "Conflict",
+        413 => "Content Too Large",
         422 => "Unprocessable Entity",
         429 => "Too Many Requests",
         500 => "Internal Server Error",
@@ -376,6 +377,22 @@ pub(crate) fn base64_encode(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use std::io;
+
+    #[test]
+    fn content_too_large_has_a_specific_http_status_reason() {
+        let mut response = Vec::new();
+        write_http_response(
+            &mut response,
+            &ApiResponse::json(
+                413,
+                r#"{"error":"control_audit_record_exceeds_response_budget"}"#,
+            ),
+            &[],
+        )
+        .unwrap();
+        let response = String::from_utf8(response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 413 Content Too Large\r\n"));
+    }
 
     /// 每 `read` 只给一个字节、每次给之前睡 1 毫秒的对端——就是 `HTTP_REQUEST_DEADLINE`
     /// 存在的理由：单次读超时的臂永远等不到「一次读满 100 毫秒」，只有整体截止能切断它。

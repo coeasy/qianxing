@@ -144,9 +144,30 @@ pub(super) fn reserve(root: &Path, entry: &mut AppRunEntry) -> Result<(), AppErr
     write_snapshot(root, &snapshot, true)
 }
 
-pub(super) fn save(root: &Path, entry: &mut AppRunEntry) -> Result<(), AppError> {
-    let snapshot = snapshot(entry);
-    write_snapshot(root, &snapshot, false)
+/// Persist a state transition observed while serving a read endpoint, but do
+/// not atomically replace the snapshot when the serialized state is unchanged.
+/// Status and event polling can observe a terminal transition, so these reads
+/// still publish newly collected results/events before returning them.
+pub(super) fn save_if_changed_on_disk(
+    root: &Path,
+    entry: &mut AppRunEntry,
+) -> Result<bool, AppError> {
+    let current = snapshot(entry);
+    let body = serialize_snapshot(&current)?;
+    let destination = path_for(root, &current.run_id);
+    match std::fs::read(&destination) {
+        Ok(persisted) if persisted == body => return Ok(false),
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(AppError::from_io(
+                &format!("比较运行记录 {}", destination.display()),
+                &error,
+            ));
+        }
+    }
+    publish_snapshot(root, &current.run_id, &body, false)?;
+    Ok(true)
 }
 
 pub(super) fn save_if_changed(
@@ -230,22 +251,35 @@ fn status_name(status: RunStatus) -> &'static str {
 /// 发布出口。首次登记走 `CreateNew`：同名 run 已在册就是冲突，绝不顶掉别人；状态流转走
 /// `Overwrite`：running → 终态是同一份运行记录的演进，不是另一件要幂等保护的事实。
 fn write_snapshot(root: &Path, snapshot: &RunSnapshot, create_only: bool) -> Result<(), AppError> {
-    std::fs::create_dir_all(root).map_err(|error| {
-        AppError::from_io(&format!("创建运行注册表目录 {}", root.display()), &error)
-    })?;
-    let destination = path_for(root, &snapshot.run_id);
-    let body = serde_json::to_vec(snapshot).map_err(|error| {
+    let body = serialize_snapshot(snapshot)?;
+    publish_snapshot(root, &snapshot.run_id, &body, create_only)
+}
+
+fn serialize_snapshot(snapshot: &RunSnapshot) -> Result<Vec<u8>, AppError> {
+    serde_json::to_vec(snapshot).map_err(|error| {
         AppError::new(
             AppErrorCategory::InternalInvariant,
             format!("序列化运行记录失败: {error}"),
         )
+    })
+}
+
+fn publish_snapshot(
+    root: &Path,
+    run_id: &str,
+    body: &[u8],
+    create_only: bool,
+) -> Result<(), AppError> {
+    std::fs::create_dir_all(root).map_err(|error| {
+        AppError::from_io(&format!("创建运行注册表目录 {}", root.display()), &error)
     })?;
+    let destination = path_for(root, run_id);
     let mode = if create_only {
         sink::PublishMode::CreateNew
     } else {
         sink::PublishMode::Overwrite
     };
-    sink::publish_bytes(&destination, &body, mode).map_err(|error| {
+    sink::publish_bytes(&destination, body, mode).map_err(|error| {
         let verb = if create_only { "保留" } else { "发布" };
         match error {
             // 首次登记撞上已在册的 run：冲突（先解决，重发只会再撞一次）。
@@ -364,7 +398,7 @@ mod tests {
                     status: RunStatus::Succeeded,
                 },
             ];
-            save(&root, entry).unwrap();
+            assert!(save_if_changed_on_disk(&root, entry).unwrap());
         }
         drop(registry);
 
@@ -392,6 +426,36 @@ mod tests {
         let upgraded: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(upgraded["events"][0]["event_id"], "persisted-success:1");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unchanged_run_poll_does_not_rewrite_snapshot_but_changed_state_is_persisted() {
+        let root = root("poll-noop-write");
+        let registry = AppRunRegistry::open(root.clone());
+        registry.reserve("poll-noop-write".to_string()).unwrap();
+        let destination = root.join("poll-noop-write.json");
+        let initial = std::fs::read(&destination).unwrap();
+
+        {
+            let mut entries = registry.entries.lock().unwrap();
+            let entry = entries.get_mut("poll-noop-write").unwrap();
+            assert!(!save_if_changed_on_disk(&root, entry).unwrap());
+            assert_eq!(std::fs::read(&destination).unwrap(), initial);
+
+            entry.restored_status = Some("succeeded".to_string());
+            entry.result = Some(r#"{"value":42}"#.to_string());
+            assert!(save_if_changed_on_disk(&root, entry).unwrap());
+            assert!(!save_if_changed_on_disk(&root, entry).unwrap());
+        }
+
+        drop(registry);
+        let reopened = AppRunRegistry::open(root.clone());
+        let response = reopened.status("poll-noop-write");
+        let document: serde_json::Value = serde_json::from_str(&response.body).unwrap();
+        assert_eq!(response.status, 200);
+        assert_eq!(document["status"], "succeeded");
+        assert_eq!(document["result"]["value"], 42);
         std::fs::remove_dir_all(root).unwrap();
     }
 

@@ -2,6 +2,7 @@
 name = "qx-runtime"
 description = "牵星运行时配置、服务编排与健康状态契约"
 version.workspace = true
+publish = false
 edition.workspace = true
 license.workspace = true
 

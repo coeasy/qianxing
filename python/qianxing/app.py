@@ -39,6 +39,7 @@ APP_ROUTE_TEMPLATES: dict[str, str] = {
     "builtin_strategy_catalog": "/app/strategies",
     "builtin_strategy_recipes": "/app/strategy-recipes",
     "validate_dataset": "/app/validate-dataset",
+    "preflight_backtest": "/app/backtest/preflight",
     "backtest": "/app/backtest",
     "provider_backtest": "/app/provider-backtest",
     "provider_depth_backtest": "/app/provider-depth-backtest",
@@ -84,6 +85,7 @@ APP_ROUTE_TEMPLATES: dict[str, str] = {
     "multi_leg_experiment_start": "/app/run-multi-leg-experiment/start",
     "paper_commands": "/app/paper/commands",
     "live_commands": "/app/live/commands",
+    "control_audit": "/control/audit",
     "run_status": "/app/runs/{run_id}",
     "run_events": "/app/runs/{run_id}/events",
     "run_cancel": "/app/runs/{run_id}/cancel",
@@ -120,6 +122,20 @@ class QianxingError(RuntimeError):
         self.correlation_id = self.payload.get("correlation_id")
         self.action = self.payload.get("action")
         self.retry = self.payload.get("retry")
+
+
+class OutcomeUnknownError(QianxingError):
+    """A remote mutation may have been applied; inspect its state before retrying."""
+
+    def __init__(self, operation: str, recovery_id: str | None, cause: BaseException):
+        self.operation = operation
+        self.recovery_id = recovery_id
+        self.cause = cause
+        super().__init__(
+            f"remote operation {operation} has an unknown outcome; inspect server state before retrying",
+            payload={"category": "OUTCOME_UNKNOWN", "operation": operation,
+                     "recovery_id": recovery_id, "retry": False},
+        )
 
 
 class AppError(QianxingError):
@@ -1086,6 +1102,163 @@ class DatasetVerdict:
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "DatasetVerdict":
         return cls(**{**value, "gaps": tuple(value.get("gaps", ()))})
+
+
+@dataclass(frozen=True)
+class BacktestPreflightCheckV1:
+    id: str
+    status: Literal["ready", "blocked", "not_applicable"]
+    detail: str | None = None
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> BacktestPreflightCheckV1:
+        value = _preflight_object(
+            value,
+            required={"id", "status"},
+            optional={"detail"},
+            label="backtest preflight check",
+        )
+        check_id = value["id"]
+        status = value["status"]
+        detail = value.get("detail")
+        if type(check_id) is not str:
+            raise ValueError("backtest preflight check id must be a string")
+        if detail is not None and type(detail) is not str:
+            raise ValueError("backtest preflight check detail must be a string or null")
+        if type(status) is not str:
+            raise ValueError(f"invalid backtest preflight status: {status!r}")
+        if status not in {"ready", "blocked", "not_applicable"}:
+            raise ValueError(f"invalid backtest preflight status: {status!r}")
+        return cls(id=check_id, status=status, detail=detail)
+
+
+@dataclass(frozen=True)
+class BacktestPreflightDataV1:
+    instrument: str
+    rows: int
+    content_fingerprint: str
+    usable: bool
+    gaps: tuple[str, ...] = field(default_factory=tuple)
+    first_ts: int | None = None
+    last_ts: int | None = None
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> BacktestPreflightDataV1:
+        value = _preflight_object(
+            value,
+            required={"instrument", "rows", "content_fingerprint", "usable", "gaps"},
+            optional={"first_ts", "last_ts"},
+            label="backtest preflight data",
+        )
+        instrument = value["instrument"]
+        fingerprint = value["content_fingerprint"]
+        usable = value["usable"]
+        gaps = value["gaps"]
+        if type(instrument) is not str:
+            raise ValueError("backtest preflight data instrument must be a string")
+        if type(fingerprint) is not str:
+            raise ValueError("backtest preflight data content_fingerprint must be a string")
+        if type(usable) is not bool:
+            raise ValueError("backtest preflight data usable must be a boolean")
+        if not isinstance(gaps, list) or any(type(item) is not str for item in gaps):
+            raise ValueError("backtest preflight data gaps must be an array of strings")
+        if usable != (len(gaps) == 0):
+            raise ValueError("backtest preflight data usable flag disagrees with dataset gaps")
+        first_ts = value.get("first_ts")
+        last_ts = value.get("last_ts")
+        for field_name, timestamp in (("first_ts", first_ts), ("last_ts", last_ts)):
+            if timestamp is not None and (
+                type(timestamp) is not int or not 0 <= timestamp <= (1 << 64) - 1
+            ):
+                raise ValueError(f"backtest preflight data {field_name} must be a u64 or null")
+        if first_ts is not None and last_ts is not None and first_ts > last_ts:
+            raise ValueError("backtest preflight data first_ts must not be after last_ts")
+        return cls(
+            instrument=instrument,
+            rows=_preflight_u64(value["rows"], "backtest preflight data rows"),
+            content_fingerprint=fingerprint,
+            usable=usable,
+            gaps=tuple(gaps),
+            first_ts=first_ts,
+            last_ts=last_ts,
+        )
+
+
+@dataclass(frozen=True)
+class BacktestPreflightResultV1:
+    schema_version: int
+    run_id: str
+    instrument: str
+    ready: bool
+    data: BacktestPreflightDataV1
+    checks: tuple[BacktestPreflightCheckV1, ...]
+    limitations: tuple[str, ...]
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> BacktestPreflightResultV1:
+        value = _preflight_object(
+            value,
+            required={"schema_version", "run_id", "instrument", "ready", "data", "checks", "limitations"},
+            optional=set(),
+            label="backtest preflight result",
+        )
+        version = value["schema_version"]
+        run_id = value["run_id"]
+        instrument = value["instrument"]
+        ready = value["ready"]
+        checks_value = value["checks"]
+        limitations = value["limitations"]
+        if type(version) is not int:
+            raise ValueError("backtest preflight schema_version must be an integer")
+        if version != 1:
+            raise ValueError(f"unsupported backtest preflight schema version: {version}")
+        if type(run_id) is not str or type(instrument) is not str:
+            raise ValueError("backtest preflight run_id and instrument must be strings")
+        if type(ready) is not bool:
+            raise ValueError("backtest preflight ready must be a boolean")
+        if not isinstance(checks_value, list):
+            raise ValueError("backtest preflight checks must be an array")
+        if not isinstance(limitations, list) or any(type(item) is not str for item in limitations):
+            raise ValueError("backtest preflight limitations must be an array of strings")
+        checks = tuple(BacktestPreflightCheckV1.from_dict(item) for item in checks_value)
+        if ready != all(check.status != "blocked" for check in checks):
+            raise ValueError("backtest preflight ready flag disagrees with its checks")
+        return cls(
+            schema_version=version,
+            run_id=run_id,
+            instrument=instrument,
+            ready=ready,
+            data=BacktestPreflightDataV1.from_dict(value["data"]),
+            checks=checks,
+            limitations=tuple(limitations),
+        )
+
+
+def _preflight_object(
+    value: Any,
+    *,
+    required: set[str],
+    optional: set[str],
+    label: str,
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be an object")
+    keys = set(value)
+    if any(type(key) is not str for key in keys):
+        raise ValueError(f"{label} object keys must be strings")
+    missing = required - keys
+    unknown = keys - required - optional
+    if missing or unknown:
+        raise ValueError(
+            f"{label} fields are invalid; missing={sorted(missing)}, unknown={sorted(unknown)}"
+        )
+    return value
+
+
+def _preflight_u64(value: Any, label: str) -> int:
+    if type(value) is not int or not 0 <= value <= (1 << 64) - 1:
+        raise ValueError(f"{label} must be a u64")
+    return value
 
 
 @dataclass(frozen=True)
@@ -2688,6 +2861,11 @@ class RunMultiMarketDepthExperimentResult:
 def validate_dataset(spec: DatasetSpec | dict[str, Any]) -> DatasetVerdict:
     """Validate a local Bar dataset using the shared Rust application use case."""
     return DatasetVerdict.from_dict(_invoke(native.app_validate_dataset, spec))
+
+
+def preflight_backtest(spec: BacktestSpec | dict[str, Any]) -> BacktestPreflightResultV1:
+    """Check local data and market-rule coverage without starting or writing a backtest."""
+    return BacktestPreflightResultV1.from_dict(_invoke(native.app_preflight_backtest, spec))
 
 
 def validate_strategy_execution_preflight_v1(

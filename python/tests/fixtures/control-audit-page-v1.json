@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "sequence": 1,
+      "record": {
+        "schema_version": 1,
+        "command_id": 9,
+        "request_id": "paper-9",
+        "operator_id": "local-paper",
+        "command_digest": 123,
+        "status": "Accepted",
+        "result_code": "ACCEPTED_FOR_EXECUTION",
+        "ts": 10
+      }
+    }
+  ],
+  "next_cursor": null,
+  "has_more": false,
+  "snapshot_through_sequence": 1,
+  "oldest_available_sequence": 1,
+  "retired_records": 0
+}

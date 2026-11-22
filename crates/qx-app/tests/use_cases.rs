@@ -11,9 +11,10 @@ mod common;
 use common::{backtest_spec, dataset_spec, experiment_spec, frame_json, scratch, write_frame};
 use qx_app::artifact_store::{ArtifactId, ArtifactReader, ArtifactStream};
 use qx_app::{
-    read_run_report_v1, read_run_report_v1_with_reader, run_backtest, run_experiment,
-    validate_dataset, verify_run, AppError, AppErrorCategory, BacktestArtifacts, BacktestOutcome,
-    CallerCapability, ExperimentParameterSpace, RunContext, RunExperimentSpec,
+    preflight_backtest_v1, read_run_report_v1, read_run_report_v1_with_reader, run_backtest,
+    run_experiment, validate_dataset, verify_run, AppError, AppErrorCategory, BacktestArtifacts,
+    BacktestOutcome, BacktestPreflightCheckStatusV1, CallerCapability, ExperimentParameterSpace,
+    RunContext, RunExperimentSpec,
 };
 use std::{collections::HashMap, io::Cursor, path::PathBuf};
 
@@ -72,6 +73,219 @@ fn a_too_short_dataset_is_a_verdict_not_an_error() {
         "判了不可用就必须给出理由——空理由等于让调用方去猜"
     );
     assert_eq!(verdict.rows, 1, "裁决必须回报实际读到的根数");
+}
+
+#[test]
+fn backtest_spec_binds_runtime_builtin_identity_and_sizing_in_the_application_owner() {
+    let root = scratch("runtime-builtin-spec");
+    let bars = write_frame(&root, "bars.json", "BTCUSDT.BINANCE", 40);
+    let config = {
+        let mut config = qx_strategy::BuiltinStrategyConfig::new(
+            qx_strategy::BuiltinStrategyKind::Macd,
+            "builtin-macd",
+            qx_core::InstrumentId::parse("BTCUSDT.BINANCE").expect("instrument"),
+            qx_core::Quantity::from_raw(2 * qx_core::SCALE),
+        )
+        .expect("builtin strategy config");
+        config.fast_window = 8;
+        config.slow_window = 34;
+        config.period = 21;
+        config.threshold_bps = 275;
+        config.target_notional_raw = Some(500 * qx_core::SCALE);
+        config
+    };
+    let spec = backtest_spec("runtime-builtin-spec", &bars, &root.join("runs"))
+        .with_builtin_strategy_config(&config)
+        .expect("应用层必须绑定准确策略规格");
+
+    assert_eq!(spec.strategy.kind, qx_strategy::BuiltinStrategyKind::Macd);
+    assert_eq!(spec.strategy.strategy_id, "builtin-macd");
+    assert_eq!(spec.strategy.quantity_raw, 2 * qx_core::SCALE);
+    assert_eq!(spec.strategy.fast_window, 8);
+    assert_eq!(spec.strategy.slow_window, 34);
+    assert_eq!(spec.strategy.period, 21);
+    assert_eq!(spec.strategy.threshold_bps, 275);
+    assert_eq!(
+        spec.strategy.target_notional_raw,
+        Some(500 * qx_core::SCALE)
+    );
+}
+
+#[test]
+fn backtest_preflight_reports_readiness_without_writing_artifacts() {
+    let root = scratch("backtest-preflight-ready");
+    let bars = write_frame(&root, "bars.json", "BTCUSDT.BINANCE", 40);
+    let output_dir = root.join("must-not-be-created");
+    let spec = backtest_spec("preflight-ready", &bars, &output_dir);
+
+    let report = preflight_backtest_v1(&spec, &research("preflight-ready")).expect("预检成功");
+
+    assert!(report.ready, "完整匹配的数据应通过: {:?}", report.checks);
+    assert_eq!(report.schema_version, 1);
+    assert_eq!(report.run_id, "preflight-ready");
+    assert_eq!(report.data.rows, 40);
+    assert_eq!(report.data.instrument, "BTCUSDT.BINANCE");
+    assert_eq!(report.data.first_ts, Some(1_000));
+    assert_eq!(report.data.last_ts, Some(40_000));
+    assert!(report.checks.iter().any(|check| {
+        check.id == "market_rule_window"
+            && check.status == BacktestPreflightCheckStatusV1::NotApplicable
+    }));
+    assert!(report.checks.iter().any(|check| {
+        check.id == "execution_cost_inputs"
+            && check.status == BacktestPreflightCheckStatusV1::NotApplicable
+    }));
+    assert!(!output_dir.exists(), "只读预检不能创建回测产物目录");
+    let payload = serde_json::to_string(&report).expect("预检结果可序列化");
+    let reloaded: qx_app::BacktestPreflightResultV1 =
+        serde_json::from_str(&payload).expect("预检结果可读回");
+    assert_eq!(reloaded, report);
+}
+
+#[test]
+fn backtest_preflight_v1_schema_and_shared_golden_fixture_match_the_rust_dto() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../python/tests/fixtures/backtest-preflight-result-v1.json");
+    let fixture: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(fixture_path).expect("read shared preflight golden fixture"),
+    )
+    .expect("parse shared preflight golden fixture");
+    let report: qx_app::BacktestPreflightResultV1 =
+        serde_json::from_value(fixture.clone()).expect("deserialize Rust-owned preflight DTO");
+    report
+        .validate()
+        .expect("shared fixture passes semantic validation");
+    assert!(report.ready);
+    assert_eq!(report.schema_version, 1);
+    assert_eq!(
+        serde_json::to_value(&report).expect("serialize DTO"),
+        fixture
+    );
+
+    let schema: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../schemas/backtest-preflight-result-v1.json"
+    ))
+    .expect("parse registered preflight JSON Schema");
+    assert_eq!(schema["properties"]["schema_version"]["const"], 1);
+    assert_eq!(schema["additionalProperties"], false);
+    let required = schema["required"].as_array().expect("required fields");
+    let properties = schema["properties"]
+        .as_object()
+        .expect("top-level properties");
+    let actual = fixture.as_object().expect("top-level fixture object");
+    assert_eq!(required.len(), actual.len());
+    for field in required {
+        let field = field.as_str().expect("required field name");
+        assert!(
+            actual.contains_key(field),
+            "fixture missing required field {field}"
+        );
+        assert!(
+            properties.contains_key(field),
+            "schema missing property {field}"
+        );
+    }
+
+    let mut unknown = fixture.clone();
+    unknown["data"]["unexpected"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<qx_app::BacktestPreflightResultV1>(unknown).is_err());
+    let mut coerced = fixture.clone();
+    coerced["data"]["rows"] = serde_json::json!("3");
+    assert!(serde_json::from_value::<qx_app::BacktestPreflightResultV1>(coerced).is_err());
+
+    let mut inconsistent: serde_json::Value = serde_json::to_value(&report).expect("serialize DTO");
+    inconsistent["data"]["usable"] = serde_json::json!(false);
+    assert_eq!(
+        serde_json::from_value::<qx_app::BacktestPreflightResultV1>(inconsistent)
+            .unwrap_err()
+            .to_string(),
+        "data usable flag disagrees with dataset gaps"
+    );
+    assert_eq!(report.validate(), Ok(()));
+    let mut reversed_timestamps: serde_json::Value =
+        serde_json::to_value(&report).expect("serialize DTO");
+    reversed_timestamps["data"]["first_ts"] = serde_json::json!(4_000);
+    reversed_timestamps["data"]["last_ts"] = serde_json::json!(3_000);
+    assert_eq!(
+        serde_json::from_value::<qx_app::BacktestPreflightResultV1>(reversed_timestamps)
+            .unwrap_err()
+            .to_string(),
+        "data first_ts must not be after last_ts"
+    );
+
+    let mut optional_fields = fixture;
+    optional_fields["data"]
+        .as_object_mut()
+        .unwrap()
+        .remove("first_ts");
+    optional_fields["data"]
+        .as_object_mut()
+        .unwrap()
+        .remove("last_ts");
+    assert!(serde_json::from_value::<qx_app::BacktestPreflightResultV1>(optional_fields).is_ok());
+}
+
+#[test]
+fn backtest_preflight_returns_blocked_checks_for_mismatched_instrument_and_rule_window() {
+    let root = scratch("backtest-preflight-blocked");
+    let bars = write_frame(&root, "bars.json", "BTCUSDT.BINANCE", 40);
+    let mut spec = backtest_spec("preflight-blocked", &bars, &root.join("out"));
+    spec.instrument = "ETHUSDT.BINANCE".into();
+    let mut market = qx_core::TradingInstrumentSpec::spot_default(
+        &qx_core::InstrumentId::parse("ETHUSDT.BINANCE").expect("instrument"),
+        "USDT",
+    );
+    market.valid_from = 2_000;
+    spec.market_spec = Some(market);
+    spec.fee_schedule = Some(qx_core::MakerTakerFeeSchedule::default());
+
+    let report = preflight_backtest_v1(&spec, &research("preflight-blocked"))
+        .expect("数据不匹配是就绪判断，不是预检故障");
+
+    assert!(!report.ready);
+    assert!(report.checks.iter().any(|check| {
+        check.id == "instrument_identity" && check.status == BacktestPreflightCheckStatusV1::Blocked
+    }));
+    assert!(report.checks.iter().any(|check| {
+        check.id == "market_rule_window" && check.status == BacktestPreflightCheckStatusV1::Blocked
+    }));
+}
+
+#[test]
+fn backtest_preflight_preserves_data_shortage_as_a_blocked_result() {
+    let root = scratch("backtest-preflight-short");
+    let bars = write_frame(&root, "bars.json", "BTCUSDT.BINANCE", 1);
+    let spec = backtest_spec("preflight-short", &bars, &root.join("out"));
+
+    let report = preflight_backtest_v1(&spec, &research("preflight-short")).expect("预检可判断");
+
+    assert!(!report.ready);
+    assert!(!report.data.usable);
+    assert!(report.checks.iter().any(|check| {
+        check.id == "dataset_sample" && check.status == BacktestPreflightCheckStatusV1::Blocked
+    }));
+}
+
+#[test]
+fn backtest_preflight_blocks_when_strategy_window_exceeds_available_history() {
+    let root = scratch("backtest-preflight-warmup");
+    let bars = write_frame(&root, "bars.json", "BTCUSDT.BINANCE", 40);
+    let mut spec = backtest_spec("preflight-warmup", &bars, &root.join("out"));
+    spec.strategy.fast_window = 5;
+    spec.strategy.slow_window = 64;
+
+    let report = preflight_backtest_v1(&spec, &research("preflight-warmup"))
+        .expect("策略历史不足是就绪判断，不是预检故障");
+
+    assert!(!report.ready);
+    assert!(report.checks.iter().any(|check| {
+        check.id == "strategy_history"
+            && check.status == BacktestPreflightCheckStatusV1::Blocked
+            && check
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("至少需要 65 根 Bar"))
+    }));
 }
 
 #[test]

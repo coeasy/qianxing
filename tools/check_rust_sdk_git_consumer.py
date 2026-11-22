@@ -16,7 +16,7 @@ SAMPLE_BARS = ROOT / "deploy" / "qianxing.bar-frame.example.json"
 GIT_URL = "https://github.com/coeasy/qianxing.git"
 
 MAIN_RS = r'''use qx_sdk::{
-    BacktestSpec, BuiltinStrategyKind, BuiltinStrategySpec, CallerCapability, Client,
+    BacktestDatasetInput, BacktestSpec, BuiltinStrategyKind, BuiltinStrategySpec, CallerCapability, Client,
     DatasetSpec, RemoteApiClient, RemoteResponse, RemoteTransport,
     RunMultiMarketExperimentSpec,
 };
@@ -47,9 +47,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     strategy.fast_window = 2;
     strategy.slow_window = 3;
     let spec = BacktestSpec::new(
-        "external-git-run",
-        "BTCUSDT.BINANCE",
-        bars,
+        BacktestDatasetInput {
+            run_id: "external-git-run".into(),
+            instrument: "BTCUSDT.BINANCE".into(),
+            bars_path: bars,
+        },
         "USDT",
         100_000_i128 * 1_000_000_000,
         20261012,
@@ -146,7 +148,9 @@ serde_json = "1"
     env["CARGO_TARGET_DIR"] = str(TARGET)
     # Keep Git checkouts and Cargo's FETCH_HEAD under the repo-owned validation
     # root: some Windows profiles deny writes to the default user-level cache.
-    env["CARGO_HOME"] = str(TARGET / "sdk-validation" / "cargo-home")
+    # An explicit override can reuse an existing registry cache in restricted
+    # network environments; the default remains an isolated validation home.
+    env["CARGO_HOME"] = os.environ.get("QX_SDK_CARGO_HOME", str(TARGET / "sdk-validation" / "cargo-home"))
     # Avoid a known MSVC debug-info invocation failure in this host image; this
     # is a consumer build configuration, not a source-code workaround.
     env["CARGO_PROFILE_DEV_DEBUG"] = "0"

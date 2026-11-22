@@ -127,9 +127,7 @@ pub(super) fn build(
         .ok_or_else(|| invalid_report("多账户批次缺少 batch_id"))?;
     let artifact_root = std::fs::canonicalize(&paths.artifact_root)
         .map_err(|error| AppError::from_io("解析 API 研究产物根目录", &error))?;
-    let artifact_reader = RootedArtifactReader {
-        root: artifact_root,
-    };
+    let artifact_reader = RootedArtifactReader::new(artifact_root)?;
     let batch_report = qx_app::read_multi_account_report_v1_with_reader(
         outcome_value,
         &RunContext::new(CallerCapability::Research, batch_id),

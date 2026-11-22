@@ -2,6 +2,7 @@
 name = "qx-orchestrator"
 description = "牵星运行编排：Worker 拓扑规划与受管进程生命周期"
 version.workspace = true
+publish = false
 edition.workspace = true
 license.workspace = true
 

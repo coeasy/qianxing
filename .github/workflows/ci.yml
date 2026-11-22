@@ -49,7 +49,6 @@ jobs:
         run: python tools/check_strategy_refactor_ledger.py
       - name: Validate deterministic SPDX SBOM generation
         run: python3 -m unittest tools.test_generate_cargo_sbom
-
   rust-core:
     name: Rust core
     runs-on: ubuntu-latest
@@ -59,6 +58,17 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Inspect Rust package dependency closures
+        run: |
+          python3 tools/check_package_distribution.py
+          python3 -m unittest tools.test_package_distribution tools.test_cargo_publish_plan tools.test_check_rust_sdk_packages
+          python3 tools/cargo_publish_plan.py qx-sdk
+          python3 tools/cargo_publish_plan.py qx-cli
+      - name: Run standalone Rust SDK quickstart against the released Git revision
+        working-directory: examples/rust-sdk-quickstart
+        run: |
+          cargo fmt -- --check
+          cargo run --locked
       - name: Format
         run: cargo fmt --all -- --check
       - name: Clippy
@@ -76,6 +86,11 @@ jobs:
           binary="$(cargo build -p qx-cli --message-format=json-render-diagnostics | jq -r 'select(.reason == "compiler-artifact" and .target.name == "qx-cli" and .executable != null) | .executable' | tail -n 1)"
           test -n "$binary"
           echo "QX_CLI_TEST_BINARY=$binary" >> "$GITHUB_ENV"
+      - name: Run Python project-to-report quickstart with real renderer
+        env:
+          PYTHONPATH: python
+          QX_TEST_NATIVE_LIBRARY: ${{ github.workspace }}/target/debug/lib_qianxing_native.so
+        run: QX_TEST_REPORT_CLI="$QX_CLI_TEST_BINARY" python3 -m unittest python.tests.test_native_project_runs.NativeProjectRunTests.test_demo_run_renders_latest_report_with_real_cli -v
       # 显式钉住解释器：`e2e_and_python_contract` 的两条 worker 契约用例在缺 QX_PYTHON 时
       # 回落 PATH 上的 `python`，于是「Python 链在 CI 绿」可能只是碰巧有个能跑的解释器，
       # 而不是真的跑在 CI 声明的那一版上（V13 R26）。
@@ -83,6 +98,10 @@ jobs:
         env:
           QX_PYTHON: python3
         run: cargo test --workspace
+      - name: Verify Rust SDK package closure and external consumer
+        env:
+          CARGO_PROFILE_DEV_DEBUG: '0'
+        run: python3 tools/check_rust_sdk_packages.py qx-sdk
       - name: PreparedEvaluation atomic journal crash boundaries (R11)
         run: >-
           python3 tools/record_strategy_acceptance.py
@@ -218,6 +237,8 @@ jobs:
           pattern: architecture-shard-*
           path: target/architecture-shards
           merge-multiple: true
+      - name: Test architecture source inventory glob semantics
+        run: python3 -m unittest tools.test_architecture_file_inventory
       - name: Verify complete architecture gate coverage
         run: python3 tools/verify_architecture_shards.py target/architecture-shards 4
 

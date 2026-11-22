@@ -314,3 +314,13 @@ use_cases:
     artifacts: "无"
     error_categories: "AppErrorCategory 八类；能力拒绝为 PermissionDenied，账簿估值沿用领域码映射"
     capability_level: "P"
+  - name: preflight_backtest_v1
+    input_schema: "BacktestSpec v1/v2（含策略、资金、费用/成本与可选冻结市场规则）"
+    output_schema: "BacktestPreflightResultV1 v1（schemas/backtest-preflight-result-v1.json；只读数据快照、稳定检查项与限制说明）"
+    capability: "RESEARCH"
+    idempotency_key: "完整 BacktestSpec + BarFrame 内容指纹（纯读；数据变化会得到新裁定）"
+    cancellation: "无取消点（同步本地文件读取与校验）"
+    progress: "无"
+    artifacts: "无；不创建输出目录"
+    error_categories: "AppErrorCategory 八类；不可运行的数据、标的或规则窗口返回 blocked 检查项，不作为系统错误"
+    capability_level: "R"

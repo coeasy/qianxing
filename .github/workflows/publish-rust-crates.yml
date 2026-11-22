@@ -1,0 +1,56 @@
+name: Publish Rust crates to crates.io
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type the exact SDK release identity, for example qx-sdk@0.4.0"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crates-io-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Verify and publish the qx-sdk dependency closure
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Require a tagged release and configured publisher token
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
+            echo "Dispatch this workflow from an exact vX.Y.Z release tag." >&2
+            exit 1
+          fi
+          if [[ -z "${CARGO_REGISTRY_TOKEN}" ]]; then
+            echo "Configure CARGO_REGISTRY_TOKEN in repository Actions secrets." >&2
+            exit 1
+          fi
+
+      - name: Publish crates in dependency order and verify a clean registry consumer
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          QX_PUBLISH_CONFIRM: ${{ inputs.confirm }}
+        run: >-
+          python tools/publish_rust_sdk.py qx-sdk
+          --publish
+          --confirm "$QX_PUBLISH_CONFIRM"

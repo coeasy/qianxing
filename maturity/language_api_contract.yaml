@@ -18,7 +18,7 @@
 #   `[]` 表示该用例不在这条腿（交易控制只在远端门面上，进程内扩展不暴露它）。
 schema_version: 1
 kind: language-api-contract
-updated_at: "2026-11-11"
+updated_at: "2026-11-21"
 
 # 进程内扩展的模块级公开函数里不属于任何「用例入口」的那些。
 # 写成显式名册而不是「排除 doctor 之外」这类规则：规则会把将来新加的同形状函数一起放行，
@@ -65,6 +65,10 @@ python_native_helpers:
 
 # 客户端公开面里属于 run 生命周期、不属于任何用例的方法。
 cpp_lifecycle_methods:
+  - name: get_command_audit
+    note: "C++ 远端门面读取服务端控制审计，用于核对写回执丢失后的命令结果"
+  - name: get_command_audit_page
+    note: "C++ 远端门面按稳定 cursor 读取有界控制审计页"
   - name: run_events
     note: "C++ 远端门面按单次 Run 读取持久化的 Rust 生命周期事件"
   - name: get_live_events
@@ -83,6 +87,14 @@ cpp_lifecycle_methods:
     note: "Paper TWAP/VWAP 活跃父单分页生命周期入口"
 
 python_remote_lifecycle_methods:
+  - name: get_command_audit
+    note: "Python 远端门面读取并校验服务端控制审计，可按 request_id 过滤不确定写请求"
+  - name: get_command_audit_page
+    note: "Python 远端门面读取一个有界、最新优先的控制审计页"
+  - name: async_get_command_audit_page
+    note: "Python 控制审计分页读取的 asyncio 委托入口"
+  - name: async_get_command_audit
+    note: "Python 远端控制审计读取的 asyncio 委托入口"
   - name: events
     note: "Python 远端 RunHandle 按单次 Run 读取持久化生命周期事件，支持同步/异步"
   - name: get_live_events
@@ -169,6 +181,8 @@ cpp_remote_helpers:
     note: "按显式 account_id 与 venue_id 查询有界账户活动页；游标仅在该范围内有效"
 
 rust_remote_lifecycle_methods:
+  - name: get_command_audit_page
+    note: "Rust 远端门面读取一个有界、最新优先的控制审计页"
   - name: builtin_strategy_recipes
     note: "Rust 远端策略配方发现入口，读取 Rust 维护的版本化配方目录；不执行回测或交易"
   - name: get_run_events
@@ -199,6 +213,12 @@ contracts:
     python_remote: ["validate_dataset"]
     cpp_remote: ["validate_dataset"]
     http: ["/app/validate-dataset"]
+  - use_case: preflight_backtest_v1
+    rust: ["preflight_backtest_v1", "Client.preflight_backtest"]
+    python_native: ["preflight_backtest"]
+    python_remote: ["preflight_backtest"]
+    cpp_remote: ["preflight_backtest"]
+    http: ["/app/backtest/preflight"]
   - use_case: run_backtest
     rust: ["run_backtest"]
     python_native: ["run_backtest", "run_backtest_with_strategy", "run_backtest_with_strategy_slots", "start_backtest", "start_backtest_with_strategy", "start_backtest_with_strategy_slots"]
@@ -282,7 +302,8 @@ contracts:
     python_native: []
     python_remote: ["submit"]
     cpp_remote: ["submit_paper_command", "submit_live_command"]
-    http: ["/app/paper/commands", "/app/live/commands"]
+    http: ["/app/paper/commands", "/app/live/commands", "/control/audit"]
+    http_response_schemas: ["POST /app/paper/commands=control-audit-record-v1", "POST /app/live/commands=control-audit-record-v1", "GET /control/audit=control-audit-page-v1"]
   - use_case: run_multi_leg_backtest
     rust: ["run_multi_leg_backtest"]
     python_native: ["run_multi_leg_backtest", "start_multi_leg_backtest"]

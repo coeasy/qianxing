@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.dev/schemas/control-audit-page-v1.json",
+  "title": "Qianxing ControlAuditPageV1",
+  "description": "Bounded newest-first snapshot page returned by GET /control/audit. The serialized page is at most 1 MiB; a single record exceeding the response budget is rejected with HTTP 413. Cursors preserve the snapshot watermark across requests and process restarts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "entries",
+    "next_cursor",
+    "has_more",
+    "snapshot_through_sequence",
+    "oldest_available_sequence",
+    "retired_records"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "entries": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sequence", "record"],
+        "properties": {
+          "sequence": {"type": "integer", "minimum": 1, "maximum": 18446744073709551615},
+          "record": {"$ref": "https://qianxing.dev/schemas/control-audit-record-v1.json"}
+        }
+      }
+    },
+    "next_cursor": {"type": ["string", "null"], "minLength": 1},
+    "has_more": {"type": "boolean"},
+    "snapshot_through_sequence": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+    "oldest_available_sequence": {"type": ["integer", "null"], "minimum": 1, "maximum": 18446744073709551615},
+    "retired_records": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"has_more": {"const": true}}, "required": ["has_more"]},
+      "then": {
+        "properties": {
+          "entries": {"minItems": 1},
+          "next_cursor": {"type": "string"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"has_more": {"const": false}}, "required": ["has_more"]},
+      "then": {"properties": {"next_cursor": {"type": "null"}}}
+    }
+  ]
+}

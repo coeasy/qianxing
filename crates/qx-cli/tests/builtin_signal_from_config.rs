@@ -115,12 +115,44 @@ fn set(strategy: &mut serde_json::Value, key: &str, value: i64) {
     strategy[key] = serde_json::Value::from(value);
 }
 
+fn extended_frame(root: &Path) -> PathBuf {
+    const WARMUP_BARS: usize = 16;
+    const BAR_INTERVAL_MS: i64 = 180_000;
+    let source = std::fs::read_to_string(deploy(FRAME)).expect("读取示例 Bar 帧失败");
+    let mut frame: serde_json::Value = serde_json::from_str(&source).unwrap();
+    let timestamps = frame["ts"].as_array().unwrap();
+    let first_timestamp = timestamps[0].as_i64().unwrap();
+    let warmup_timestamps = (0..WARMUP_BARS).map(|index| {
+        serde_json::Value::from(first_timestamp - (WARMUP_BARS - index) as i64 * BAR_INTERVAL_MS)
+    });
+    let mut timestamps = warmup_timestamps.collect::<Vec<_>>();
+    timestamps.extend(frame["ts"].as_array().unwrap().iter().cloned());
+    frame["ts"] = serde_json::Value::Array(timestamps);
+
+    for key in ["open_raw", "high_raw", "low_raw", "close_raw", "volume_raw"] {
+        let values = frame[key].as_array().unwrap();
+        let first = values[0].clone();
+        let mut extended = vec![first; WARMUP_BARS];
+        extended.extend(values.iter().cloned());
+        frame[key] = serde_json::Value::Array(extended);
+    }
+
+    let path = root.join("bars.with-signal-warmup.json");
+    std::fs::write(&path, serde_json::to_vec(&frame).unwrap()).expect("写入 Bar 帧失败");
+    path
+}
+
 fn builtin(kind: &str, quantity: &str, config: Option<&Path>) -> (i32, String, String) {
+    let root = config
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| temp_dir(&format!("default-{kind}")));
+    let frame = extended_frame(&root);
     let mut args: Vec<String> = vec![
         "backtest".into(),
         "builtin".into(),
         kind.into(),
-        deploy(FRAME).to_string_lossy().into_owned(),
+        frame.to_string_lossy().into_owned(),
         deploy(SPEC).to_string_lossy().into_owned(),
         quantity.into(),
     ];
@@ -133,12 +165,11 @@ fn builtin(kind: &str, quantity: &str, config: Option<&Path>) -> (i32, String, S
         // The no-config fallback reads the repository's default runtime template, whose data_dir
         // is relative. Give each baseline its own cwd so parallel integration tests cannot race
         // while writing the same default artifact identity into deploy/data.
-        let root = temp_dir(&format!("default-{}", kind));
         run_in(&args, Some(&root))
     }
 }
 
-/// 窗口对：默认 5/20 在这 6 根 Bar 上永远不交叉，配置里的 2/3 会成交。
+/// 窗口对：默认 5/20 在长预热段后的这 6 根样例 Bar 上不交叉，配置里的 2/3 会成交。
 #[test]
 fn declared_windows_change_the_builtin_result() {
     let root = temp_dir("windows");
@@ -179,8 +210,8 @@ fn declared_period_and_threshold_each_move_the_result() {
     let (_, rsi_default, err) = builtin("rsi", "100", None);
     assert_eq!(
         field(&rsi_default, "[Strategy · Backtest]", "fills"),
-        "0",
-        "默认周期 14 在这 6 根 Bar 上算不出指标: {err}"
+        "2",
+        "默认周期 14 的预热样本和反转段应产生两次成交: {err}"
     );
     let (code, rsi_short, err) = builtin("rsi", "100", Some(&short_rsi));
     assert_eq!(code, 0, "合法周期必须跑通: {err}");
@@ -190,6 +221,11 @@ fn declared_period_and_threshold_each_move_the_result() {
         "RSI 进场和长仓平仓都是实际成交"
     );
     assert!(line_with(&rsi_short, "[Strategy · Signal]").contains("period=2"));
+    assert_ne!(
+        field(&rsi_default, "[Strategy · Backtest]", "result_hash"),
+        field(&rsi_short, "[Strategy · Backtest]", "result_hash"),
+        "RSI 周期变化必须改变实际回测结果"
+    );
 
     let loose_grid = signal_config(&root, |value| {
         set(&mut value["strategy"], "builtin_threshold_bps", 0)
@@ -308,6 +344,7 @@ fn single_sided_override_is_rechecked_before_the_provenance_line() {
 fn both_bar_chains_read_the_same_declared_signal() {
     let root = temp_dir("same-signal");
     let config = signal_config(&root, |_| {});
+    let frame = extended_frame(&root);
     // Both summaries preserve local provenance paths. The built-in route records its frozen
     // runtime snapshot and canonical BarFrame path, while the strategy route records the source
     // config and declared BarFrame path. Keep the artifact stores separate because this test checks
@@ -327,7 +364,7 @@ fn both_bar_chains_read_the_same_declared_signal() {
         "strategy".into(),
         "backtest".into(),
         config.to_string_lossy().into_owned(),
-        deploy(FRAME).to_string_lossy().into_owned(),
+        frame.to_string_lossy().into_owned(),
         deploy(SPEC).to_string_lossy().into_owned(),
     ]);
     assert_eq!(code, 0, "策略链基线必须跑通: {err}");

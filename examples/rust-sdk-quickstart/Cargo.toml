@@ -1,0 +1,10 @@
+[package]
+name = "qianxing-rust-quickstart"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+qx-sdk = { git = "https://github.com/coeasy/qianxing.git", rev = "e7fec623ffbb1b55acec3b4ce414f26b1a3ac961" }

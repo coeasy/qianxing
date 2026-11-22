@@ -2,6 +2,7 @@
 name = "qx-scheduler"
 description = "交易日历、JobSpec、重试、超时与幂等任务契约"
 version.workspace = true
+publish = false
 edition.workspace = true
 license.workspace = true
 

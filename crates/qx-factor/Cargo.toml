@@ -2,6 +2,7 @@
 name = "qx-factor"
 description = "因子与特征版本流水线：PIT、分析、版本和候选配置"
 version.workspace = true
+publish = false
 edition.workspace = true
 license.workspace = true
 

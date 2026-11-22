@@ -44,7 +44,10 @@ use qx_app::{
     read_account_activity_report_v1, AccountActivityReportReadOptionsV1, AppError,
     AppErrorCategory, TradeWorkflow,
 };
-use qx_control::{AuditRecord, ControlCommand, ControlError, ControlPlane, Permission};
+use qx_control::{
+    AuditRecord, ControlCommand, ControlError, ControlPlane, Permission,
+    CONTROL_AUDIT_DEFAULT_PAGE_SIZE, CONTROL_AUDIT_MAX_PAGE_SIZE, PENDING_CONTROL_COMMAND_LIMIT,
+};
 use qx_core::{
     DecimalRounding, Event, EventKind, EventLog, ExactDecimal, Fnv1a, InstrumentId, LedgerEntry,
     OrderGroupState, TradingInstrumentSpec, TradingProduct, SCALE,
@@ -995,6 +998,7 @@ struct ApiMetrics {
     rate_limit_rejected_total: AtomicU64,
     authentication_rejected_total: AtomicU64,
     command_enqueue_failures_total: AtomicU64,
+    control_capacity_rejections_total: AtomicU64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -1005,6 +1009,8 @@ pub struct ApiMetricsSnapshot {
     /// 已受理的控制命令写进执行队列失败多少次。受理仍然成立（命令已落控制面，worker
     /// 每轮会按 `pending()` 补入），但这条计数是那种失败唯一的出口（V13 R2 #189）。
     pub command_enqueue_failures_total: u64,
+    /// 因待执行控制命令达到上限而拒绝受理的次数。
+    pub control_capacity_rejections_total: u64,
 }
 
 impl ApiMetricsSnapshot {
@@ -1021,11 +1027,15 @@ qx_api_rate_limit_rejected_total {}\n\
 qx_api_authentication_rejected_total {}\n\
 # HELP qx_api_command_enqueue_failures_total Accepted control commands whose queue write failed.\n\
 # TYPE qx_api_command_enqueue_failures_total counter\n\
-qx_api_command_enqueue_failures_total {}\n",
+qx_api_command_enqueue_failures_total {}\n\
+# HELP qx_api_control_capacity_rejections_total Control commands rejected because pending capacity was exhausted.\n\
+# TYPE qx_api_control_capacity_rejections_total counter\n\
+qx_api_control_capacity_rejections_total {}\n",
             self.requests_total,
             self.rate_limit_rejected_total,
             self.authentication_rejected_total,
-            self.command_enqueue_failures_total
+            self.command_enqueue_failures_total,
+            self.control_capacity_rejections_total
         )
     }
 }
@@ -1120,7 +1130,7 @@ pub use qx_runtime::ReconcileReportSnapshot;
 ///
 /// 三条读法各有归属（V13 R4-D：这份注释原先谎称"网络协议只依赖这些只读方法"，
 /// 而 `/account/orders|positions|balances` 三个端点其实从不走下面的无身份变体）：
-/// - `/control/audit` 与 `/metrics` 的退场计数共用 `control_plane_live()` 现读 store，不回落启动期副本；
+/// - `/control/audit` 与 `/metrics` 的控制面指标共用 `control_plane_live()` 现读 store，不回落启动期副本；
 /// - `/account/snapshot|orders|positions|balances` 先由 `snapshot_for_query` 做身份解析
 ///   （按 `account_id`/`venue_id` 落到该账户自己的投影，缺省才回落到那格全局兼容快照），
 ///   再在解析出的快照上取分表；
@@ -1268,7 +1278,26 @@ impl ApiService {
                 .metrics
                 .command_enqueue_failures_total
                 .load(Ordering::Relaxed),
+            control_capacity_rejections_total: self
+                .metrics
+                .control_capacity_rejections_total
+                .load(Ordering::Relaxed),
         }
+    }
+
+    pub(crate) fn control_error_response(&self, error: ControlError) -> ApiResponse {
+        if matches!(&error, ControlError::PendingLimitReached) {
+            self.metrics
+                .control_capacity_rejections_total
+                .fetch_add(1, Ordering::Relaxed);
+            return ApiResponse::json(503, error_json("control_command_capacity_exceeded"));
+        }
+        let status = match error {
+            ControlError::Forbidden => 403,
+            ControlError::Invalid(_) => 400,
+            _ => 409,
+        };
+        ApiResponse::json(status, error_json(&format!("{error:?}")))
     }
 
     pub fn with_worker_metrics_provider<F>(mut self, provider: F) -> Self
@@ -2246,19 +2275,29 @@ impl ApiService {
             }
             ("GET", "/metrics") => {
                 let mut body = self.metrics().to_prometheus();
-                // 退场摘要与 /control/audit 共用 store 现读：读失败 scrape 明确 503，不退回启动期副本。
-                let retirement = match self.control_plane_live() {
-                    Ok(plane) => plane.retirement(),
+                // 控制面指标与 /control/audit 共用 store 现读：读失败 scrape 明确 503，不退回启动期副本。
+                let control_plane = match self.control_plane_live() {
+                    Ok(plane) => plane,
                     Err(error) => return ApiResponse::json(503, error_json(&error)),
                 };
+                let retirement = control_plane.retirement();
                 body.push_str(&format!(
                     "# HELP qx_control_retired_commands_total Finalized control commands retired by the retention bound.\n\
 # TYPE qx_control_retired_commands_total counter\n\
 qx_control_retired_commands_total {}\n\
 # HELP qx_control_retired_audit_records_total In-memory audit records dropped together with retired commands.\n\
 # TYPE qx_control_retired_audit_records_total counter\n\
-qx_control_retired_audit_records_total {}\n",
-                    retirement.retired_commands, retirement.retired_audit_records
+qx_control_retired_audit_records_total {}\n\
+# HELP qx_control_pending_commands Accepted commands awaiting a terminal outcome.\n\
+# TYPE qx_control_pending_commands gauge\n\
+qx_control_pending_commands {}\n\
+# HELP qx_control_pending_commands_limit Maximum accepted commands awaiting a terminal outcome.\n\
+# TYPE qx_control_pending_commands_limit gauge\n\
+qx_control_pending_commands_limit {}\n",
+                    retirement.retired_commands,
+                    retirement.retired_audit_records,
+                    control_plane.pending_commands_count(),
+                    PENDING_CONTROL_COMMAND_LIMIT
                 ));
                 body.push_str(&self.app_runs.watcher_metrics_prometheus());
                 if let Some(provider) = &self.worker_metrics_provider {
@@ -2357,10 +2396,48 @@ qx_control_retired_audit_records_total {}\n",
                 });
                 ApiResponse::json(200, body.to_string())
             }
-            ("GET", "/control/audit") => match self.control_plane_live() {
-                Ok(plane) => serialized_json_response(200, &plane.audit()),
-                Err(error) => ApiResponse::json(503, error_json(&error)),
-            },
+            ("GET", "/control/audit") => {
+                let request_id = match admission::unique_query_param(query, "request_id") {
+                    Ok(request_id) => request_id,
+                    Err(error) => return read_error_response(error),
+                };
+                if request_id
+                    .as_deref()
+                    .is_some_and(|request_id| request_id.trim().is_empty())
+                {
+                    return read_error_response("request_id 不能为空");
+                }
+                let cursor = match admission::unique_query_param(query, "cursor") {
+                    Ok(cursor) => cursor,
+                    Err(error) => return read_error_response(error),
+                };
+                let raw_limit = match admission::unique_query_param(query, "limit") {
+                    Ok(limit) => limit,
+                    Err(error) => return read_error_response(error),
+                };
+                let limit = match parse_control_audit_limit(raw_limit.as_deref()) {
+                    Ok(limit) => limit,
+                    Err(error) => return read_error_response(error),
+                };
+                match self.control_plane_live() {
+                    Ok(plane) => {
+                        match plane.audit_page(cursor.as_deref(), limit, request_id.as_deref()) {
+                            Ok(page) => serialized_json_response(200, &page),
+                            Err(error) if error.contains("expired") => {
+                                ApiResponse::json(409, error_json("control_audit_cursor_expired"))
+                            }
+                            Err(error) if error.contains("maximum response byte budget") => {
+                                ApiResponse::json(
+                                    413,
+                                    error_json("control_audit_record_exceeds_response_budget"),
+                                )
+                            }
+                            Err(error) => ApiResponse::json(400, error_json(error)),
+                        }
+                    }
+                    Err(error) => ApiResponse::json(503, error_json(&error)),
+                }
+            }
             ("GET", "/scheduler/runs") => match self.query_models() {
                 Ok(models) => serialized_json_response(200, &models.job_runs),
                 Err(error) => ApiResponse::json(503, error_json(&error)),
@@ -2433,6 +2510,9 @@ qx_control_retired_audit_records_total {}\n",
                 self.submit_workflow_command(body, ts, authenticated_operator, TradeWorkflow::Live)
             }
             ("POST", "/app/validate-dataset") => app::dataset(body, &self.app_paths),
+            ("POST", "/app/backtest/preflight") => {
+                app_surface::preflight_backtest(body, &self.app_paths)
+            }
             ("POST", "/app/backtest") => app_surface::post_run_backtest(body, &self.app_paths),
             ("POST", "/app/provider-backtest") => app_surface::provider_backtest(
                 body,
@@ -2444,7 +2524,7 @@ qx_control_retired_audit_records_total {}\n",
                 &self.app_paths,
                 self.provider_registry.as_deref(),
             ),
-            ("POST", "/app/verify") => app_surface::post_verify_run(body),
+            ("POST", "/app/verify") => app_surface::post_verify_run(body, &self.app_paths),
             ("POST", "/app/verify-depth") => app::post_verify_depth_run(body, &self.app_paths),
             ("POST", "/app/compare-runs") => app_surface::post_compare_runs(body),
             ("POST", "/app/plan-risk-parity") => app_surface::post_plan_risk_parity(body),
@@ -3037,6 +3117,22 @@ pub(crate) fn serialized_json_response<T: Serialize>(status: u16, value: &T) -> 
             error_json(&format!("API JSON serialization failed: {error}")),
         ),
     }
+}
+
+fn parse_control_audit_limit(value: Option<&str>) -> Result<usize, &'static str> {
+    let Some(value) = value else {
+        return Ok(CONTROL_AUDIT_DEFAULT_PAGE_SIZE);
+    };
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err("control audit limit must be an unsigned decimal integer");
+    }
+    let limit = value
+        .parse::<usize>()
+        .map_err(|_| "control audit limit is outside the allowed range")?;
+    if !(1..=CONTROL_AUDIT_MAX_PAGE_SIZE).contains(&limit) {
+        return Err("control audit limit is outside the allowed range");
+    }
+    Ok(limit)
 }
 
 #[cfg(test)]

@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 documentation = "https://docs.rs/qx-sdk"
 homepage = "https://github.com/coeasy/qianxing"
+exclude = [".task-tmp/**", ".tmp-test/**"]
 
 [dependencies]
 # 门面的依赖集是**精确**的：它只依赖 qx-app 的公开类型（方案 §6.1「依赖 `qx-app` 的公开类型
@@ -21,5 +22,6 @@ qx-execution = { version = "0.4.0", path = "../qx-execution" }
 qx-provider = { version = "0.4.0", path = "../qx-provider" }
 qx-strategy = { version = "0.4.0", path = "../qx-strategy" }
 serde_json = { workspace = true }
+serde = { workspace = true }
 
 [dev-dependencies]

@@ -7,8 +7,8 @@
     "crosswalk": "2026-10-24"
   },
   "source_sha256": {
-    "maturity/capability-matrix.yaml": "02bccb8a3ef0252ec8eaf0bea111af14f869394d04baade8a2ed468e7a5305c8",
-    "maturity/capabilities.yaml": "1eb42e212f7cbeb4a637d518447f8784f751b1c5abc2209893d4cdb89cce1514",
+    "maturity/capability-matrix.yaml": "710b2d2ffdf0c67064b30bc3e4f7eed4f7189bcdad443f9b7bb0b562ec837797",
+    "maturity/capabilities.yaml": "ae0c51e09512eb62b8034c7ff77125d568908fd2eb97c6a5d18b97c932fcd530",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
   "product_levels": [
@@ -117,7 +117,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 140,
+      "evidence_path_count": 141,
       "limitation_count": 8
     },
     {
@@ -366,7 +366,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 60,
+      "evidence_path_count": 61,
       "limitation_count": 1
     },
     {
@@ -738,7 +738,8 @@
           "python/tests/test_remote_strategy_catalog.py",
           "maturity/evidence/python_sdk/windows-cp310-abi3-20261014-752e095b.yaml",
           "maturity/evidence/python_sdk/windows-cp310-abi3-20261014-2ecd1218.yaml",
-          "maturity/evidence/python_sdk/windows-cp310-abi3-20261014-ce8cea34.yaml"
+          "maturity/evidence/python_sdk/windows-cp310-abi3-20261014-ce8cea34.yaml",
+          ".github/workflows/ci.yml"
         ],
         "limitations": [
           "Python ProviderResult v1 已支持 BarFrame 与 Quote OrderBookSnapshot→DepthFrame；Bar Provider 可经 run_backtest_with_manifest 自动冻结、校验 DatasetManifestV2 并运行共享回测；Quote Provider 可经 run_depth_backtest 冻结带来源指纹的 DepthFrame 并直接运行共享 Tick/OrderBook 内核。两条本地路径复用 Rust ProviderRegistry 与 qx-app。Rust SDK 的 ProviderRegistry→冻结→共享回测已由独立消费者用例覆盖；C++ 是远端 qx-api client，不承诺进程内 ProviderRegistry。任意文件导入和多组件 DatasetBundle 尚未覆盖。Provider 的历史分页/实时订阅/限流/修订恢复与各数据源 conformance 尚未全覆盖。同账户、单市场 Bar 与 Tick/OrderBook 组合已接入 qx-app/Rust SDK/Python SDK；同账户多市场 L1 Tick/L2 OrderBook 现货组合接入唯一 Rust OrderBook portfolio engine，支持 2..32 个市场和共享账簿；自定义 Rust/Python 回调按档位消费 Tick/OrderBook，内置经典策略复用 DepthBarStrategy 将盘口中间价/数量映射为 Bar 事件。混合 L1/L2 内置策略参数网格与本地 callback_parameter_space 网格均复用共享账簿，候选结果须有成交并验证 replay；远端 Python/C++ 支持内置参数/策略种类实验，不上传任意回调代码；多市场衍生品保证金、跨币种折算、多市场 Paper/Live 和 Web/桌面操作仍未贯通。共享组合账簿/风险/OMS/撮合/回放仍由 Rust 独占；双腿多标的 Bar 回测现由 Rust PortfolioBarEngine 按非对齐事件时间线统一运行，共享 OMS、Ledger、风险准入、购买力预留、撮合、成交回报与 replay；该用例已通过 Python/Rust 高层入口和应用级共享现金竞争用例。多腿 funding 已按 UTC 8 小时结算边界在执行期写入共享 Ledger/EventLog，并在结算后更新策略可见现金；费率是调用方提供的常量，要求最近标记价不超过一个结算周期；支持调用方提供逐标的历史费率序列，也支持 Rust ProviderRegistry 与 Python ProviderRegistry 从 Financial/funding_8h 请求获取并保留 provider/request/query/source/retry 指纹；尚无 venue 专用 funding adapter/conformance、跨币种 funding 与外部账单对账；跨账户组合风险、多市场 Paper/Live 组合及完整 Paper/Live 组合执行验收也未闭环。统一多交易所费率与撮合仍需逐 venue 认证",
@@ -747,10 +748,10 @@
           "Rust 风险平价用例已提供确定性研究规划，并经 Python native/remote、C++ remote 和 Rust SDK 接入；它要求调用方提供冻结对齐收益与标记价，不自动读取 Provider 数据，也不提交 Paper/Live 订单",
           "接口分层已落（方案 §6.2：core/client/data/strategy/paper/live/experiments/reports 八个子层；顶层稳定名单与 qianxing.app 的公开面逐一双向相等；本地 AsyncCoreClient/AsyncRunHandle 与远端 AppClient/RemoteRunHandle 均以同步实现为唯一契约源，Paper/Live 提交亦有 asyncio 委托）；本地 RunHandle.events 来自 Rust worker 的内存事件序列；HTTP /app/runs/{run_id}/events 将生命周期事件并入运行快照并支持 after_seq，Python/Rust/C++ 远端可按 Run 读取。它仍是快照持久化而非逐事件事务日志，未提供 occurred_at/订单成交事实、跨进程强一致追加或游标过期恢复语义",
           "单腿 Bar 与 Tick/OrderBook 自定义策略参数实验已通过 Rust factory 与 Python 高层 SDK 的同步、RunHandle、AsyncCoreClient 和隔离 wheel 验收；每个候选独立创建策略，候选配置与策略 ID/version/SHA-256 绑定进 Rust 实验指纹。该回调工厂仅是本地 Rust/Python SDK 能力，未通过远端 HTTP/C++ callback 托管验证",
-          "CPython 3.10+ 乘操作系统与架构的支持矩阵未建立",
-          "Windows x64 cp310-abi3 wheel 已在隔离 target 环境离线安装并确认 Python API 与 Rust 扩展可导入；Linux/macOS 及其他架构矩阵尚未建立"
+          "CI wheel clean-consumer 矩阵已覆盖 Ubuntu/macOS/Windows × CPython 3.10–3.13；PyPI 发布态安装和其他 CPU 架构尚未验收",
+          "本机 Windows x64 cp310-abi3 wheel 已在隔离 target 环境离线安装并确认 Python API 与 Rust 扩展可导入；CI clean-consumer 另覆盖 Ubuntu/macOS/Windows × CPython 3.10–3.13，PyPI 发布态与其他 CPU 架构尚未验收"
         ],
-        "next_gate": "Rust/Python custom strategy callbacks now cover single-leg Bar and Tick/OrderBook custom-strategy parameter experiments, same-account Bar and Tick/OrderBook portfolios, and multi-leg custom-strategy backtests and cancellable parameter experiments. Next: implement remote callback execution; durable per-run order/event log and cursor recovery; CPython 3.10+ Linux/macOS and additional architecture install matrix; Live remains unverified until venue testnet conformance."
+        "next_gate": "Rust/Python custom strategy callbacks now cover single-leg Bar and Tick/OrderBook custom-strategy parameter experiments, same-account Bar and Tick/OrderBook portfolios, and multi-leg custom-strategy backtests and cancellable parameter experiments. Next: implement remote callback execution; durable per-run order/event log and cursor recovery; The Ubuntu/macOS/Windows × CPython 3.10–3.13 wheel clean-consumer matrix now passes; verify the published PyPI artifact on supported runtimes and add explicit CPU-architecture coverage. Live remains unverified until venue testnet conformance."
       },
       "execution_scopes": [],
       "account_query_scopes": [],
@@ -838,6 +839,7 @@
             "maturity/evidence/strategy-lifecycle-warmup-matrix-2026-10-27.json records shared normalized Bar warmup, order/fill, account/position, exact OrderBook, Timer, error, stop and unsupported-input rows consumed by Rust Strategy, Python file-loaded STRATEGY_CLASS/BaseStrategy Runtime adapter, and a dynamically loaded C ABI/C++ example plugin; Python Runtime checkpoint tests cover Bar cursor, warmup, account EventLog cursor replay, and mutation-before-error rollback/retry from the last committed checkpoint; Rust strategy worker tests cover cursor/checkpoint atomic persistence, write-failure preservation, temporary-file cleanup, per-process queue owner isolation and fresh-time lease validation; C ABI durable state recovery uses paired optional snapshot/restore exports bound to the verified library digest, and external JSONL workers use shared checkpoint envelopes bound to executable artifact SHA-256, while third-party process conformance, complete per-hook capability refusal and full all-host-pair coverage remain open W3 work; §13.41 module-function checkpoint recovery, §13.42 fake E2B/Microsandbox/OpenSandbox checkpoint rotation, §13.43 C ABI state recovery, §13.44 external-process recovery, and §13.45 fake SDK remote Docker llm-sandbox policy/lifecycle coverage are recorded in the same evidence, alongside the prior 553/10 and latest 560/10 Python suites, the 10/10 llm-sandbox targeted run, and the 445+9 fresh-binary qx-cli suite diagnostic",
             "python/qianxing_bridge/strategy.py normalizes ASCII enum spelling when StrategyIntent is constructed/from_dict; python/tests/test_strategy_contract.py covers uppercase round-trip; tools/check_architecture.py compares the four Python vocabularies with Rust validation and the published JSON schema",
             "python/pyproject.toml formal qianxing distribution, optional integration extras, and console entry point",
+            ".github/workflows/ci.yml builds wheels on Ubuntu/macOS/Windows and clean-installs them in CPython 3.10–3.13 consumers outside the source tree, checks native imports, and runs python/tests against the built extension",
             ".github/workflows/python-wheels.yml Python wheel matrix and PyPI Trusted Publishing job; the publisher is triggered after every successful tagged release gate",
             "locally built release wheel installed outside the source tree and validated with native doctor plus validate/backtest/verify smoke",
             "maturity/evidence/python-wheel-llm-sandbox-provider-2026-10-27.json records the rebuilt uncommitted Windows CPython 3.13 abi3 wheel, packaged llm-sandbox worker and optional extra metadata, sandbox-free base install, fresh-venv import, and 17-strategy/backtest/experiment/multi-account smoke; Linux/macOS and other Python versions remain unbuilt",
@@ -1263,7 +1265,7 @@
             "maturity/evidence/binance-oco-native-list-cancel-control-local-validation-2026-11-12.json Binance Spot OCO group cancellation uses DELETE /api/v3/orderList, validates list/child identities, and continues OMS fill recovery; local checks passed but no venue request was made",
             "maturity/evidence/binance-oco-group-cancel-control-local-validation-2026-11-12.json control parser, Live workflow gate, exact worker routing, and Windows compilation passed; Linux Podman verification did not complete, and no Binance request was made",
             "crates/qx-adapter/tests/user_stream_retry.rs healthy_sessions_do_not_exhaust_the_reconnect_budget proves the reconnect cap counts consecutive failures, so a stream that keeps delivering events never burns the budget, while connect_failures_still_escalate_backoff_and_stop_at_the_budget keeps the give-up reachable (V12 R4-b)",
-            "crates/qx-adapter/src/binance.rs BinanceStreamPoll/BinanceQuotePoll split \"this read window had nothing\" from \"the link is down\": an idle user-stream window is counted in idle_windows and costs no reconnect budget, and a quiet book ticker degrades the market worker instead of killing the runtime (V13 R2 #165/#168a)",
+            "crates/qx-adapter/src/binance/user_stream.rs BinanceStreamPoll and crates/qx-adapter/src/binance.rs BinanceQuotePoll split \"this read window had nothing\" from \"the link is down\": an idle user-stream window is counted in idle_windows and costs no reconnect budget, and a quiet book ticker degrades the market worker instead of killing the runtime (V13 R2 #165/#168a)",
             "crates/qx-adapter/src/lib.rs WebSocketPoll/FramePoll keep idle legal only at a frame boundary — a read timeout in the middle of a message is still a fault, otherwise two frames would be spliced across windows (V13 R2",
             "crates/qx-adapter/tests/binance_stream_retry.rs 40 silent windows with a 1-reconnect budget still return Ok with reconnects=0, while an idle-only session that ends in a broken link is still given up on, so idle can neither charge nor reset the budget (V13 R2",
             "crates/qx-cli/tests/unit/reexport_zero_reader_surface.rs 门面 `pub use` 那一行不算读者：整棵树里只有「自己的定义行 + 那行再导出」的公共面即判红 —— 架构门禁按名字在源码里找读者，而那行再导出本身就含这个名字，所以这类死面在门禁侧恒绿（#206 的盲区本体，修门禁归协调侧）。本轮据此删掉 `run_binance_user_stream_live` 与 `run_binance_user_stream_testnet` 两条端点预设包装、`DEFAULT_WS_HOST` 与 `TESTNET_WS_HOST` 两份常量、没有一处调用点的中间层委托 `run_binance_user_stream_with_config`（V13 R2",
@@ -1453,7 +1455,7 @@
           "Bar 多腿回测现支持同一账户内两个不同标的/venue 的共享时间线、共享购买力和统一撮合；仍限单账户、双腿 Bar 场景。跨账户组合账簿与净额、更多市场类型/日历、组合风险限额、策略级组合权益/费用/回撤尚未实现；多腿 funding 已是执行期共享 Ledger 现金流，按已观察到且未过期的衍生品标记价在 UTC 8 小时边界结算并纳入 replay；费率为常量仿真，不代表任何 venue 已认证",
           "RunExperimentSpec.strategy_kinds 支持最多 256 个单腿内置策略/参数候选的确定性快速选择、共享 Rust 回测、稳定排序和比较，支持训练窗策略/参数选择及 OOS/走查，并经 Rust SDK、Python 本地/远端、C++ HTTP 透传和 HTTP API；Tick/OrderBook RunDepthExperimentSpec.strategy_kinds 现也支持经典单腿策略 × 参数网格（最多 256 候选），Rust L2 用例与 CLI/HTTP/Python 入口验证了稳定排序、结果哈希和错误隔离；RunMultiLegExperimentSpec.strategy_kinds 现可在同一 Rust 用例中确定性比较最多 256 个双腿策略/参数候选，并由 Rust SDK、Python SDK 与 CLI/HTTP 对照；这仍是逐个实验候选，不是多策略共享组合账簿",
           "CLI Paper 一次性主链现会运行全部启用的 Strategy worker；双策略同账户 fixture 已实测 Scheduler→两策略→Paper 执行→共享 Ledger，且重跑不重复成交。此证据尚未覆盖多市场/多账户、Rust/Python/C++ SDK 与 API/前端操作链",
-          "N 市场同账户 Bar 与 L1/L2 OrderBook 组合已接 HTTP 同步/RunHandle、Rust/Python/C++ 远端内置策略入口，以及 Rust/Python 本地内置与自定义策略槽及 RunHandle；多市场深度混合档位策略/参数实验已由共享 Rust 引擎验证真实成交。Python strategy-file CLI 的 run-strategy 现支持同账户多市场 Bar spec，每个声明槽创建独立 callback 并绑定同一 bundle digest；search-strategy 已通过 RunMultiMarketExperimentSpec 支持目标槽的参数网格及 random/TPE/KDE-TPE/Pareto-TPE 自适应搜索，最多 256 候选、6 个参数维度；配置联合时间轴 SplitPlan 后仅用训练指标提案和选参，逐折记录 seed/训练指标并独立运行 OOS，候选身份绑定 bundle digest；本轮 Windows x64 cp310-abi3 wheel 隔离运行样例为 8/8 候选成功、两个 OOS 折均有完整报告（样例收益不构成策略有效性证据）。Linux/macOS wheel 矩阵未验收；跨标的共享 Python callback 状态仍未暴露。远端任意代码 callback、跨账户组合净额、衍生品组合保证金、跨币种风险、venue 日历及多市场 Paper/Live 尚未贯通",
+          "N 市场同账户 Bar 与 L1/L2 OrderBook 组合已接 HTTP 同步/RunHandle、Rust/Python/C++ 远端内置策略入口，以及 Rust/Python 本地内置与自定义策略槽及 RunHandle；多市场深度混合档位策略/参数实验已由共享 Rust 引擎验证真实成交。Python strategy-file CLI 的 run-strategy 现支持同账户多市场 Bar spec，每个声明槽创建独立 callback 并绑定同一 bundle digest；search-strategy 已通过 RunMultiMarketExperimentSpec 支持目标槽的参数网格及 random/TPE/KDE-TPE/Pareto-TPE 自适应搜索，最多 256 候选、6 个参数维度；配置联合时间轴 SplitPlan 后仅用训练指标提案和选参，逐折记录 seed/训练指标并独立运行 OOS，候选身份绑定 bundle digest；本轮 Windows x64 cp310-abi3 wheel 隔离运行样例为 8/8 候选成功、两个 OOS 折均有完整报告（样例收益不构成策略有效性证据）。本次多市场搜索样例仅在 Windows x64 wheel 验证；通用 CI wheel clean-consumer 已覆盖 Ubuntu/macOS × CPython 3.10–3.13，但该搜索 E2E 尚未跨 OS 验收；跨标的共享 Python callback 状态仍未暴露。远端任意代码 callback、跨账户组合净额、衍生品组合保证金、跨币种风险、venue 日历及多市场 Paper/Live 尚未贯通",
           "Paper/Live 组合退出语义、真实交易所认证及 Web/桌面完整组合操作流程尚未通过端到端验收"
         ],
         "next_gate": "扩展跨账户组合账簿、净额、组合风险及策略权益/费用/回撤归因；将 Paper 多策略接入共享版本化 SDK/API 与多市场/账户运行；再以 testnet 认证接入 Live，并补 Web/桌面组合 E2E"
@@ -2578,7 +2580,7 @@
             "maturity/evidence/binance-oco-native-list-cancel-control-local-validation-2026-11-12.json Binance Spot OCO group cancellation uses DELETE /api/v3/orderList, validates list/child identities, and continues OMS fill recovery; local checks passed but no venue request was made",
             "maturity/evidence/binance-oco-group-cancel-control-local-validation-2026-11-12.json control parser, Live workflow gate, exact worker routing, and Windows compilation passed; Linux Podman verification did not complete, and no Binance request was made",
             "crates/qx-adapter/tests/user_stream_retry.rs healthy_sessions_do_not_exhaust_the_reconnect_budget proves the reconnect cap counts consecutive failures, so a stream that keeps delivering events never burns the budget, while connect_failures_still_escalate_backoff_and_stop_at_the_budget keeps the give-up reachable (V12 R4-b)",
-            "crates/qx-adapter/src/binance.rs BinanceStreamPoll/BinanceQuotePoll split \"this read window had nothing\" from \"the link is down\": an idle user-stream window is counted in idle_windows and costs no reconnect budget, and a quiet book ticker degrades the market worker instead of killing the runtime (V13 R2 #165/#168a)",
+            "crates/qx-adapter/src/binance/user_stream.rs BinanceStreamPoll and crates/qx-adapter/src/binance.rs BinanceQuotePoll split \"this read window had nothing\" from \"the link is down\": an idle user-stream window is counted in idle_windows and costs no reconnect budget, and a quiet book ticker degrades the market worker instead of killing the runtime (V13 R2 #165/#168a)",
             "crates/qx-adapter/src/lib.rs WebSocketPoll/FramePoll keep idle legal only at a frame boundary — a read timeout in the middle of a message is still a fault, otherwise two frames would be spliced across windows (V13 R2",
             "crates/qx-adapter/tests/binance_stream_retry.rs 40 silent windows with a 1-reconnect budget still return Ok with reconnects=0, while an idle-only session that ends in a broken link is still given up on, so idle can neither charge nor reset the budget (V13 R2",
             "crates/qx-cli/tests/unit/reexport_zero_reader_surface.rs 门面 `pub use` 那一行不算读者：整棵树里只有「自己的定义行 + 那行再导出」的公共面即判红 —— 架构门禁按名字在源码里找读者，而那行再导出本身就含这个名字，所以这类死面在门禁侧恒绿（#206 的盲区本体，修门禁归协调侧）。本轮据此删掉 `run_binance_user_stream_live` 与 `run_binance_user_stream_testnet` 两条端点预设包装、`DEFAULT_WS_HOST` 与 `TESTNET_WS_HOST` 两份常量、没有一处调用点的中间层委托 `run_binance_user_stream_with_config`（V13 R2",
@@ -4964,6 +4966,7 @@
             "maturity/evidence/strategy-lifecycle-warmup-matrix-2026-10-27.json records shared normalized Bar warmup, order/fill, account/position, exact OrderBook, Timer, error, stop and unsupported-input rows consumed by Rust Strategy, Python file-loaded STRATEGY_CLASS/BaseStrategy Runtime adapter, and a dynamically loaded C ABI/C++ example plugin; Python Runtime checkpoint tests cover Bar cursor, warmup, account EventLog cursor replay, and mutation-before-error rollback/retry from the last committed checkpoint; Rust strategy worker tests cover cursor/checkpoint atomic persistence, write-failure preservation, temporary-file cleanup, per-process queue owner isolation and fresh-time lease validation; C ABI durable state recovery uses paired optional snapshot/restore exports bound to the verified library digest, and external JSONL workers use shared checkpoint envelopes bound to executable artifact SHA-256, while third-party process conformance, complete per-hook capability refusal and full all-host-pair coverage remain open W3 work; §13.41 module-function checkpoint recovery, §13.42 fake E2B/Microsandbox/OpenSandbox checkpoint rotation, §13.43 C ABI state recovery, §13.44 external-process recovery, and §13.45 fake SDK remote Docker llm-sandbox policy/lifecycle coverage are recorded in the same evidence, alongside the prior 553/10 and latest 560/10 Python suites, the 10/10 llm-sandbox targeted run, and the 445+9 fresh-binary qx-cli suite diagnostic",
             "python/qianxing_bridge/strategy.py normalizes ASCII enum spelling when StrategyIntent is constructed/from_dict; python/tests/test_strategy_contract.py covers uppercase round-trip; tools/check_architecture.py compares the four Python vocabularies with Rust validation and the published JSON schema",
             "python/pyproject.toml formal qianxing distribution, optional integration extras, and console entry point",
+            ".github/workflows/ci.yml builds wheels on Ubuntu/macOS/Windows and clean-installs them in CPython 3.10–3.13 consumers outside the source tree, checks native imports, and runs python/tests against the built extension",
             ".github/workflows/python-wheels.yml Python wheel matrix and PyPI Trusted Publishing job; the publisher is triggered after every successful tagged release gate",
             "locally built release wheel installed outside the source tree and validated with native doctor plus validate/backtest/verify smoke",
             "maturity/evidence/python-wheel-llm-sandbox-provider-2026-10-27.json records the rebuilt uncommitted Windows CPython 3.13 abi3 wheel, packaged llm-sandbox worker and optional extra metadata, sandbox-free base install, fresh-venv import, and 17-strategy/backtest/experiment/multi-account smoke; Linux/macOS and other Python versions remain unbuilt",

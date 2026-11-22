@@ -2,6 +2,7 @@
 name = "qx-adapter"
 description = "可替换传输层上的 REST Provider/Venue 适配器"
 version.workspace = true
+publish = false
 edition.workspace = true
 license.workspace = true
 

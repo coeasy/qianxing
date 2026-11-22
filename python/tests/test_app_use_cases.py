@@ -81,6 +81,7 @@ def _load_native():
             for name in (
                 "app_assemble_dataset_bundle",
                 "app_validate_dataset",
+                "app_preflight_backtest",
                 "app_run_backtest",
                 "app_run_backtest_with_strategy",
                 "app_start_backtest_with_strategy",
@@ -459,8 +460,12 @@ class AppUseCaseTests(unittest.TestCase):
             def __exit__(self, *_args):
                 return False
 
-            def read(self):
-                return b'{"status":"Accepted","command_id":41}'
+            def read(self, size=-1):
+                return (
+                    b'{"schema_version":1,"status":"Accepted","command_id":41,'
+                    b'"request_id":"sdk-41","operator_id":"ops","command_digest":99,'
+                    b'"result_code":"ACCEPTED_FOR_EXECUTION","ts":10}'
+                )
 
         command = TradeCommand(
             command_id=41,
@@ -471,7 +476,7 @@ class AppUseCaseTests(unittest.TestCase):
             target="strategy-1",
             payload={},
         )
-        with patch("qianxing.client_transport.urlopen", return_value=Response()) as open_url:
+        with patch("qianxing.client_transport._urlopen", return_value=Response()) as open_url:
             paper_receipt = PaperClient(
                 "https://localhost:8443", headers={"Authorization": "Bearer paper-token"}
             ).submit(command)
@@ -509,7 +514,7 @@ class AppUseCaseTests(unittest.TestCase):
             def __exit__(self, *_args):
                 return False
 
-            def read(self):
+            def read(self, size=-1):
                 return self.body
 
         replies = [
@@ -555,7 +560,7 @@ class AppUseCaseTests(unittest.TestCase):
             ),
             Response({"run_id": "remote-1", "status": "cancelling"}),
         ]
-        with patch("qianxing.client_transport.urlopen", side_effect=replies) as open_url:
+        with patch("qianxing.client_transport._urlopen", side_effect=replies) as open_url:
             client = AppClient("https://localhost:8443/api", headers={"Authorization": "Bearer sdk"})
             handle = client.start_depth_backtest({"schema_version": 1, "run_id": "remote-1"})
             self.assertIsInstance(handle, RemoteRunHandle)
@@ -587,11 +592,11 @@ class AppUseCaseTests(unittest.TestCase):
             def __exit__(self, *_args):
                 return False
 
-            def read(self):
+            def read(self, size=-1):
                 return self.body
 
         page = [{"seq": 8, "cursor": "8:abcd", "event": {"kind": "OrderAccepted"}}]
-        with patch("qianxing.client_transport.urlopen", side_effect=[Response(page), Response([])]) as open_url:
+        with patch("qianxing.client_transport._urlopen", side_effect=[Response(page), Response([])]) as open_url:
             client = AppClient("https://localhost")
             self.assertEqual(client.get_live_events(7), page)
             self.assertEqual(client.get_live_events(), [])
@@ -646,7 +651,7 @@ class AppUseCaseTests(unittest.TestCase):
             def __exit__(self, *_args):
                 return False
 
-            def read(self):
+            def read(self, size=-1):
                 return json.dumps(
                     {
                         "run_id": "remote-failed",
@@ -660,7 +665,7 @@ class AppUseCaseTests(unittest.TestCase):
                     }
                 ).encode("utf-8")
 
-        with patch("qianxing.client_transport.urlopen", return_value=Response()):
+        with patch("qianxing.client_transport._urlopen", return_value=Response()):
             handle = RemoteRunHandle(AppClient("https://localhost"), "remote-failed")
             with self.assertRaises(DataUnavailableError) as caught:
                 handle.result()
@@ -675,13 +680,18 @@ class AppUseCaseTests(unittest.TestCase):
 
         def request_json(route, *, method, payload=None):
             observed.append((route, method, payload))
-            return {"accepted": True}
+            state = {"schema_version": 1, "parent_id": "parent-1", "status": "ready"}
+            if route.endswith("/get"):
+                return {"state": state}
+            if route.endswith("/list"):
+                return {"accepted": True}
+            return state
 
         client._request_json = request_json
         parent = {"parent_id": "parent-1"}
-        self.assertTrue(client.start_paper_algo_execution({"spec": {}})["accepted"])
-        self.assertEqual(client.get_paper_algo_execution("parent-1"), {"accepted": True})
-        self.assertEqual(client.cancel_paper_algo_execution("parent-1"), {"accepted": True})
+        self.assertEqual(client.start_paper_algo_execution({"spec": parent})["parent_id"], "parent-1")
+        self.assertEqual(client.get_paper_algo_execution("parent-1")["state"]["parent_id"], "parent-1")
+        self.assertEqual(client.cancel_paper_algo_execution("parent-1")["parent_id"], "parent-1")
         self.assertEqual(
             client.list_paper_algo_executions(after_parent_id="parent-0", limit=7),
             {"accepted": True},
@@ -712,11 +722,12 @@ class AppUseCaseTests(unittest.TestCase):
             def __exit__(self, *_args):
                 return False
 
-            def read(self):
+            def read(self, size=-1):
                 return self.body
 
         cases = [
             ("validate_dataset", "/app/validate-dataset", False),
+            ("preflight_backtest", "/app/backtest/preflight", False),
             ("run_backtest", "/app/backtest", False),
             ("run_provider_backtest_with_manifest", "/app/provider-backtest", False),
             ("run_provider_depth_backtest", "/app/provider-depth-backtest", False),
@@ -765,6 +776,29 @@ class AppUseCaseTests(unittest.TestCase):
                 "content_fingerprint": "fingerprint",
                 "usable": True,
                 "gaps": [],
+            },
+            "preflight_backtest": {
+                "schema_version": 1,
+                "run_id": "contract-run",
+                "instrument": "BTCUSDT.BINANCE",
+                "ready": True,
+                "data": {
+                    "instrument": "BTCUSDT.BINANCE",
+                    "rows": 2,
+                    "content_fingerprint": "fingerprint",
+                    "usable": True,
+                    "gaps": [],
+                    "first_ts": 1,
+                    "last_ts": 2,
+                },
+                "checks": [
+                    {"id": "dataset_sample", "status": "ready"},
+                    {"id": "instrument_identity", "status": "ready"},
+                    {"id": "strategy_history", "status": "ready"},
+                    {"id": "execution_cost_inputs", "status": "not_applicable"},
+                    {"id": "market_rule_window", "status": "not_applicable"},
+                ],
+                "limitations": ["read-only"],
             },
             "run_backtest": {
                 "run_id": "run",
@@ -1028,18 +1062,22 @@ class AppUseCaseTests(unittest.TestCase):
             },
         }
         replies = [
-            Response({"run_id": "contract-run"})
+            Response({"run_id": "remote-classic-selection" if method == "start_experiment" else "contract-run",
+                      "status": "starting"})
             if is_start
             else Response(results[method])
             for method, _route, is_start in cases
         ]
         with patch(
-            "qianxing.client_transport.urlopen",
+            "qianxing.client_transport._urlopen",
             side_effect=replies,
         ) as open_url:
             client = AppClient("https://localhost")
             for method, _route, is_start in cases:
                 payload = {"schema_version": 1}
+                if is_start:
+                    from qianxing.client_remote import _RUN_START_ID_FIELDS
+                    payload[_RUN_START_ID_FIELDS[_route]] = "contract-run"
                 if method in {"run_experiment", "start_experiment"}:
                     payload.update({
                         "experiment_id": "remote-classic-selection",
@@ -1073,7 +1111,7 @@ class AppUseCaseTests(unittest.TestCase):
             def __exit__(self, *_args):
                 return False
 
-            def read(self):
+            def read(self, size=-1):
                 return b'{"verified":true,"equity":[],"fills":[],"events":[]}'
 
         outcome = {
@@ -1093,7 +1131,7 @@ class AppUseCaseTests(unittest.TestCase):
                 "event_trace": "events.jsonl",
             },
         }
-        with patch("qianxing.client_transport.urlopen", return_value=Response()) as open_url:
+        with patch("qianxing.client_transport._urlopen", return_value=Response()) as open_url:
             client = AppClient("https://localhost")
             result = client.research_artifacts(outcome)
         self.assertTrue(result["verified"])
@@ -1113,14 +1151,14 @@ class AppUseCaseTests(unittest.TestCase):
             def __exit__(self, *_args):
                 return False
 
-            def read(self):
+            def read(self, size=-1):
                 return b'{"schema_version":1,"run_id":"multi-leg","events":{"rows":[]}}'
 
         request = {
             "schema_version": 1,
             "outcome": {"run_id": "multi-leg"},
         }
-        with patch("qianxing.client_transport.urlopen", return_value=Response()) as open_url:
+        with patch("qianxing.client_transport._urlopen", return_value=Response()) as open_url:
             client = AppClient("https://localhost")
             result = asyncio.run(client.async_read_multi_leg_research_report_v1(request))
         self.assertEqual(result["run_id"], "multi-leg")
@@ -1140,7 +1178,7 @@ class AppUseCaseTests(unittest.TestCase):
             def __exit__(self, *_args):
                 return False
 
-            def read(self):
+            def read(self, size=-1):
                 return b'{"schema_version":1,"request_fingerprint":"0123456789abcdef","matched":false,"candidates":[]}'
 
         request = {
@@ -1153,7 +1191,7 @@ class AppUseCaseTests(unittest.TestCase):
             "end": 10,
             "as_of": 10,
         }
-        with patch("qianxing.client_transport.urlopen", return_value=Response()) as open_url:
+        with patch("qianxing.client_transport._urlopen", return_value=Response()) as open_url:
             client = AppClient("https://localhost")
             response = asyncio.run(client.async_provider_preflight(request))
         self.assertFalse(response["matched"])
@@ -4458,6 +4496,40 @@ class AppUseCaseTests(unittest.TestCase):
         )
         self.assertFalse(verdict["usable"])
         self.assertTrue(verdict["gaps"], "判了不可用就必须给出理由")
+
+    def test_backtest_preflight_reports_strategy_history_without_writing_outputs(self):
+        self._require()
+        spec = self._spec("py-preflight-ready", self.output_dir / "must-not-be-created")
+
+        ready = self.bridge.preflight_backtest(spec)
+
+        self.assertTrue(ready["ready"])
+        self.assertEqual(ready["data"]["instrument"], "BTCUSDT.BINANCE")
+        self.assertEqual(ready["data"]["rows"], 70)
+        self.assertTrue(any(check["id"] == "strategy_history" for check in ready["checks"]))
+        self.assertFalse(Path(spec["output_dir"]).exists())
+
+        short_path = self.output_dir / "short-preflight-bars.json"
+        short_path.write_text(json.dumps({
+            "schema_version": 1,
+            "instrument": "BTCUSDT.BINANCE",
+            "source": "py-preflight-test",
+            "ts": [1000, 2000],
+            "open_raw": [100, 101],
+            "high_raw": [102, 103],
+            "low_raw": [99, 100],
+            "close_raw": [101, 102],
+            "volume_raw": [10, 11],
+        }), encoding="utf-8")
+        spec["run_id"] = "py-preflight-short-window"
+        spec["bars_path"] = str(short_path)
+        spec["strategy"]["fast_window"] = 2
+        spec["strategy"]["slow_window"] = 4
+        blocked = self.bridge.preflight_backtest(spec)
+        self.assertFalse(blocked["ready"])
+        history = next(check for check in blocked["checks"] if check["id"] == "strategy_history")
+        self.assertEqual(history["status"], "blocked")
+        self.assertIn("至少需要 5 根 Bar", history["detail"])
 
 
 if __name__ == "__main__":

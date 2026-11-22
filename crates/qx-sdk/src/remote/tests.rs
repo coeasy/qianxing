@@ -10,6 +10,82 @@ impl RemoteTransport for FakeTransport {
             .lock()
             .unwrap()
             .push((path.to_owned(), body.to_owned()));
+        if path == "/app/backtest/preflight" {
+            return Ok(RemoteResponse::new(
+                200,
+                serde_json::json!({
+                    "schema_version": 1,
+                    "run_id": "bar-run",
+                    "instrument": "BTCUSDT.BINANCE",
+                    "ready": true,
+                    "data": {
+                        "instrument": "BTCUSDT.BINANCE",
+                        "rows": 40,
+                        "content_fingerprint": "fingerprint",
+                        "usable": true,
+                        "gaps": [],
+                        "first_ts": 1000,
+                        "last_ts": 40000
+                    },
+                    "checks": [
+                        {"id": "dataset_sample", "status": "ready"},
+                        {"id": "instrument_identity", "status": "ready"},
+                        {"id": "strategy_history", "status": "ready"},
+                        {"id": "execution_cost_inputs", "status": "not_applicable"},
+                        {"id": "market_rule_window", "status": "not_applicable"}
+                    ],
+                    "limitations": ["read-only"]
+                })
+                .to_string(),
+            ));
+        }
+        if matches!(
+            path,
+            "/app/paper/algo-executions/start" | "/app/paper/algo-executions/cancel"
+        ) {
+            let request: Value = serde_json::from_str(body).unwrap();
+            let id = request
+                .pointer("/spec/parent_id")
+                .or_else(|| request.get("parent_id"))
+                .unwrap();
+            return Ok(RemoteResponse::new(
+                200,
+                serde_json::json!({
+                    "schema_version": 1, "parent_id": id, "status": "ready"
+                })
+                .to_string(),
+            ));
+        }
+        if path == "/app/paper/algo-executions/get" {
+            let request: Value = serde_json::from_str(body).unwrap();
+            return Ok(RemoteResponse::new(
+                200,
+                serde_json::json!({"state": {
+                    "schema_version": 1, "parent_id": request["parent_id"], "status": "ready"
+                }})
+                .to_string(),
+            ));
+        }
+        if path.starts_with("/app/runs/") && path.ends_with("/cancel") {
+            let run_id = path
+                .trim_start_matches("/app/runs/")
+                .trim_end_matches("/cancel");
+            return Ok(RemoteResponse::new(
+                200,
+                serde_json::json!({"run_id":run_id,"status":"running"}).to_string(),
+            ));
+        }
+        if path.ends_with("/start") && !path.starts_with("/app/paper/") {
+            let request: Value = serde_json::from_str(body).unwrap();
+            let run_id = request
+                .get("experiment_id")
+                .or_else(|| request.get("run_id"))
+                .unwrap();
+            return Ok(RemoteResponse::new(
+                200,
+                serde_json::json!({"run_id":run_id,"status":"running"}).to_string(),
+            ));
+        }
         Ok(RemoteResponse::new(200, r#"{"ok":true}"#))
     }
 
@@ -18,21 +94,173 @@ impl RemoteTransport for FakeTransport {
             .lock()
             .unwrap()
             .push((path.to_owned(), String::new()));
+        if let Some(run_id) = path.strip_prefix("/app/runs/") {
+            return Ok(RemoteResponse::new(
+                200,
+                serde_json::json!({
+                    "run_id":run_id,"status":"running"
+                })
+                .to_string(),
+            ));
+        }
+        if path.starts_with("/control/audit") {
+            return Ok(RemoteResponse::new(
+                200,
+                serde_json::json!({
+                    "schema_version": 1,
+                    "entries": [],
+                    "next_cursor": null,
+                    "has_more": false,
+                    "snapshot_through_sequence": 0,
+                    "oldest_available_sequence": null,
+                    "retired_records": 0
+                })
+                .to_string(),
+            ));
+        }
         Ok(RemoteResponse::new(200, "[]"))
     }
+}
+
+struct InconsistentPreflightTransport;
+
+impl RemoteTransport for InconsistentPreflightTransport {
+    fn post(&self, _path: &str, _body: &str) -> Result<RemoteResponse, String> {
+        Ok(RemoteResponse::new(
+            200,
+            serde_json::json!({
+                "schema_version": 1,
+                "run_id": "bar-run",
+                "instrument": "BTCUSDT.BINANCE",
+                "ready": true,
+                "data": {
+                    "instrument": "BTCUSDT.BINANCE",
+                    "rows": 40,
+                    "content_fingerprint": "fingerprint",
+                    "usable": false,
+                    "gaps": [],
+                    "first_ts": 1000,
+                    "last_ts": 40000
+                },
+                "checks": [],
+                "limitations": []
+            })
+            .to_string(),
+        ))
+    }
+}
+
+struct FixedAuditTransport(&'static str);
+
+impl RemoteTransport for FixedAuditTransport {
+    fn post(&self, _path: &str, _body: &str) -> Result<RemoteResponse, String> {
+        Ok(RemoteResponse::new(500, "unexpected POST"))
+    }
+
+    fn get(&self, _path: &str) -> Result<RemoteResponse, String> {
+        Ok(RemoteResponse::new(200, self.0))
+    }
+}
+
+#[test]
+fn remote_control_audit_decodes_the_versioned_record_contract() {
+    let fixture = include_str!("../../../../python/tests/fixtures/control-audit-page-v1.json");
+    let client = RemoteApiClient::new(FixedAuditTransport(fixture));
+    let records = client
+        .get_command_audit_by_request_id("paper-9")
+        .expect("typed audit response");
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].schema_version, 1);
+    assert_eq!(records[0].status, crate::ControlAuditStatus::Accepted);
+
+    let invalid = r#"{"schema_version":1,"entries":[{"sequence":1,"record":{"schema_version":1,"command_id":9,"request_id":"paper-9","operator_id":"local-paper","command_digest":123,"status":"Accepted","result_code":"ACCEPTED_FOR_EXECUTION","ts":10,"unknown":true}}],"next_cursor":null,"has_more":false,"snapshot_through_sequence":1,"oldest_available_sequence":1,"retired_records":0}"#;
+    let client = RemoteApiClient::new(FixedAuditTransport(invalid));
+    assert!(matches!(
+        client.get_command_audit_page(None, 10, None),
+        Err(RemoteApiError::InvalidJson(message)) if message.contains("unknown field")
+    ));
+}
+
+#[test]
+fn remote_preflight_rejects_cross_field_contract_drift() {
+    let client = RemoteApiClient::new(InconsistentPreflightTransport);
+    let spec = crate::BacktestSpec::new(
+        crate::BacktestDatasetInput {
+            run_id: "bar-run".into(),
+            instrument: "BTCUSDT.BINANCE".into(),
+            bars_path: "bars.json".into(),
+        },
+        "USDT",
+        1_000_000_000,
+        7,
+        "server-output",
+        crate::BuiltinStrategySpec::new(crate::BuiltinStrategyKind::SmaCross, "sma"),
+    );
+
+    assert!(matches!(
+        client.preflight_backtest(&spec),
+        Err(RemoteApiError::InvalidJson(message)) if message.contains("usable flag disagrees")
+    ));
+}
+
+#[test]
+fn bar_research_uses_expected_routes_and_rejects_bad_documents_and_run_ids() {
+    let client = RemoteApiClient::new(FakeTransport::default());
+    let spec = crate::BacktestSpec::new(
+        crate::BacktestDatasetInput {
+            run_id: "bar-run".into(),
+            instrument: "BTCUSDT.BINANCE".into(),
+            bars_path: "bars.json".into(),
+        },
+        "USDT",
+        1_000_000_000,
+        7,
+        "server-output",
+        crate::BuiltinStrategySpec::new(crate::BuiltinStrategyKind::SmaCross, "sma"),
+    );
+    let preflight = client.preflight_backtest(&spec).expect("typed preflight");
+    assert!(preflight.ready);
+    assert_eq!(preflight.data.rows, 40);
+    // A successful HTTP status with an incomplete typed outcome must not appear successful.
+    assert!(matches!(
+        client.run_backtest(&spec),
+        Err(RemoteApiError::OutcomeUnknown { .. })
+    ));
+    client.start_backtest(&spec).unwrap();
+    client.run_status("bar-run").unwrap();
+    client.cancel_run("bar-run").unwrap();
+    for invalid in ["", ".", "..", "a/b", "a?b", "a\r\nX: bad"] {
+        assert!(client.run_status(invalid).is_err());
+        assert!(client.cancel_run(invalid).is_err());
+        assert!(client.get_run_events(invalid, 0).is_err());
+    }
+    let calls = client.transport.0.lock().unwrap();
+    assert_eq!(
+        calls.iter().map(|call| call.0.as_str()).collect::<Vec<_>>(),
+        [
+            "/app/backtest/preflight",
+            "/app/backtest",
+            "/app/backtest/start",
+            "/app/runs/bar-run",
+            "/app/runs/bar-run/cancel"
+        ]
+    );
 }
 
 #[test]
 fn paper_algo_lifecycle_uses_server_routes_and_json_contract() {
     let transport = FakeTransport::default();
     let client = RemoteApiClient::new(transport);
+    assert!(client.get_command_audit_by_request_id(" ").is_err());
     client
-        .start_paper_algo_execution(&serde_json::json!({"parent_id":"p-1"}))
+        .start_paper_algo_execution(&serde_json::json!({"spec":{"parent_id":"p-1"}}))
         .unwrap();
     client.get_paper_algo_execution("p/2").unwrap();
     client.cancel_paper_algo_execution("p-3").unwrap();
     client.list_paper_algo_executions(Some("p-4"), 17).unwrap();
     client.get_live_events(Some(23)).unwrap();
+    client.get_command_audit().unwrap();
+    client.get_command_audit_by_request_id("paper +/7").unwrap();
     let calls = client.transport.0.lock().unwrap();
     assert_eq!(
         calls.iter().map(|call| call.0.as_str()).collect::<Vec<_>>(),
@@ -42,6 +270,8 @@ fn paper_algo_lifecycle_uses_server_routes_and_json_contract() {
             "/app/paper/algo-executions/cancel",
             "/app/paper/algo-executions/list",
             "/events/live?after=23",
+            "/control/audit?limit=100",
+            "/control/audit?limit=2&request_id=paper%20%2B%2F7",
         ]
     );
     assert_eq!(
@@ -478,4 +708,162 @@ fn remote_client_rejects_invalid_success_json() {
         client.get_paper_algo_execution("p-1"),
         Err(RemoteApiError::InvalidJson(_))
     ));
+}
+
+#[test]
+fn mutation_failures_preserve_unknown_outcome_and_never_retry() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Reply {
+        response: Result<RemoteResponse, String>,
+        calls: AtomicUsize,
+    }
+    impl RemoteTransport for Reply {
+        fn post(&self, _: &str, _: &str) -> Result<RemoteResponse, String> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            self.response.clone()
+        }
+        fn get(&self, _: &str) -> Result<RemoteResponse, String> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            self.response.clone()
+        }
+    }
+    for response in [
+        Err("connection closed".into()),
+        Ok(RemoteResponse::new(302, "redirect")),
+        Ok(RemoteResponse::new(503, "service unavailable")),
+        Ok(RemoteResponse::new(409, "conflict")),
+        Ok(RemoteResponse::new(200, "not-json")),
+        Ok(RemoteResponse::new(200, "[]")),
+        Ok(RemoteResponse::new(
+            200,
+            r#"{"run_id":"other","status":"running"}"#,
+        )),
+        Ok(RemoteResponse::new(
+            200,
+            r#"{"run_id":"run-1","status":"unknown"}"#,
+        )),
+    ] {
+        let client = RemoteApiClient::new(Reply {
+            response,
+            calls: AtomicUsize::new(0),
+        });
+        let error = client.cancel_run("run-1").unwrap_err();
+        assert!(matches!(&error, RemoteApiError::OutcomeUnknown {
+            operation, recovery_id: Some(id), ..
+        } if operation == "/app/runs/run-1/cancel" && id == "run-1"));
+        assert!(error
+            .to_string()
+            .contains("inspect server state before retrying"));
+        assert!(std::error::Error::source(&error).is_some());
+        assert_eq!(client.transport.calls.load(Ordering::Relaxed), 1);
+    }
+    let rejected = RemoteApiClient::new(Reply {
+        response: Ok(RemoteResponse::new(403, "forbidden")),
+        calls: AtomicUsize::new(0),
+    });
+    assert!(matches!(
+        rejected.cancel_run("run-1"),
+        Err(RemoteApiError::Http { status: 403, .. })
+    ));
+    assert!(rejected.cancel_run("../bad").is_err());
+    assert_eq!(rejected.transport.calls.load(Ordering::Relaxed), 1);
+
+    let paper = RemoteApiClient::new(Reply {
+        response: Err("response lost".into()),
+        calls: AtomicUsize::new(0),
+    });
+    let request = serde_json::json!({"spec": {"parent_id": "parent-1"}});
+    assert!(matches!(paper.start_paper_algo_execution(&request),
+        Err(RemoteApiError::OutcomeUnknown { recovery_id: Some(id), .. }) if id == "parent-1"));
+    assert!(matches!(
+        paper.get_paper_algo_execution("parent-1"),
+        Err(RemoteApiError::Transport(_))
+    ));
+    assert_eq!(paper.transport.calls.load(Ordering::Relaxed), 2);
+    assert!(matches!(
+        paper.start_paper_algo_execution(&serde_json::json!({})),
+        Err(RemoteApiError::InvalidJson(_))
+    ));
+    assert_eq!(paper.transport.calls.load(Ordering::Relaxed), 2);
+    let wrong_parent = RemoteApiClient::new(Reply {
+        response: Ok(RemoteResponse::new(
+            200,
+            r#"{"schema_version":1,"parent_id":"other","status":"ready"}"#,
+        )),
+        calls: AtomicUsize::new(0),
+    });
+    assert!(
+        matches!(wrong_parent.cancel_paper_algo_execution("parent-1"),
+        Err(RemoteApiError::OutcomeUnknown { recovery_id: Some(id), .. }) if id == "parent-1")
+    );
+    let wrong_run = RemoteApiClient::new(Reply {
+        response: Ok(RemoteResponse::new(
+            200,
+            r#"{"run_id":"other","status":"running"}"#,
+        )),
+        calls: AtomicUsize::new(0),
+    });
+    assert!(matches!(
+        wrong_run.run_status("run-1"),
+        Err(RemoteApiError::InvalidJson(_))
+    ));
+    let wrong_snapshot = RemoteApiClient::new(Reply {
+        response: Ok(RemoteResponse::new(
+            200,
+            r#"{"state":{"schema_version":1,"parent_id":"other","status":"ready"}}"#,
+        )),
+        calls: AtomicUsize::new(0),
+    });
+    assert!(matches!(
+        wrong_snapshot.get_paper_algo_execution("parent-1"),
+        Err(RemoteApiError::InvalidJson(_))
+    ));
+}
+
+#[test]
+fn backtest_and_verification_reject_mismatched_results() {
+    struct Response(&'static str);
+    impl RemoteTransport for Response {
+        fn post(&self, _: &str, _: &str) -> Result<RemoteResponse, String> {
+            Ok(RemoteResponse::new(200, self.0))
+        }
+    }
+    let spec = crate::BacktestSpec::new(
+        crate::BacktestDatasetInput {
+            run_id: "run-1".into(),
+            instrument: "BTCUSDT.BINANCE".into(),
+            bars_path: "bars.json".into(),
+        },
+        "USDT",
+        1_000_000_000,
+        7,
+        "out",
+        crate::BuiltinStrategySpec::new(crate::BuiltinStrategyKind::SmaCross, "sma"),
+    );
+    let other = r#"{"run_id":"other","instrument":"BTCUSDT.BINANCE","result_hash":"hash","data_fingerprint":"data","fills":1,"equity_points":2,"return_bps":0,"max_drawdown_bps":0,"artifacts":{"run_manifest":"run","summary":"summary","equity":"equity","fills":"fills"}}"#;
+    let client = RemoteApiClient::new(Response(other));
+    assert!(
+        matches!(client.run_backtest(&spec), Err(RemoteApiError::OutcomeUnknown {
+        recovery_id: Some(id), ..
+    }) if id == "run-1")
+    );
+    let mut outcome: crate::BacktestOutcome = serde_json::from_str(other).unwrap();
+    outcome.run_id = "run-1".into();
+    for response in [
+        r#"{"run_id":"other","result_hash":"hash","data_fingerprint":"data","verified":true,"checks":[],"mismatches":[]}"#,
+        r#"{"run_id":"run-1","result_hash":"bad","data_fingerprint":"data","verified":true,"checks":[],"mismatches":[]}"#,
+        r#"{"run_id":"run-1","result_hash":"hash","data_fingerprint":"data","verified":true,"checks":[],"mismatches":["bad"]}"#,
+    ] {
+        assert!(matches!(
+            RemoteApiClient::new(Response(response)).verify_run(&outcome),
+            Err(RemoteApiError::InvalidJson(_))
+        ));
+    }
+    let failed = r#"{"run_id":"run-1","result_hash":"","data_fingerprint":"","verified":false,"checks":[],"mismatches":["missing"]}"#;
+    assert!(
+        !RemoteApiClient::new(Response(failed))
+            .verify_run(&outcome)
+            .unwrap()
+            .verified
+    );
 }

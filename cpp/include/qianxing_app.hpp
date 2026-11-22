@@ -39,6 +39,7 @@ using AppTransport = std::function<AppResponse(
 namespace routes {
 
 inline constexpr std::string_view kValidateDataset = "/app/validate-dataset";
+inline constexpr std::string_view kBacktestPreflight = "/app/backtest/preflight";
 inline constexpr std::string_view kBacktest = "/app/backtest";
 inline constexpr std::string_view kProviderBacktest = "/app/provider-backtest";
 inline constexpr std::string_view kProviderDepthBacktest = "/app/provider-depth-backtest";
@@ -99,13 +100,14 @@ inline constexpr std::string_view kRunStatusTemplate = "/app/runs/{run_id}";
 inline constexpr std::string_view kRunEventsTemplate = "/app/runs/{run_id}/events";
 inline constexpr std::string_view kRunCancelTemplate = "/app/runs/{run_id}/cancel";
 inline constexpr std::string_view kLiveEvents = "/events/live";
+inline constexpr std::string_view kControlAudit = "/control/audit";
 inline constexpr std::string_view kAccountActivity = "/account/activity";
 
 // The gate's read surface: every route template the client claims to call.
 // Every name below must also be consumed by a method on AppClient -- a route
 // that is only listed here is decoration, and the gate rejects it.
-inline constexpr std::array<std::string_view, 56> kDeclaredRoutes = {
-    kValidateDataset,       kBacktest, kProviderBacktest, kProviderDepthBacktest,
+inline constexpr std::array<std::string_view, 58> kDeclaredRoutes = {
+    kValidateDataset, kBacktestPreflight, kBacktest, kProviderBacktest, kProviderDepthBacktest,
     kReadProviderReport, kReadProviderDepthReport, kReadMultiAccountJointReport,
     kReadMultiLegReport,
     kMultiAccountBacktest,  kMultiAccountBacktestStart,
@@ -133,7 +135,7 @@ inline constexpr std::array<std::string_view, 56> kDeclaredRoutes = {
     kMultiLegExperiment,    kMultiLegExperimentStart,
     kPaperCommands,         kLiveCommands,
     kRunStatusTemplate,     kRunEventsTemplate, kRunCancelTemplate,
-    kLiveEvents, kAccountActivity,
+    kLiveEvents, kControlAudit, kAccountActivity,
 };
 
 inline std::string encode_query_component(std::string_view value) {
@@ -215,6 +217,10 @@ public:
 
     AppResponse validate_dataset(std::string_view spec_json) const {
         return post(routes::kValidateDataset, spec_json);
+    }
+
+    AppResponse preflight_backtest(std::string_view spec_json) const {
+        return post(routes::kBacktestPreflight, spec_json);
     }
 
     AppResponse run_backtest(std::string_view spec_json) const {
@@ -397,6 +403,28 @@ public:
         }
         const auto path = std::string(routes::kLiveEvents) + "?after=" +
                           std::to_string(*after_seq);
+        return get(path);
+    }
+
+    AppResponse get_command_audit(
+        std::optional<std::string_view> request_id = std::nullopt) const {
+        return get_command_audit_page(100, std::nullopt, request_id);
+    }
+
+    // Responses are bounded pages ordered newest-first. Keep the returned cursor and pass it
+    // back to read older rows; request_id recovery is an exact two-row lookup without a cursor.
+    AppResponse get_command_audit_page(
+        std::uint32_t limit = 100,
+        std::optional<std::string_view> cursor = std::nullopt,
+        std::optional<std::string_view> request_id = std::nullopt) const {
+        std::string path = std::string(routes::kControlAudit) + "?limit=" +
+                           std::to_string(limit);
+        if (request_id) {
+            path += "&request_id=" + routes::encode_query_component(*request_id);
+        }
+        if (cursor) {
+            path += "&cursor=" + routes::encode_query_component(*cursor);
+        }
         return get(path);
     }
 

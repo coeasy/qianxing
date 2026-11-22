@@ -4,6 +4,7 @@ description = "观星：数据平面，质量门与 point-in-time 可见性"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
 qx-core = { version = "0.4.0", path = "../qx-core" }

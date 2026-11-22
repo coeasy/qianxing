@@ -2,7 +2,7 @@
   "title": "牵星 Qianxing 运行概览",
   "uid": "qianxing-overview",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "editable": true,
   "timezone": "browser",
   "tags": ["qianxing", "quant", "local-runtime"],
@@ -238,6 +238,18 @@
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 88 },
       "targets": [
         { "expr": "(time() - qx_gateway_venue_last_event_timestamp_seconds) and (qx_gateway_venue_last_event_timestamp_seconds > 0)", "legendFormat": "{{venue_id}} · {{venue}} · {{account}}" }
+      ]
+    },
+    {
+      "id": 23,
+      "title": "控制面待执行命令 / 容量 / 拒绝率",
+      "type": "timeseries",
+      "description": "待办数接近硬上限时，API 会返回 503 拒绝新命令；执行到终态后容量恢复。",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 96 },
+      "targets": [
+        { "expr": "qx_control_pending_commands", "legendFormat": "待执行命令" },
+        { "expr": "qx_control_pending_commands_limit", "legendFormat": "容量上限" },
+        { "expr": "sum(rate(qx_api_control_capacity_rejections_total[5m]))", "legendFormat": "满载拒绝/秒" }
       ]
     }
   ]

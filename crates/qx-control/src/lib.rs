@@ -364,10 +364,222 @@ pub struct AuditRecord {
     pub ts: u64,
 }
 
+pub const CONTROL_AUDIT_RECORD_SCHEMA_VERSION_V1: u32 = 1;
+pub const CONTROL_AUDIT_PAGE_SCHEMA_VERSION_V1: u32 = 1;
+pub const CONTROL_AUDIT_DEFAULT_PAGE_SIZE: usize = 100;
+pub const CONTROL_AUDIT_MAX_PAGE_SIZE: usize = 1_000;
+pub const CONTROL_AUDIT_MAX_PAGE_BYTES: usize = 1_048_576;
+
+/// Versioned public response used by Paper/Live command submission and audit recovery routes.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(try_from = "ControlAuditRecordV1Raw")]
+pub struct ControlAuditRecordV1 {
+    pub schema_version: u32,
+    pub command_id: u64,
+    pub request_id: String,
+    pub operator_id: String,
+    pub command_digest: u64,
+    pub status: CommandStatus,
+    pub result_code: String,
+    pub ts: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ControlAuditRecordV1Raw {
+    schema_version: u32,
+    command_id: u64,
+    request_id: String,
+    operator_id: String,
+    command_digest: u64,
+    status: CommandStatus,
+    result_code: String,
+    ts: u64,
+}
+
+impl TryFrom<ControlAuditRecordV1Raw> for ControlAuditRecordV1 {
+    type Error = &'static str;
+
+    fn try_from(raw: ControlAuditRecordV1Raw) -> Result<Self, Self::Error> {
+        if raw.schema_version != CONTROL_AUDIT_RECORD_SCHEMA_VERSION_V1 {
+            return Err("unsupported control audit record schema version");
+        }
+        if raw.request_id.trim().is_empty() || raw.operator_id.trim().is_empty() {
+            return Err("control audit record identities must not be empty");
+        }
+        Ok(Self {
+            schema_version: raw.schema_version,
+            command_id: raw.command_id,
+            request_id: raw.request_id,
+            operator_id: raw.operator_id,
+            command_digest: raw.command_digest,
+            status: raw.status,
+            result_code: raw.result_code,
+            ts: raw.ts,
+        })
+    }
+}
+
+impl From<&AuditRecord> for ControlAuditRecordV1 {
+    fn from(record: &AuditRecord) -> Self {
+        Self {
+            schema_version: CONTROL_AUDIT_RECORD_SCHEMA_VERSION_V1,
+            command_id: record.command_id,
+            request_id: record.request_id.clone(),
+            operator_id: record.operator_id.clone(),
+            command_digest: record.command_digest,
+            status: record.status,
+            result_code: record.result_code.clone(),
+            ts: record.ts,
+        }
+    }
+}
+
+/// One audit row with its durable append sequence. The sequence is separate from the legacy
+/// persisted `AuditRecord` so the existing storage/audit-chain wire format remains unchanged.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ControlAuditEntryV1 {
+    pub sequence: u64,
+    pub record: ControlAuditRecordV1,
+}
+
+/// Bounded, snapshot-consistent page returned by `GET /control/audit`.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(try_from = "ControlAuditPageV1Raw")]
+pub struct ControlAuditPageV1 {
+    pub schema_version: u32,
+    pub entries: Vec<ControlAuditEntryV1>,
+    pub next_cursor: Option<String>,
+    pub has_more: bool,
+    pub snapshot_through_sequence: u64,
+    pub oldest_available_sequence: Option<u64>,
+    pub retired_records: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ControlAuditPageV1Raw {
+    schema_version: u32,
+    entries: Vec<ControlAuditEntryV1>,
+    next_cursor: Option<String>,
+    has_more: bool,
+    snapshot_through_sequence: u64,
+    oldest_available_sequence: Option<u64>,
+    retired_records: u64,
+}
+
+impl TryFrom<ControlAuditPageV1Raw> for ControlAuditPageV1 {
+    type Error = &'static str;
+
+    fn try_from(raw: ControlAuditPageV1Raw) -> Result<Self, Self::Error> {
+        if raw.schema_version != CONTROL_AUDIT_PAGE_SCHEMA_VERSION_V1 {
+            return Err("unsupported control audit page schema version");
+        }
+        if raw.entries.len() > CONTROL_AUDIT_MAX_PAGE_SIZE {
+            return Err("control audit page exceeds the maximum entry count");
+        }
+        if raw.has_more != raw.next_cursor.is_some() {
+            return Err("control audit page has_more and next_cursor disagree");
+        }
+        if raw.has_more && raw.entries.is_empty() {
+            return Err("control audit page cannot continue without an entry");
+        }
+        if raw
+            .entries
+            .windows(2)
+            .any(|pair| pair[0].sequence <= pair[1].sequence)
+        {
+            return Err("control audit page sequences must be strictly decreasing");
+        }
+        if raw
+            .entries
+            .iter()
+            .any(|entry| entry.sequence == 0 || entry.sequence > raw.snapshot_through_sequence)
+        {
+            return Err("control audit entry sequence is outside the page snapshot");
+        }
+        if raw
+            .oldest_available_sequence
+            .is_some_and(|sequence| sequence == 0)
+        {
+            return Err("oldest available control audit sequence must be non-zero");
+        }
+        if raw
+            .oldest_available_sequence
+            .is_some_and(|sequence| sequence > raw.snapshot_through_sequence)
+        {
+            return Err("oldest available sequence is outside the page snapshot");
+        }
+        if let Some(cursor) = raw.next_cursor.as_deref() {
+            let decoded = ControlAuditCursorV1::decode(cursor)?;
+            if decoded.through_sequence != raw.snapshot_through_sequence
+                || raw.entries.last().map(|entry| entry.sequence) != Some(decoded.before_sequence)
+            {
+                return Err("control audit next_cursor does not match its final entry");
+            }
+        }
+        let page = Self {
+            schema_version: raw.schema_version,
+            entries: raw.entries,
+            next_cursor: raw.next_cursor,
+            has_more: raw.has_more,
+            snapshot_through_sequence: raw.snapshot_through_sequence,
+            oldest_available_sequence: raw.oldest_available_sequence,
+            retired_records: raw.retired_records,
+        };
+        if serde_json::to_vec(&page)
+            .map_err(|_| "control audit page serialization failed")?
+            .len()
+            > CONTROL_AUDIT_MAX_PAGE_BYTES
+        {
+            return Err("control audit page exceeds the maximum response byte budget");
+        }
+        Ok(page)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct ControlAuditCursorV1 {
+    before_sequence: u64,
+    through_sequence: u64,
+}
+
+impl ControlAuditCursorV1 {
+    fn encode(self) -> String {
+        format!("v1.{}.{}", self.before_sequence, self.through_sequence)
+    }
+
+    fn decode(value: &str) -> Result<Self, &'static str> {
+        let mut parts = value.split('.');
+        if parts.next() != Some("v1") {
+            return Err("unsupported control audit cursor version");
+        }
+        let before_sequence = parts
+            .next()
+            .ok_or("control audit cursor is incomplete")?
+            .parse::<u64>()
+            .map_err(|_| "control audit cursor has an invalid after sequence")?;
+        let through_sequence = parts
+            .next()
+            .ok_or("control audit cursor is incomplete")?
+            .parse::<u64>()
+            .map_err(|_| "control audit cursor has an invalid snapshot sequence")?;
+        if parts.next().is_some() || before_sequence > through_sequence {
+            return Err("control audit cursor is invalid");
+        }
+        Ok(Self {
+            before_sequence,
+            through_sequence,
+        })
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum ControlError {
     Invalid(String),
     Forbidden,
+    PendingLimitReached,
     DuplicateRequest(String),
     DuplicateCommand(u64),
     UnknownCommand(u64),
@@ -448,6 +660,9 @@ pub fn order_group_from_submit_command(
 /// 把一条已受理、还没人执行的命令静默丢掉。三格必须同时删——`from_json` 逐条核对「审计记录
 /// 指向的命令存在」与「每条命令至少一条审计记录」，只删一边，重启恢复就会拒读自己写的历史。
 pub const FINALIZED_COMMAND_RETENTION: usize = 4096;
+/// Maximum number of accepted commands that have not yet reached a terminal audit status.
+/// Pending work is never retired silently; new submissions fail closed until workers make room.
+pub const PENDING_CONTROL_COMMAND_LIMIT: usize = 4096;
 
 /// 退场摘要。控制面的**持久**审计在 `qx-storage`（`AuditFileStore`/`SqliteAuditStore`/
 /// `PostgresAuditStore` + 哈希链），这一份只是内存
@@ -465,6 +680,20 @@ pub struct ControlPlane {
     commands: BTreeMap<u64, ControlCommand>,
     requests: BTreeMap<String, u64>,
     audit: Vec<AuditRecord>,
+    /// Append sequence stored beside legacy audit rows so the existing audit-chain record shape
+    /// remains unchanged. These fields are validated and migrated together on restore.
+    #[serde(default)]
+    audit_sequences: Vec<u64>,
+    /// Per-command sequence lookup keeps request-id recovery bounded without changing the
+    /// legacy audit rows. It is validated against `audit` and rebuilt for older snapshots.
+    #[serde(default)]
+    audit_command_sequences: BTreeMap<u64, Vec<u64>>,
+    /// Last sequence ever assigned. Retiring rows never rewinds this durable watermark.
+    #[serde(default)]
+    audit_high_watermark: u64,
+    /// Durable O(1) admission and metrics count. Older snapshots reconstruct it from audit state.
+    #[serde(default)]
+    pending_commands_count: u64,
     #[serde(default)]
     strategy_lifecycle: BTreeMap<String, StrategyLifecycleRecord>,
     #[serde(default)]
@@ -526,6 +755,10 @@ impl ControlPlane {
         if self.commands.contains_key(&command.command_id) {
             return Err(ControlError::DuplicateCommand(command.command_id));
         }
+        if self.pending_commands_count >= PENDING_CONTROL_COMMAND_LIMIT as u64 {
+            return Err(ControlError::PendingLimitReached);
+        }
+        let sequence = self.next_audit_sequence()?;
         let record = AuditRecord {
             command_id: command.command_id,
             request_id: command.request_id.clone(),
@@ -538,7 +771,7 @@ impl ControlPlane {
         self.requests
             .insert(command.request_id.clone(), command.command_id);
         self.commands.insert(command.command_id, command);
-        self.audit.push(record.clone());
+        self.append_audit(sequence, record.clone());
         self.retire_overflow();
         Ok(record)
     }
@@ -549,6 +782,177 @@ impl ControlPlane {
 
     pub fn audit(&self) -> &[AuditRecord] {
         &self.audit
+    }
+
+    /// Return a bounded newest-first page from a stable append-sequence snapshot. The cursor
+    /// freezes the upper sequence on the first request, so new commands cannot extend a scan.
+    pub fn audit_page(
+        &self,
+        cursor: Option<&str>,
+        limit: usize,
+        request_id: Option<&str>,
+    ) -> Result<ControlAuditPageV1, &'static str> {
+        if !(1..=CONTROL_AUDIT_MAX_PAGE_SIZE).contains(&limit) {
+            return Err("control audit page limit is outside the allowed range");
+        }
+        if request_id.is_some() && limit < 2 {
+            return Err("control audit request_id lookup requires a page limit of at least 2");
+        }
+        if cursor.is_some() && request_id.is_some() {
+            return Err("control audit cursor cannot be combined with request_id");
+        }
+        let parsed_cursor = cursor.map(ControlAuditCursorV1::decode).transpose()?;
+        let before_sequence = parsed_cursor.map(|value| value.before_sequence);
+        let through_sequence =
+            parsed_cursor.map_or(self.audit_high_watermark, |value| value.through_sequence);
+        if through_sequence > self.audit_high_watermark {
+            return Err("control audit cursor is ahead of the current durable watermark");
+        }
+        if parsed_cursor.is_some() {
+            let oldest = self.audit_sequences.first().copied();
+            let expired = match oldest {
+                Some(oldest) => oldest >= before_sequence.unwrap_or(0),
+                None => true,
+            };
+            if expired {
+                return Err("control audit cursor has expired because older rows were retired");
+            }
+        }
+
+        let mut rows = if let Some(request_id) = request_id {
+            match self.requests.get(request_id).copied() {
+                None => Vec::new(),
+                Some(command_id) => {
+                    self.audit_command_sequences
+                        .get(&command_id)
+                        .map(|sequences| {
+                            sequences
+                                .iter()
+                                .copied()
+                                .filter(|sequence| {
+                                    *sequence <= through_sequence
+                                        && before_sequence.is_none_or(|before| *sequence < before)
+                                })
+                                .filter_map(|sequence| {
+                                    self.audit_sequences.binary_search(&sequence).ok().map(
+                                        |index| (&self.audit[index], &self.audit_sequences[index]),
+                                    )
+                                })
+                                .rev()
+                                .take(limit + 1)
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_else(|| {
+                            // Direct Serde deserialization of legacy state may bypass `from_json`
+                            // migration. Preserve correctness there; supported storage readers rebuild
+                            // the index.
+                            self.audit
+                                .iter()
+                                .zip(&self.audit_sequences)
+                                .filter(|(record, sequence)| {
+                                    record.request_id == request_id
+                                        && **sequence <= through_sequence
+                                        && before_sequence.is_none_or(|before| **sequence < before)
+                                })
+                                .rev()
+                                .take(limit + 1)
+                                .collect::<Vec<_>>()
+                        })
+                }
+            }
+        } else {
+            let snapshot_end = self
+                .audit_sequences
+                .partition_point(|sequence| *sequence <= through_sequence);
+            let page_end = before_sequence.map_or(snapshot_end, |before| {
+                snapshot_end.min(
+                    self.audit_sequences
+                        .partition_point(|sequence| *sequence < before),
+                )
+            });
+            let page_start = page_end.saturating_sub(limit + 1);
+            (page_start..page_end)
+                .rev()
+                .map(|index| (&self.audit[index], &self.audit_sequences[index]))
+                .collect::<Vec<_>>()
+        };
+        let mut has_more = rows.len() > limit;
+        rows.truncate(limit);
+        let entries = rows
+            .iter()
+            .map(|(record, sequence)| ControlAuditEntryV1 {
+                sequence: **sequence,
+                record: ControlAuditRecordV1::from(*record),
+            })
+            .collect::<Vec<_>>();
+        let entry_sizes = entries
+            .iter()
+            .map(|entry| serde_json::to_vec(entry).map(|bytes| bytes.len()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| "control audit page serialization failed")?;
+        let mut count = entries.len();
+        loop {
+            has_more |= count < entries.len();
+            let next_cursor = has_more.then(|| {
+                ControlAuditCursorV1 {
+                    before_sequence: entries
+                        .get(count.saturating_sub(1))
+                        .map_or(0, |entry| entry.sequence),
+                    through_sequence,
+                }
+                .encode()
+            });
+            let empty_page = ControlAuditPageV1 {
+                schema_version: CONTROL_AUDIT_PAGE_SCHEMA_VERSION_V1,
+                entries: Vec::new(),
+                next_cursor,
+                has_more,
+                snapshot_through_sequence: through_sequence,
+                oldest_available_sequence: self
+                    .audit_sequences
+                    .iter()
+                    .copied()
+                    .find(|sequence| *sequence <= through_sequence),
+                retired_records: self.retired.retired_audit_records,
+            };
+            let base_size = serde_json::to_vec(&empty_page)
+                .map_err(|_| "control audit page serialization failed")?
+                .len()
+                .saturating_sub(2);
+            let entries_size = entry_sizes[..count].iter().sum::<usize>() + count.saturating_sub(1);
+            if base_size.saturating_add(entries_size) <= CONTROL_AUDIT_MAX_PAGE_BYTES {
+                return Ok(ControlAuditPageV1 {
+                    entries: entries[..count].to_vec(),
+                    ..empty_page
+                });
+            }
+            if count <= 1 {
+                return Err("control audit record exceeds the maximum response byte budget");
+            }
+            count -= 1;
+        }
+    }
+
+    fn next_audit_sequence(&self) -> Result<u64, ControlError> {
+        self.audit_high_watermark
+            .checked_add(1)
+            .ok_or_else(|| ControlError::Invalid("control audit sequence exhausted".into()))
+    }
+
+    fn append_audit(&mut self, sequence: u64, record: AuditRecord) {
+        debug_assert_eq!(sequence, self.audit_high_watermark + 1);
+        self.audit_high_watermark = sequence;
+        if record.status.is_final() {
+            self.pending_commands_count = self.pending_commands_count.saturating_sub(1);
+        } else {
+            self.pending_commands_count = self.pending_commands_count.saturating_add(1);
+        }
+        self.audit_command_sequences
+            .entry(record.command_id)
+            .or_default()
+            .push(sequence);
+        self.audit_sequences.push(sequence);
+        self.audit.push(record);
     }
 
     pub fn strategy_lifecycle(&self, worker_id: &str) -> Option<&StrategyLifecycleRecord> {
@@ -573,6 +977,11 @@ impl ControlPlane {
         self.commands
             .values()
             .filter(move |command| !finalized.contains(&command.command_id))
+    }
+
+    /// Number of accepted commands awaiting a terminal outcome.
+    pub fn pending_commands_count(&self) -> u64 {
+        self.pending_commands_count
     }
 
     /// 已落终态审计记录的 command_id 集合。`execute` 对已终态的命令回 `AlreadyFinal`，
@@ -619,18 +1028,23 @@ impl ControlPlane {
         let overflow = finalized_in_order.len() - retention;
         let victims: BTreeSet<u64> = finalized_in_order.into_iter().take(overflow).collect();
         let mut removed_records = 0u64;
-        self.audit.retain(|record| {
+        let mut retained_audit = Vec::with_capacity(self.audit.len());
+        let mut retained_sequences = Vec::with_capacity(self.audit_sequences.len());
+        for (record, sequence) in self.audit.drain(..).zip(self.audit_sequences.drain(..)) {
             if victims.contains(&record.command_id) {
                 removed_records += 1;
-                false
             } else {
-                true
+                retained_audit.push(record);
+                retained_sequences.push(sequence);
             }
-        });
+        }
+        self.audit = retained_audit;
+        self.audit_sequences = retained_sequences;
         for command_id in &victims {
             if let Some(command) = self.commands.remove(command_id) {
                 self.requests.remove(&command.request_id);
             }
+            self.audit_command_sequences.remove(command_id);
         }
         self.retired.retired_commands += victims.len() as u64;
         self.retired.retired_audit_records += removed_records;
@@ -660,6 +1074,9 @@ impl ControlPlane {
         if prior.is_final() {
             return Err(ControlError::AlreadyFinal(command_id));
         }
+        // Reserve the sequence before invoking a potentially side-effecting executor. Sequence
+        // exhaustion must fail before any external action can succeed without an audit record.
+        let sequence = self.next_audit_sequence()?;
         let (status, result_code) = match action(command) {
             Ok(code) => (CommandStatus::Executed, code),
             Err(code) => (CommandStatus::Failed, code),
@@ -690,7 +1107,7 @@ impl ControlPlane {
                 );
             }
         }
-        self.audit.push(record.clone());
+        self.append_audit(sequence, record.clone());
         self.retire_overflow();
         Ok(record)
     }
@@ -703,7 +1120,44 @@ impl ControlPlane {
         let value: serde_json::Value =
             serde_json::from_str(input).map_err(|error| error.to_string())?;
         let legacy_lifecycle = value.get("strategy_lifecycle").is_none();
+        let has_audit_sequences = value.get("audit_sequences").is_some();
+        let has_audit_watermark = value.get("audit_high_watermark").is_some();
+        let has_audit_command_sequences = value.get("audit_command_sequences").is_some();
+        let has_pending_commands_count = value.get("pending_commands_count").is_some();
+        if has_audit_sequences != has_audit_watermark {
+            return Err("控制面审计序号与水位必须同时存在".into());
+        }
+        let legacy_audit_sequences = !has_audit_sequences;
         let mut plane: Self = serde_json::from_value(value).map_err(|error| error.to_string())?;
+        if legacy_audit_sequences {
+            plane.audit_sequences = (1..=plane.audit.len() as u64).collect();
+            plane.audit_high_watermark = plane.audit_sequences.last().copied().unwrap_or(0);
+        }
+        if plane.audit_sequences.len() != plane.audit.len()
+            || plane.audit_sequences.contains(&0)
+            || plane
+                .audit_sequences
+                .windows(2)
+                .any(|pair| pair[0] >= pair[1])
+            || plane
+                .audit_sequences
+                .last()
+                .is_some_and(|last| *last > plane.audit_high_watermark)
+        {
+            return Err("控制面审计追加序号与记录不一致".into());
+        }
+        let mut expected_command_sequences = BTreeMap::<u64, Vec<u64>>::new();
+        for (record, sequence) in plane.audit.iter().zip(&plane.audit_sequences) {
+            expected_command_sequences
+                .entry(record.command_id)
+                .or_default()
+                .push(*sequence);
+        }
+        if legacy_audit_sequences || !has_audit_command_sequences {
+            plane.audit_command_sequences = expected_command_sequences;
+        } else if plane.audit_command_sequences != expected_command_sequences {
+            return Err("控制面按命令审计序号索引与记录不一致".into());
+        }
         if legacy_lifecycle && plane.retired.retired_commands > 0 {
             plane.strategy_lifecycle_legacy_incomplete = true;
         }
@@ -766,6 +1220,14 @@ impl ControlPlane {
                 return Err(format!("命令 {} 缺少审计记录", command_id));
             }
         }
+        let expected_pending_count = audit_state
+            .values()
+            .filter(|status| !status.is_final())
+            .count() as u64;
+        if has_pending_commands_count && plane.pending_commands_count != expected_pending_count {
+            return Err("控制面待执行命令计数与终态审计不一致".into());
+        }
+        plane.pending_commands_count = expected_pending_count;
         // Migrate legacy documents from retained successful commands in execution order.
         let mut latest = BTreeMap::new();
         for record in &plane.audit {
@@ -1028,6 +1490,27 @@ mod tests {
     }
 
     #[test]
+    fn versioned_audit_record_matches_the_shared_wire_fixture() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../python/tests/fixtures/control-audit-record-v1.json"
+        ))
+        .unwrap();
+        let domain_record: AuditRecord = serde_json::from_value(fixture.clone()).unwrap();
+        let record = ControlAuditRecordV1::from(&domain_record);
+        assert_eq!(serde_json::to_value(&record).unwrap(), fixture);
+        let decoded: ControlAuditRecordV1 =
+            serde_json::from_value(serde_json::to_value(&record).unwrap()).unwrap();
+        assert_eq!(decoded, record);
+
+        let mut unknown = fixture.clone();
+        unknown["unregistered"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<ControlAuditRecordV1>(unknown).is_err());
+        let mut old_version = fixture;
+        old_version["schema_version"] = serde_json::json!(2);
+        assert!(serde_json::from_value::<ControlAuditRecordV1>(old_version).is_err());
+    }
+
+    #[test]
     fn insufficient_permission_is_rejected_before_queueing() {
         let mut plane = ControlPlane::default();
         assert_eq!(
@@ -1083,6 +1566,11 @@ mod tests {
             result_code: "APPLIED".into(),
             ts: 10,
         });
+        plane.audit_sequences.push(1);
+        plane
+            .audit_command_sequences
+            .insert(command.command_id, vec![1]);
+        plane.audit_high_watermark = 1;
         let json = plane.to_json().unwrap();
         assert!(ControlPlane::from_json(&json).is_err());
     }
@@ -1099,6 +1587,115 @@ mod tests {
             permission: Permission::Trading,
             dry_run: true,
         }
+    }
+
+    #[test]
+    fn audit_pages_use_durable_sequences_and_freeze_the_snapshot() {
+        let mut plane = ControlPlane::default();
+        for index in 1..=3u64 {
+            plane.submit(numbered(index), index * 10).unwrap();
+        }
+
+        let first = plane.audit_page(None, 2, None).unwrap();
+        assert_eq!(
+            first
+                .entries
+                .iter()
+                .map(|entry| entry.sequence)
+                .collect::<Vec<_>>(),
+            [3, 2]
+        );
+        assert!(first.has_more);
+        assert_eq!(first.snapshot_through_sequence, 3);
+        let cursor = first.next_cursor.clone().unwrap();
+        assert_eq!(cursor, "v1.2.3");
+
+        // New rows after page one do not extend this scan's upper bound.
+        plane.submit(numbered(4), 40).unwrap();
+        let restored = ControlPlane::from_json(&plane.to_json().unwrap()).unwrap();
+        let second = restored.audit_page(Some(&cursor), 2, None).unwrap();
+        assert_eq!(
+            second
+                .entries
+                .iter()
+                .map(|entry| entry.sequence)
+                .collect::<Vec<_>>(),
+            [1]
+        );
+        assert!(!second.has_more);
+        assert_eq!(second.snapshot_through_sequence, 3);
+
+        let request_page = restored.audit_page(None, 2, Some("req-2")).unwrap();
+        assert_eq!(request_page.entries.len(), 1);
+        assert!(request_page.next_cursor.is_none());
+    }
+
+    #[test]
+    fn audit_pages_enforce_a_serialized_byte_budget() {
+        let mut plane = ControlPlane::default();
+        let mut large = numbered(1);
+        large.request_id = "r".repeat(CONTROL_AUDIT_MAX_PAGE_BYTES / 2 + 32);
+        plane.submit(large, 10).unwrap();
+        plane.execute(1, 11, |_| Ok("APPLIED".into())).unwrap();
+
+        let first = plane.audit_page(None, 2, None).unwrap();
+        assert_eq!(first.entries.len(), 1);
+        assert!(first.has_more);
+        assert!(serde_json::to_vec(&first).unwrap().len() <= CONTROL_AUDIT_MAX_PAGE_BYTES);
+        let second = plane
+            .audit_page(first.next_cursor.as_deref(), 2, None)
+            .unwrap();
+        assert_eq!(second.entries.len(), 1);
+        assert!(!second.has_more);
+        assert!(serde_json::to_vec(&second).unwrap().len() <= CONTROL_AUDIT_MAX_PAGE_BYTES);
+
+        let mut too_large = numbered(2);
+        too_large.request_id = "r".repeat(CONTROL_AUDIT_MAX_PAGE_BYTES + 1);
+        plane.submit(too_large, 20).unwrap();
+        assert!(plane
+            .audit_page(None, 2, None)
+            .unwrap_err()
+            .contains("maximum response byte budget"));
+    }
+
+    #[test]
+    fn audit_cursor_expires_when_retirement_removes_its_unread_window() {
+        let mut plane = ControlPlane::default();
+        plane.submit(numbered(1), 10).unwrap();
+        plane.submit(numbered(2), 20).unwrap();
+        let first = plane.audit_page(None, 1, None).unwrap();
+        let cursor = first.next_cursor.unwrap();
+
+        plane.execute(1, 30, |_| Ok("APPLIED".into())).unwrap();
+        plane.execute(2, 40, |_| Ok("APPLIED".into())).unwrap();
+        plane.retire_overflow_with(0);
+
+        assert!(plane.audit_page(Some(&cursor), 1, None).is_err());
+    }
+
+    #[test]
+    fn audit_sequence_migration_keeps_legacy_control_plane_readable() {
+        let mut plane = ControlPlane::default();
+        plane.submit(numbered(1), 10).unwrap();
+        plane.execute(1, 11, |_| Ok("APPLIED".into())).unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(&plane.to_json().unwrap()).unwrap();
+        let object = value
+            .as_object_mut()
+            .expect("plane serializes as an object");
+        object.remove("audit_sequences");
+        object.remove("audit_high_watermark");
+        object.remove("pending_commands_count");
+
+        let restored = ControlPlane::from_json(&value.to_string()).unwrap();
+        let page = restored.audit_page(None, 10, None).unwrap();
+        assert_eq!(
+            page.entries
+                .iter()
+                .map(|entry| entry.sequence)
+                .collect::<Vec<_>>(),
+            [2, 1]
+        );
+        assert_eq!(page.snapshot_through_sequence, 2);
     }
 
     /// 退场只碰终态命令，且命令/请求索引/审计三格同时消失——少删任何一格，
@@ -1186,6 +1783,59 @@ mod tests {
         assert!(plane.command(6).is_some(), "待办命令被退场了");
         assert_eq!(plane.pending().count(), 1);
         assert_eq!(plane.audit().len(), 3);
+    }
+
+    #[test]
+    fn pending_command_admission_is_bounded_and_recovers_capacity() {
+        let mut plane = ControlPlane::default();
+        for id in 1..=PENDING_CONTROL_COMMAND_LIMIT as u64 {
+            plane.submit(numbered(id), id).unwrap();
+        }
+        assert_eq!(
+            plane.pending_commands_count(),
+            PENDING_CONTROL_COMMAND_LIMIT as u64
+        );
+        assert_eq!(
+            plane.submit(numbered(PENDING_CONTROL_COMMAND_LIMIT as u64 + 1), 5000),
+            Err(ControlError::PendingLimitReached)
+        );
+        assert_eq!(plane.audit().len(), PENDING_CONTROL_COMMAND_LIMIT);
+
+        plane.execute(1, 5001, |_| Ok("APPLIED".into())).unwrap();
+        assert_eq!(
+            plane.pending_commands_count(),
+            PENDING_CONTROL_COMMAND_LIMIT as u64 - 1
+        );
+        plane
+            .submit(numbered(PENDING_CONTROL_COMMAND_LIMIT as u64 + 1), 5002)
+            .unwrap();
+        assert_eq!(
+            plane.pending_commands_count(),
+            PENDING_CONTROL_COMMAND_LIMIT as u64
+        );
+
+        let restored = ControlPlane::from_json(&plane.to_json().unwrap()).unwrap();
+        assert_eq!(
+            restored.pending_commands_count(),
+            PENDING_CONTROL_COMMAND_LIMIT as u64
+        );
+        let mut legacy: serde_json::Value =
+            serde_json::from_str(&plane.to_json().unwrap()).unwrap();
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("pending_commands_count");
+        assert_eq!(
+            ControlPlane::from_json(&legacy.to_string())
+                .unwrap()
+                .pending_commands_count(),
+            PENDING_CONTROL_COMMAND_LIMIT as u64
+        );
+        legacy["pending_commands_count"] = 0.into();
+        match ControlPlane::from_json(&legacy.to_string()) {
+            Ok(_) => panic!("持久计数与未终结命令不一致时必须拒绝恢复"),
+            Err(error) => assert!(error.contains("待执行命令计数")),
+        }
     }
 
     /// 生产入口真的会触发退场：上界是常量，`submit`/`execute` 每次都过一遍这条判据。
@@ -1333,6 +1983,10 @@ mod durable_lifecycle_tests {
         legacy.requests.insert(wildcard.request_id.clone(), 1);
         legacy.commands.insert(1, wildcard);
         legacy.audit.push(accepted);
+        legacy.audit_sequences.push(1);
+        legacy.audit_command_sequences.insert(1, vec![1]);
+        legacy.pending_commands_count = 1;
+        legacy.audit_high_watermark = 1;
         assert!(ControlPlane::from_json(&legacy.to_json().unwrap()).is_ok());
     }
 }

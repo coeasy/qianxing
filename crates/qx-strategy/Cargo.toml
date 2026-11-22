@@ -4,6 +4,7 @@ description = "牵星跨语言策略 SDK 与统一 Strategy API"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
 qx-core = { version = "0.4.0", path = "../qx-core" }

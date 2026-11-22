@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "run_id": "preflight-golden",
+  "instrument": "BTCUSDT.BINANCE",
+  "ready": true,
+  "data": {
+    "instrument": "BTCUSDT.BINANCE",
+    "rows": 3,
+    "content_fingerprint": "barframe:0123456789abcdef",
+    "usable": true,
+    "gaps": [],
+    "first_ts": 1000,
+    "last_ts": 3000
+  },
+  "checks": [
+    {"id": "dataset_sample", "status": "ready"},
+    {"id": "instrument_identity", "status": "ready"},
+    {"id": "strategy_history", "status": "ready"},
+    {"id": "execution_cost_inputs", "status": "not_applicable", "detail": "compatibility default"},
+    {"id": "market_rule_window", "status": "not_applicable", "detail": "no frozen market rule"}
+  ],
+  "limitations": [
+    "Read-only snapshot; actual backtest revalidates its inputs."
+  ]
+}

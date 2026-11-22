@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "registry_version": 30,
+  "registry_version": 33,
   "entries": [
     {
       "schema_id": "funding-rate-provider-payload-v1",
@@ -47,6 +47,23 @@
       "golden_fixtures": [
         "crates/qx-app/tests/spec_contract.rs",
         "python/tests/test_sdk_layering.py"
+      ]
+    },
+    {
+      "schema_id": "backtest-preflight-result-v1",
+      "version": 1,
+      "path": "schemas/backtest-preflight-result-v1.json",
+      "producer": "qx-app::preflight_backtest_v1",
+      "consumers": [
+        "qx-api",
+        "qx-python",
+        "qx-sdk",
+        "qx-cli"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "python/tests/fixtures/backtest-preflight-result-v1.json",
+        "crates/qx-app/tests/use_cases.rs"
       ]
     },
     {
@@ -1810,13 +1827,50 @@
       "producer": "qx-app",
       "consumers": [
         "qx-api",
-        "qx-python"
+        "qx-python",
+        "qx-sdk",
+        "qx-cpp"
       ],
       "compatibility": "backward",
       "golden_fixtures": [
         "crates/qx-app/src/cases/validate_trade_control.rs",
         "crates/qx-api/src/app_trade_control.rs",
-        "python/tests/test_sdk_layering.py"
+        "python/tests/test_sdk_layering.py",
+        "cpp/tests/app_client_smoke.cpp"
+      ]
+    },
+    {
+      "schema_id": "control-audit-record-v1",
+      "version": 1,
+      "path": "schemas/control-audit-record-v1.json",
+      "producer": "qx-control::ControlAuditRecordV1",
+      "consumers": [
+        "qx-api",
+        "qx-sdk",
+        "qx-python",
+        "qx-cpp"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "python/tests/fixtures/control-audit-record-v1.json",
+        "crates/qx-control/src/lib.rs"
+      ]
+    },
+    {
+      "schema_id": "control-audit-page-v1",
+      "version": 1,
+      "path": "schemas/control-audit-page-v1.json",
+      "producer": "qx-control::ControlAuditPageV1 via qx-api::GET /control/audit",
+      "consumers": [
+        "qx-api",
+        "qx-sdk",
+        "qx-python",
+        "qx-cpp"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "python/tests/fixtures/control-audit-page-v1.json",
+        "crates/qx-sdk/src/remote/tests.rs"
       ]
     },
     {

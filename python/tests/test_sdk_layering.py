@@ -2751,7 +2751,7 @@ class TopLevelStabilityTest(unittest.TestCase):
             return set(re.findall(r"^\s*pub ([a-z_]\w*):", matched.group(1), re.MULTILINE))
 
         cases = (
-            ("trade-control-spec-v1", "TradeControlSpec", "crates/qx-app/src/cases/validate_trade_control.rs", ("/app/paper/commands", "/app/live/commands"), ["qx-api", "qx-python"]),
+            ("trade-control-spec-v1", "TradeControlSpec", "crates/qx-app/src/cases/validate_trade_control.rs", ("/app/paper/commands", "/app/live/commands"), ["qx-api", "qx-python", "qx-sdk", "qx-cpp"]),
             ("risk-parity-spec-v1", "RiskParitySpec", "crates/qx-app/src/spec/risk_parity.rs", ("/app/plan-risk-parity",), ["qx-cli", "qx-api", "qx-python", "qx-sdk"]),
             ("algo-execution-spec-v1", "AlgoExecutionSpec", "crates/qx-app/src/spec/algo_execution.rs", ("/app/plan-algo-execution",), ["qx-cli", "qx-api", "qx-python", "qx-sdk"]),
             ("capital-allocation-spec-v1", "CapitalAllocationSpec", "crates/qx-app/src/spec/capital_allocation.rs", ("/app/plan-capital-allocation",), ["qx-api", "qx-python", "qx-sdk"]),
@@ -2828,7 +2828,7 @@ class TopLevelStabilityTest(unittest.TestCase):
         trade_source = (root / "crates" / "qx-app" / "src" / "cases" / "validate_trade_control.rs").read_text(encoding="utf-8")
         control_source = (root / "crates" / "qx-control" / "src" / "lib.rs").read_text(encoding="utf-8")
         self.assertEqual(set(trade_schema["$defs"]["ControlCommand"]["properties"]), rust_fields(control_source, "ControlCommand"))
-        self.assertTrue(trade_schema["$defs"]["ControlCommand"]["additionalProperties"])
+        self.assertFalse(trade_schema["$defs"]["ControlCommand"]["additionalProperties"])
         self.assertEqual(trade_schema["properties"]["workflow"]["enum"], ["paper", "live"])
         self.assertEqual(trade_schema["properties"]["schema_version"]["const"], 1)
 

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://qianxing.local/schemas/trade-control-spec-v1.json",
+  "$id": "https://qianxing.dev/schemas/trade-control-spec-v1.json",
   "title": "Qianxing TradeControlSpec v1",
   "description": "Versioned Paper/Live intent. Authentication and granted permission are supplied by the API boundary and cannot be established by this payload.",
   "type": "object",
@@ -26,7 +26,7 @@
         "permission": {"enum": ["ReadOnly", "Research", "Trading", "Admin"]},
         "dry_run": {"type": "boolean"}
       },
-      "additionalProperties": true
+      "additionalProperties": false
     }
   }
 }

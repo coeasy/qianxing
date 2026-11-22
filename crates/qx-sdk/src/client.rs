@@ -12,13 +12,14 @@ use crate::{
     ProviderDepthBacktestSpec, ProviderRegistry,
 };
 use qx_app::{
-    compare_runs, plan_algo_execution, plan_capital_allocation, run_backtest, run_depth_backtest,
-    run_depth_backtest_with_strategy, run_depth_backtest_with_strategy_slots, run_depth_experiment,
-    run_experiment, run_multi_account_backtest, run_multi_account_depth_backtest,
-    run_multi_account_joint_backtest, run_multi_leg_backtest, run_multi_leg_backtest_with_strategy,
-    run_multi_leg_experiment, run_multi_market_backtest, run_multi_market_experiment,
-    start_depth_backtest_with_strategy, start_depth_backtest_with_strategy_slots, validate_dataset,
-    verify_depth_run, verify_run, AlgoExecutionSpec, AppError, BacktestOutcome, BacktestSpec,
+    compare_runs, plan_algo_execution, plan_capital_allocation, preflight_backtest_v1,
+    run_backtest, run_depth_backtest, run_depth_backtest_with_strategy,
+    run_depth_backtest_with_strategy_slots, run_depth_experiment, run_experiment,
+    run_multi_account_backtest, run_multi_account_depth_backtest, run_multi_account_joint_backtest,
+    run_multi_leg_backtest, run_multi_leg_backtest_with_strategy, run_multi_leg_experiment,
+    run_multi_market_backtest, run_multi_market_experiment, start_depth_backtest_with_strategy,
+    start_depth_backtest_with_strategy_slots, validate_dataset, verify_depth_run, verify_run,
+    AlgoExecutionSpec, AppError, BacktestOutcome, BacktestPreflightResultV1, BacktestSpec,
     CallerCapability, CapitalAllocationResult, CapitalAllocationSpec, CompareRunsResult,
     CompareRunsSpec, DatasetSpec, DatasetVerdict, DepthBacktestOutcome, DepthBacktestSpec,
     MultiAccountBacktestResult, MultiAccountBacktestSpec, MultiAccountDepthBacktestResult,
@@ -41,7 +42,8 @@ mod multi_market_depth_experiment;
 ///
 /// ```text
 /// let client = Client::new(CallerCapability::Research, "run-1");
-/// let verdict = client.validate_dataset(&dataset)?;
+/// let readiness = client.preflight_backtest(&spec)?;
+/// assert!(readiness.ready, "{:?}", readiness.checks);
 /// let outcome = client.run_backtest(&spec)?;
 /// let verification = client.verify_run(&outcome)?;
 /// ```
@@ -173,6 +175,14 @@ impl Client {
     /// 数据可用性裁定。`usable: false` 是**结论**不是错误。
     pub fn validate_dataset(&self, spec: &DatasetSpec) -> Result<DatasetVerdict, AppError> {
         validate_dataset(spec, &self.context)
+    }
+
+    /// Read-only check that this spec's local Bar data and market-rule window are runnable.
+    pub fn preflight_backtest(
+        &self,
+        spec: &BacktestSpec,
+    ) -> Result<BacktestPreflightResultV1, AppError> {
+        preflight_backtest_v1(spec, &self.context)
     }
 
     /// 同步回测：阻塞到终态，返回四份产物与读数。

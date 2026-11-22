@@ -17,8 +17,8 @@
 | `qx-protocol` | 账户协议：Canonical Snapshot、Diff、QIFI 兼容边界 |
 | `qx-provider` | 数据提供方：能力矩阵、稳定选择、主备故障切换 |
 | `qx-scheduler` | 调度契约：JobSpec、依赖、交易日历、幂等与重试 |
-| `qx-control` | 控制面：权限、审计命令、终态退场（**事件订阅游标在 `qx-api`**，本 crate 不含） |
-| `qx-api` | HTTP/查询与控制命令边界；研究报告按多市场、多腿、Depth、多账户拆为 adapter 模块，负责请求授权、有界文件读取、输入装配与呈现；多市场 v1 内嵌与 v2 流式 EventLog 的回放、成交事实与订单-标的归属由 qx-app reader 复用；多腿共享 EventLog 的重放与账簿/逐腿成交聚合由 qx-app reader 完成；多账户报告通过 rooted reader 复核父 RunManifest/子运行，并将已复核子事实交给 qx-app 汇总；跨账户事件分页、子报告装配和交互呈现仍属 adapter；多腿质量清单证据、共享账户账簿、逐腿成交/收益/资金费、成本归因、权益收益/回撤由 qx-app 聚合核验，API 仍负责多腿交互 DTO、事件上下文和分页；写操作只经 `ControlPlane` |
+| `qx-control` | 控制面：权限、审计命令、终态退场与持久化单调审计序号；**事件订阅游标在 `qx-api`**，本 crate 不含 |
+| `qx-api` | HTTP/查询与控制命令边界；研究报告按多市场、多腿、Depth、多账户拆为 adapter 模块，负责请求授权、有界文件读取、输入装配与呈现；多市场 v1 内嵌与 v2 流式 EventLog 的回放、成交事实与订单-标的归属由 qx-app reader 复用；多腿共享 EventLog 的重放与账簿/逐腿成交聚合由 qx-app reader 完成；多账户报告通过 rooted reader 复核父 RunManifest/子运行，并将已复核子事实交给 qx-app 汇总；跨账户事件分页、子报告装配和交互呈现仍属 adapter；多腿质量清单证据、共享账户账簿、逐腿成交/收益/资金费、成本归因、权益收益/回撤由 qx-app 聚合核验，API 仍负责多腿交互 DTO、事件上下文和分页；控制审计按稳定水位返回有界页；写操作只经 `ControlPlane` |
 | `qx-datastruct` | 列式 BarFrame、PIT 视图、JSON/Arrow C Data Interface |
 | `qx-adapter` | REST/TLS/WebSocket 传输与 Venue/Provider 适配边界；含 Binance Spot REST/L1 行情基线 |
 | `qx-runtime` | 运行时拓扑配置、worker 监督、停机信号与健康状态 |
@@ -29,9 +29,14 @@
 | `qx-service` | worker/服务装配层：将按 venue/account 隔离的 ExchangeGateway 路由注册表绑定到行情、执行、账户查询、用户流、对账与恢复 worker；从 worker 指标生成端口级运行态健康投影并并入 API `/ready` O 层；行情/私有流、Venue submit/cancel、账户查询与对账各从真实业务调用边界提供探针；不把这些窄端口合成单个交易所巨型接口 |
 | `python/qianxing_ccxt` | 公共 CCXT 多交易所 REST 数据/交易连接层；CCXT Pro 仅保留后续扩展接口 |
 | `qx-python` | PyO3 原生扩展、Arrow C Data Interface capsule 协议；Python SDK 的 Bar/Depth/多账户及多腿报告事实读取委托 qx-app 版本化 reader |
+| `qx-sdk-http` | 可选 Rust 远程 SDK 传输：本地回环 TCP 与证书校验 TLS/mTLS；源码工作区可用，尚未发布 |
 | `cpp/` | C++ Strategy API v1 / C ABI v2（intent 长度与容量协商；可选订单状态和衍生品政策导出）、CMake 示例 |
 | `qx-cli` | 单一 CLI binary：命令分派、worker 装配、回测与运维命令，外加进程内确定性自校验；`app read-report`、`app read-depth-report`、`app read-multi-account-report` 与 `app read-multi-leg-report` 调用 qx-app 版本化核心报告 DTO；多账户 Bar/Depth 富报告复用 qx-app 已验证的批次与子账户 DTO，Depth 事件使用有界 EventReport reader；多市场 Bar 的输入/质量指纹、v1 内嵌与 v2 流式 EventLog replay、权益贡献账簿复算，以及多市场 Depth 的输入/质量清单校验和数据身份复算委托 qx-app，CLI 留下本地路径解析、报告投影及 HTML/XLSX 渲染；并提供独立账户 Bar/Depth 回测命令 |
 | `web/console/` | Web 控制台（M1' 快照 / M2' 实时事件 / M3' 控制面）：读面板只调 `qx-api` 的 `GET` 读面与 WebSocket 增量，**写面只有一条** `POST /control/commands`（受理 → 执行者判定 → 终态退场），**不直接下单**；它点名的每个端点由门禁 `web_console_check` 与后端路由表逐一核对 |
+
+## Rust 包分发边界
+
+`maturity/package-distribution.json` 是 workspace 包的分发分类和技术 owner 清单。只有 `qx-sdk` 与它的 13 个传递依赖进入 crates.io；CLI 通过 GitHub Release 分发，Python 原生扩展进入 PyPI wheel，其他内部包与测试包都在 Cargo manifest 里标为 `publish = false`。执行 `python tools/check_package_distribution.py` 会对照 `cargo metadata` 校验 30 个 workspace 包的分类、publish 位和 SDK 闭包，并输出 SDK 发布顺序及每个 crate 的直接消费者；新增 crate、SDK 依赖边变化或误开放内部包都会使 CI 失败。该清单记录的是代码领域 owner，不代表 GitHub 团队负责人。
 
 ## English role index
 
@@ -62,6 +67,7 @@
 | `qx-service` | Service and worker assembly, including account-scoped ExchangeGateway routing and per-port health projections. |
 | `python/qianxing_ccxt` | Public CCXT REST data and multi-exchange trading integration. |
 | `qx-python` | PyO3 native bindings and Arrow C Data Interface capsules. |
+| `qx-sdk-http` | Optional Rust SDK transport for loopback TCP and verified TLS/mTLS; not yet published. |
 | `cpp/` | C++ strategy API, C ABI, and CMake integration examples. |
 | `qx-cli` | Command-line interface for backtests, operations, and local workflows. |
 | `web/console/` | Web operations console backed by the read and control API. |

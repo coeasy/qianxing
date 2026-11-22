@@ -326,6 +326,11 @@
       "variant": "AppCommand"
     },
     {
+      "name": "preflight-backtest",
+      "parent": "app",
+      "variant": "AppCommand"
+    },
+    {
       "name": "provider-backtest",
       "parent": "app",
       "variant": "AppCommand"

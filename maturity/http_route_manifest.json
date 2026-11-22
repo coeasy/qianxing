@@ -134,6 +134,10 @@
     },
     {
       "method": "POST",
+      "path": "/app/backtest/preflight"
+    },
+    {
+      "method": "POST",
       "path": "/app/backtest/start"
     },
     {

@@ -1,15 +1,10 @@
 //! `qx-execution` 的单元测试模块（从 `lib.rs` 拆出，保持 `use super::*` 的私有可见性）。
 
 use super::*;
-use qx_adapter::{
-    BinanceSpotAuth, BinanceSpotVenue, CcxtProcessVenue, CcxtRpc, HttpRequest, HttpResponse,
-    HttpTransport,
-};
 use qx_control::{CommandKind, ControlCommand, Permission};
 use qx_core::{InstrumentId, Order, OrderStatus, Price, Quantity, Side};
 use qx_zhenlu::{FileSpreadOrderGroupStore, SpreadOrderGroupStore, SpreadOrderLeg};
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Default)]

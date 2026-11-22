@@ -22,7 +22,7 @@ pub fn verify_depth_run(
 }
 
 /// Verify a depth run using a caller-provided artifact storage adapter.
-pub(crate) fn verify_depth_run_with_reader(
+pub fn verify_depth_run_with_reader(
     outcome: &DepthBacktestOutcome,
     context: &RunContext,
     reader: &dyn ArtifactReader,

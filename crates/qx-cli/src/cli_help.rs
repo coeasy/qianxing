@@ -253,9 +253,10 @@ pub(crate) fn print_cli_help() {
   data-snapshot <data.json> <manifest.json> <context.json> <snapshot.json>
       用 DatasetSnapshotContextV1 将 instrument role、采集语义、交易日历、精度/单位及公司行为口径绑定到清单；
       发布前复核原始数据 SHA-256，output 只接受幂等相同内容。
-  app <validate-dataset|backtest|verify> <spec.json>
+  app <validate-dataset|preflight-backtest|backtest|verify> <spec.json>
       应用层用例入口（T2-2）：三条入口分别调 qx-app 的 validate_dataset / run_backtest / verify_run。
       validate-dataset <DatasetSpec.json>  校验一份数据集能否支撑 Bar 回测；数据不足是裁决不是错误。
+      preflight-backtest <BacktestSpec.json>  只读检查数据、策略预热、显式成本输入与规则覆盖，不创建产物。
       backtest <BacktestSpec.json>         跑一次 Bar 回测，落 <run_id>.run.json / .summary.json 与 .equity.csv / .fills.csv。
       verify <BacktestOutcome.json>        复核那四份产物，输入取 `app backtest` 的 stdout。
       成功时 stdout 只有一份 JSON；失败时 stderr 给出同一份 AppError JSON，与 Python/HTTP 两个入口

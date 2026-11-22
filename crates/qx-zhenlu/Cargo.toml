@@ -4,6 +4,7 @@ description = "针路：执行与路由，风控门禁、订单管理、路由�
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
 qx-core = { version = "0.4.0", path = "../qx-core" }

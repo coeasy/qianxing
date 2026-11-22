@@ -210,6 +210,14 @@ fn via_cli(spec_json: &str, root: &Path) -> Value {
 
 /// HTTP 腿：走 `qx_api` 的分派入口（与 `qx-cli serve` 后面那台服务同一个入口）。
 fn via_http(route: &str, body: &str) -> (u16, Value) {
+    via_http_with_artifact_root(route, body, None)
+}
+
+fn via_http_with_artifact_root(
+    route: &str,
+    body: &str,
+    artifact_root: Option<&Path>,
+) -> (u16, Value) {
     static HTTP_ENV_LOCK: Mutex<()> = Mutex::new(());
     static RUN_NONCE: OnceLock<u128> = OnceLock::new();
     let _env_guard = HTTP_ENV_LOCK.lock().expect("HTTP test environment lock");
@@ -228,10 +236,12 @@ fn via_http(route: &str, body: &str) -> (u16, Value) {
     std::env::set_var("QX_API_DATA_ROOT", repo_root());
     std::env::set_var(
         "QX_API_ARTIFACT_ROOT",
-        repo_root()
-            .join("target")
-            .join(format!("qx-app-g1-api-{}", std::process::id()))
-            .join(format!("{run_nonce}-{body_fingerprint:016x}")),
+        artifact_root.map(Path::to_path_buf).unwrap_or_else(|| {
+            repo_root()
+                .join("target")
+                .join(format!("qx-app-g1-api-{}", std::process::id()))
+                .join(format!("{run_nonce}-{body_fingerprint:016x}"))
+        }),
     );
     let service = qx_api::ApiService::new(qx_api::ApiState::default());
     let response = service.handle("POST", route, body, 0);
@@ -354,7 +364,8 @@ fn the_verify_use_case_also_agrees_across_entrypoints() {
     let outcome = via_cli(&spec, &root);
     let outcome_document = outcome.to_string();
 
-    let (status, http) = via_http("/app/verify", &outcome_document);
+    let (status, http) =
+        via_http_with_artifact_root("/app/verify", &outcome_document, Some(&output_dir));
     assert_eq!(status, 200, "HTTP verify 必须回 200：{http}");
     assert_eq!(http["verified"], true, "刚落的产物必须自洽：{http}");
     assert_eq!(http["result_hash"], outcome["result_hash"]);
@@ -493,6 +504,45 @@ fn the_verify_use_case_also_agrees_across_entrypoints() {
         None => eprintln!("[skip] Python validation leg: the PyO3 extension is not built"),
         Some(Ok(python)) => assert_eq!(python, cli_verdict, "CLI and Python use-case results"),
         Some(Err(payload)) => panic!("Python validate-dataset should succeed: {payload}"),
+    }
+
+    // 预检的 CLI、HTTP、Python 三入口必须返回同一份只读 readiness DTO。
+    let preflight_spec = backtest_spec_json(
+        "g1-preflight",
+        &sample_bars(),
+        &root.join("preflight-output-must-not-exist"),
+    );
+    let preflight_spec_path = root.join("preflight-spec.json");
+    std::fs::write(&preflight_spec_path, &preflight_spec).expect("write preflight spec");
+    let preflight_cli = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .current_dir(repo_root())
+        .args(["app", "preflight-backtest"])
+        .arg(&preflight_spec_path)
+        .output()
+        .expect("run CLI preflight-backtest");
+    assert_eq!(
+        preflight_cli.status.code(),
+        Some(0),
+        "CLI preflight must succeed: {}",
+        String::from_utf8_lossy(&preflight_cli.stderr)
+    );
+    let preflight_cli: Value =
+        serde_json::from_slice(&preflight_cli.stdout).expect("CLI preflight JSON");
+    let (status, preflight_http) = via_http("/app/backtest/preflight", &preflight_spec);
+    assert_eq!(status, 200, "HTTP preflight must succeed: {preflight_http}");
+    assert_eq!(preflight_cli, preflight_http, "CLI and HTTP preflight DTOs");
+    assert_eq!(preflight_http["ready"], true);
+    assert_eq!(preflight_http["data"]["rows"], 70);
+    assert!(preflight_http["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|check| check["id"] == "execution_cost_inputs"));
+    assert!(!root.join("preflight-output-must-not-exist").exists());
+    match python_native::via_python(&repo_root(), "preflight_backtest", &preflight_spec) {
+        None => eprintln!("[skip] Python preflight leg: the PyO3 extension is not built"),
+        Some(Ok(python)) => assert_eq!(python, preflight_cli, "Python and CLI preflight DTOs"),
+        Some(Err(payload)) => panic!("Python preflight should succeed: {payload}"),
     }
 
     let traversal = json!({

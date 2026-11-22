@@ -2,6 +2,7 @@
 name = "qx-api"
 description = "牵星本地查询、控制命令、事件流与 WebSocket 边界"
 version.workspace = true
+publish = false
 edition.workspace = true
 license.workspace = true
 
@@ -27,6 +28,7 @@ qx-provider = { version = "0.4.0", path = "../qx-provider" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 rustls = { version = "0.23.43", default-features = false, features = ["ring", "std"] }
+cap-std = "4.0.3"
 
 [dev-dependencies]
 qx-data = { version = "0.4.0", path = "../qx-data" }

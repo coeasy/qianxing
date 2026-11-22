@@ -28,7 +28,7 @@ pub(super) fn application_capabilities(
       "runtime_preflight_required": true,
       "capabilities": [
         {"id":"capability.product_catalog","routes":["/app/capabilities","/app/capabilities/query"]},
-        {"id":"backtest.bar","routes":["/app/backtest","/app/backtest/start"]},
+        {"id":"backtest.bar","routes":["/app/backtest/preflight","/app/backtest","/app/backtest/start"]},
         {"id":"backtest.tick_orderbook","routes":["/app/depth-backtest","/app/depth-backtest/start"]},
         {"id":"backtest.multi_leg","routes":["/app/multi-leg-backtest","/app/multi-leg-backtest/start"]},
         {"id":"backtest.multi_market","routes":["/app/multi-market-backtest","/app/multi-market-backtest/start"]},

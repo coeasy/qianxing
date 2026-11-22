@@ -161,22 +161,23 @@ class AsyncSdkTests(unittest.TestCase):
         with patch.object(
             client,
             "_request_json",
-            side_effect=[{"status": "running"}, {"status": "succeeded"}],
+            side_effect=[{"run_id": handle.run_id, "status": "running"},
+                         {"run_id": handle.run_id, "status": "succeeded"}],
         ):
             self.assertEqual(asyncio.run(handle.async_wait(timeout=1, poll_interval=0.001)), "succeeded")
 
         terminal = {"run_id": handle.run_id, "status": "succeeded", "result": {"value": 7}}
         with patch.object(client, "_request_json", return_value=terminal):
             self.assertEqual(asyncio.run(handle.async_result()), {"value": 7})
-        with patch.object(client, "_request_json", return_value={"status": "cancelling"}) as request:
-            self.assertEqual(asyncio.run(handle.async_cancel()), {"status": "cancelling"})
+        with patch.object(client, "_request_json", return_value={"run_id": handle.run_id, "status": "cancelling"}) as request:
+            self.assertEqual(asyncio.run(handle.async_cancel()), {"run_id": handle.run_id, "status": "cancelling"})
         self.assertEqual(request.call_args.kwargs["method"], "POST")
 
     def test_remote_run_event_cursor_is_available_in_sync_and_async_facades(self):
         client = AppClient("http://127.0.0.1:8080")
         handle = RemoteRunHandle(client, "run-events-1")
-        events = [{"seq": 2, "kind": "succeeded"}]
-        with patch.object(client, "_request_json", return_value=events) as request:
+        events = [{"seq": 2, "run_id": handle.run_id, "kind": "succeeded", "status": "succeeded"}]
+        with patch.object(client, "_request_json_value", return_value=events) as request:
             self.assertEqual(handle.events(1), events)
             self.assertEqual(asyncio.run(handle.async_events(1)), events)
         self.assertEqual(

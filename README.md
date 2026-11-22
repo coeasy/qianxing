@@ -60,7 +60,7 @@
 | HTTP 路由 | 18（17 条 `GET` 读面 + 1 条 `POST` 写面） | 门禁 `api_surface_doc_check` 与 `crates/qx-cli/tests/unit/api_endpoint_table_routes.rs`：`deploy/README.md` 的端点表 ≡ `handle_inner` 的路由集合 |
 | WebSocket 事件流 | 1（任意路径 + `Upgrade: websocket`） | `admit_websocket` 的准入判定，口径见 `deploy/README.md` 的 WS 段 |
 | `deploy/` 顶层示例配置模板 | 53 | `crates/qx-cli/tests/unit/deploy_template_coverage.rs`：登记表与磁盘清单逐名相等，新增不登记即红 |
-| Cargo workspace 成员 | 29（28 个 `qx-*` crate + `contract-tests`） | 根 `Cargo.toml`；`cargo test --workspace` 按成员出段落 |
+| Cargo workspace 成员 | 30（29 个 `qx-*` crate + `contract-tests`） | 根 `Cargo.toml`；`cargo test --workspace` 按成员出段落 |
 | 静态架构不变量 | `tools/check_architecture.py` 中的具名契约检查 | 每条检查验证具体行为、边界或实现归属；不以检查数/测试数作为验收质量 |
 | Rust 用例 | 以实际测试执行结果为准 | `cargo test --workspace --no-fail-fast` |
 
@@ -71,6 +71,7 @@
 ## 模块
 
 模块职责与 crate 边界见[模块地图](docs/module-map.md)。
+架构风险、GitHub 竞品对标及分阶段重构任务见[架构评审与重构实施方案](docs/牵星Qianxing-架构评审竞品对标与重构实施方案-2026-11-22.md)。
 
 Rust、Python 与 C++ 策略入口以及动量、SMA 和均值回归示例见[多语言策略示例](docs/multi-language-strategies.md)。
 Python `BaseStrategy` 本地接入、回测/研究命令和服务器沙箱边界也见该指南；本地可信策略默认直跑。
@@ -84,6 +85,8 @@ Python 策略的未来数据扰动与预热长度敏感性检查见[策略偏差
 可复制命令、每支承诺到哪一步、出错时先看哪三行。
 
 ## 快速开始
+
+要把回测引擎集成到 Rust 应用，可直接运行[独立 Rust SDK 快速入门](examples/rust-sdk-quickstart/README.md)：工程内含示例数据，并固定使用 0.4.0 的 Git 版本。
 
 下面这段是可复制的常用链路示例，写法是在**源码仓库里**直接用 cargo 跑；已经按[安装指南](docs/installation.md)装好的人会
 得到同名 binary，把 `cargo run -p qx-cli -- ` 换成 `qx-cli ` 即可，参数与行为完全一致（同一份 clap 命令表）。

@@ -122,6 +122,12 @@ impl BuiltinStrategy {
             )
     }
 
+    /// Minimum Bar count needed before this built-in strategy can make its first decision.
+    /// Application preflight uses the same calculation as the execution kernel.
+    pub fn minimum_history_bars(&self) -> usize {
+        self.required_bars()
+    }
+
     fn spread_signal(&self) -> Result<Option<i8>, String> {
         if self.reference_bars.len() < self.config.period + 1 {
             return Ok(None);

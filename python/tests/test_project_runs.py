@@ -524,6 +524,82 @@ class ProjectRunTests(unittest.TestCase):
         runs.run_project(self.root, execute)
         return runs.project_runs(self.root)[0], summary
 
+    def test_report_defaults_to_latest_successful_run_and_preserves_explicit_id(self):
+        older, _ = self.report_run()
+        newer, _ = self.report_run()
+        newer_id, older_id = newer["project_run_id"], older["project_run_id"]
+        with patch.object(cli, "load_strategy_project", return_value=(self.root, self.manifest)), \
+             patch.object(cli, "generate_project_report", return_value={"status": "succeeded"}) as render, \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.main(["project", "report", str(self.root)]), 0)
+            self.assertEqual(render.call_args.args[1], newer_id)
+            self.assertEqual(cli.main(["project", "report", str(self.root), older_id]), 0)
+            self.assertEqual(render.call_args.args[1], older_id)
+
+    def test_quickstart_composes_demo_run_verified_report_and_marks_sample_data(self):
+        created = {
+            "status": "created",
+            "project_root": str(self.root),
+            "data": {
+                "source": "sample", "is_sample": True, "rows": 80,
+                "instrument": "SYNTHETIC.SAMPLE",
+            },
+        }
+        report = {"status": "succeeded", "report_paths": {"html": str(self.root / "report.html")}}
+        with patch.object(cli, "init_strategy_project", return_value=created) as initialize, \
+             patch.object(cli, "_run_strategy_project", return_value=(0, {"fills": 1}, {"status": "ready"})) as run, \
+             patch.object(cli, "load_strategy_project", return_value=(self.root, self.manifest)), \
+             patch.object(cli, "latest_project_run_id", return_value="run-verified"), \
+             patch.object(cli, "generate_project_report", return_value=report) as render, \
+             patch.object(cli, "verify_project_artifacts", return_value={"verified": True}), \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(cli.main(["quickstart", str(self.root), "--rows", "80", "--format", "html,xlsx"]), 0)
+
+        initialize.assert_called_once_with(str(self.root), demo=True, rows=80)
+        run.assert_called_once_with(str(self.root))
+        render.assert_called_once_with(
+            self.root, "run-verified", executable=None, output=None, formats="html,xlsx"
+        )
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["status"], "succeeded")
+        self.assertTrue(result["data"]["is_sample"])
+        self.assertEqual(result["data"]["source"], "sample")
+        self.assertEqual(result["preflight"]["status"], "ready")
+        self.assertTrue(result["artifacts_verified"])
+        self.assertEqual(result["report"], report)
+
+    def test_quickstart_does_not_render_when_project_run_fails(self):
+        with patch.object(cli, "init_strategy_project", return_value={"data": {"is_sample": True}}), \
+             patch.object(cli, "_run_strategy_project", return_value=(7, None, None)), \
+             patch.object(cli, "generate_project_report") as render, \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.main(["quickstart", str(self.root)]), 7)
+        render.assert_not_called()
+
+    def test_latest_report_refuses_failed_corrupt_or_ambiguous_runs(self):
+        with self.assertRaisesRegex(ValueError, "no project runs"):
+            runs.latest_project_run_id(self.root)
+        older, _ = self.report_run()
+        newer, _ = self.report_run()
+        newer_path = runs._directory(self.root, newer["project_run_id"]) / "run.json"
+        newer["status"] = "failed"
+        newer_path.write_text(json.dumps(newer), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "latest project run .* failed"):
+            runs.latest_project_run_id(self.root)
+        with patch.object(cli, "load_strategy_project", return_value=(self.root, self.manifest)), \
+             patch.object(cli, "generate_project_report") as render:
+            self.assertEqual(cli.main(["project", "report", str(self.root)]), 2)
+            render.assert_not_called()
+        self.assertIn("not succeeded", self.output.getvalue())
+        newer["status"] = "succeeded"
+        newer["started_at"] = older["started_at"]
+        newer_path.write_text(json.dumps(newer), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "same start time"):
+            runs.latest_project_run_id(self.root)
+        newer_path.write_text("{broken", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "receipt is corrupt"):
+            runs.latest_project_run_id(self.root)
+
     def test_project_report_checks_artifacts_before_spawning_rust(self):
         record, summary = self.report_run()
         summary.write_text("changed", encoding="utf-8")

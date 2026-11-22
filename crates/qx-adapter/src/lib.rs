@@ -1,6 +1,9 @@
 //! 外部适配器：把 REST/HTTP 事实转换为 Provider/Venue 统一契约。本模块只提供**共享传输层**
 //! （HTTP/TLS/WebSocket 客户端、对账工具）与对外契约 `pub use`，供应商协议各自住在 `binance`/
 //! `ccxt` 子模块。适配器不能直接改 Ledger：网络错误按“结果未知”处理，成交只能由用户流回报进入事实事件。
+//! HTTP 请求使用 `Connection: close`，读取受大小与时间上限约束；支持 Content-Length、单独的
+//! chunked 和连接关闭定界。未知 transfer coding、帧头冲突、截断及非 UTF-8 正文会返回错误。
+//! 关闭定界没有长度信息时，无法仅凭连接关闭区分完整响应与对端提前中断。
 
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
@@ -310,8 +313,13 @@ impl HttpTransport for TlsHttpTransport {
         stream
             .write_all(request_text.as_bytes())
             .map_err(|error| error.to_string())?;
-        let bytes = read_capped_response(&mut stream, MAX_HTTP_RESPONSE_BYTES, self.timeout)?;
-        parse_http_response(&String::from_utf8_lossy(&bytes))
+        let bytes = read_capped_response(
+            &mut stream,
+            MAX_HTTP_RESPONSE_BYTES,
+            self.timeout,
+            &request.method,
+        )?;
+        parse_http_response(&bytes, &request.method)
     }
 }
 
@@ -447,7 +455,7 @@ enum FramePoll {
 const MAX_WEBSOCKET_FRAME_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_WEBSOCKET_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
 /// 一次 `poll_websocket_message` 里最多消费多少条帧：调用方的停机令牌只在 poll 返回之后
-/// 才读得到（`binance.rs` 的 `while !should_stop()`），对端持续塞 ping 或续帧时这条是唯一的出口。
+/// 才读得到（`binance/user_stream.rs` 的 `while !should_stop()`），对端持续塞 ping 或续帧时这条是唯一的出口。
 const MAX_WEBSOCKET_FRAMES_PER_POLL: usize = 64;
 
 /// 套接字读超时不是断链：`set_read_timeout` 之后 `read_exact` 以 `WouldBlock`/`TimedOut` 返回，把它当成会话故障会让"连着但没数据"的账户在几个窗口内被判死。
@@ -667,8 +675,13 @@ impl HttpTransport for TcpHttpTransport {
         stream
             .write_all(request_text.as_bytes())
             .map_err(|error| error.to_string())?;
-        let bytes = read_capped_response(&mut stream, MAX_HTTP_RESPONSE_BYTES, self.timeout)?;
-        parse_http_response(&String::from_utf8_lossy(&bytes))
+        let bytes = read_capped_response(
+            &mut stream,
+            MAX_HTTP_RESPONSE_BYTES,
+            self.timeout,
+            &request.method,
+        )?;
+        parse_http_response(&bytes, &request.method)
     }
 }
 
@@ -681,10 +694,14 @@ fn read_capped_response<R: Read>(
     reader: &mut R,
     limit: usize,
     budget: Duration,
+    method: &str,
 ) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 8192];
     let started = Instant::now();
+    let mut frame = None;
+    let mut chunks = ChunkScanner::default();
+    let mut header_scan_start = 0;
     loop {
         if started.elapsed() >= budget {
             return Err("HTTP 响应整体截止已到，连接已中止".into());
@@ -698,6 +715,31 @@ fn read_capped_response<R: Read>(
         bytes.extend_from_slice(&buffer[..size]);
         if bytes.len() > limit {
             return Err(format!("HTTP 响应超过 {limit} 字节上限，连接已中止"));
+        }
+        if frame.is_none() {
+            if bytes[header_scan_start..]
+                .windows(4)
+                .any(|window| window == b"\r\n\r\n")
+            {
+                frame = parse_http_head(&bytes, method)?;
+            } else {
+                if bytes.len() > 64 * 1024 + 3 {
+                    return Err("HTTP 响应头超过 64 KiB".into());
+                }
+                header_scan_start = bytes.len().saturating_sub(3);
+            }
+        }
+        if let Some((start, _, framing)) = frame {
+            let body = &bytes[start..];
+            let complete = match framing {
+                HttpFraming::NoBody => true,
+                HttpFraming::Length(length) => body.len() >= length,
+                HttpFraming::Chunked => chunks.advance(body)?,
+                HttpFraming::Close => false,
+            };
+            if complete {
+                break;
+            }
         }
     }
     Ok(bytes)
@@ -731,21 +773,227 @@ fn read_capped_line<R: Read>(
         .map_err(|error| format!("worker 输出不是 UTF-8: {error}"))
 }
 
-fn parse_http_response(response: &str) -> Result<HttpResponse, String> {
-    let (headers, body) = response
-        .split_once("\r\n\r\n")
-        .ok_or_else(|| "响应缺少 header 分隔符".to_string())?;
-    let status = headers
-        .lines()
+#[derive(Clone, Copy)]
+enum HttpFraming {
+    NoBody,
+    Length(usize),
+    Chunked,
+    Close,
+}
+
+fn parse_http_head(
+    response: &[u8],
+    method: &str,
+) -> Result<Option<(usize, u16, HttpFraming)>, String> {
+    let Some(header_end) = response.windows(4).position(|window| window == b"\r\n\r\n") else {
+        // Bound repeated header scans even when the peer trickles bytes.
+        if response.len() > 64 * 1024 {
+            return Err("HTTP 响应头超过 64 KiB".into());
+        }
+        return Ok(None);
+    };
+    if header_end > 64 * 1024 {
+        return Err("HTTP 响应头超过 64 KiB".into());
+    }
+    let headers = std::str::from_utf8(&response[..header_end])
+        .map_err(|_| "HTTP 响应头不是 UTF-8".to_string())?;
+    let mut lines = headers.split("\r\n");
+    let status_line = lines
         .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .ok_or_else(|| "响应缺少 HTTP status".to_string())?
+        .ok_or_else(|| "响应缺少 HTTP status".to_string())?;
+    let mut status_parts = status_line.split_whitespace();
+    let version = status_parts.next().unwrap_or_default();
+    let status_text = status_parts.next().unwrap_or_default();
+    if !matches!(version, "HTTP/1.0" | "HTTP/1.1")
+        || status_text.len() != 3
+        || !status_text.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err("HTTP status 行非法".into());
+    }
+    let status: u16 = status_text
         .parse()
-        .map_err(|error| format!("HTTP status 非法: {error}"))?;
-    Ok(HttpResponse {
-        status,
-        body: body.into(),
-    })
+        .map_err(|_| "HTTP status 非法".to_string())?;
+    if !(200..=599).contains(&status) {
+        return Err("HTTP 响应不是最终状态".into());
+    }
+    let mut content_length = None;
+    let mut transfer_encoding = None;
+    for line in lines {
+        let (name, value) = line
+            .split_once(':')
+            .ok_or_else(|| "HTTP 响应头格式非法".to_string())?;
+        if name.eq_ignore_ascii_case("content-length") {
+            for value in value.split(',') {
+                let value = value.trim();
+                if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+                    return Err("HTTP Content-Length 非法".into());
+                }
+                let length: usize = value
+                    .parse()
+                    .map_err(|_| "HTTP Content-Length 超出范围".to_string())?;
+                if content_length.is_some_and(|previous| previous != length) {
+                    return Err("HTTP Content-Length 冲突".into());
+                }
+                content_length = Some(length);
+            }
+        } else if name.eq_ignore_ascii_case("transfer-encoding")
+            && transfer_encoding.replace(value.trim()).is_some()
+        {
+            return Err("HTTP Transfer-Encoding 重复".into());
+        }
+    }
+    if transfer_encoding.is_some() && content_length.is_some() {
+        return Err("HTTP 响应同时包含 Transfer-Encoding 和 Content-Length".into());
+    }
+    let framing = if method.eq_ignore_ascii_case("HEAD") || matches!(status, 204 | 304) {
+        HttpFraming::NoBody
+    } else if let Some(encoding) = transfer_encoding {
+        if version != "HTTP/1.1" || !encoding.eq_ignore_ascii_case("chunked") {
+            return Err("不支持的 HTTP Transfer-Encoding".into());
+        }
+        HttpFraming::Chunked
+    } else if let Some(length) = content_length {
+        HttpFraming::Length(length)
+    } else {
+        HttpFraming::Close
+    };
+    Ok(Some((header_end + 4, status, framing)))
+}
+
+fn parse_http_response(response: &[u8], method: &str) -> Result<HttpResponse, String> {
+    let (start, status, framing) =
+        parse_http_head(response, method)?.ok_or_else(|| "响应缺少 header 分隔符".to_string())?;
+    let body = &response[start..];
+    let decoded = match framing {
+        HttpFraming::NoBody => {
+            if !body.is_empty() {
+                return Err("HTTP 无正文响应包含额外数据".into());
+            }
+            Vec::new()
+        }
+        HttpFraming::Chunked => decode_chunked_body(body)?,
+        HttpFraming::Length(length) => {
+            if length != body.len() {
+                return Err("HTTP Content-Length 与实际正文长度不符".into());
+            }
+            body.to_vec()
+        }
+        HttpFraming::Close => body.to_vec(),
+    };
+    let body = String::from_utf8(decoded).map_err(|_| "HTTP 响应正文不是 UTF-8".to_string())?;
+    Ok(HttpResponse { status, body })
+}
+
+#[derive(Default)]
+struct ChunkScanner {
+    cursor: usize,
+    data_size: Option<usize>,
+    trailers: bool,
+}
+
+impl ChunkScanner {
+    fn advance(&mut self, bytes: &[u8]) -> Result<bool, String> {
+        loop {
+            if let Some(size) = self.data_size {
+                let end = self
+                    .cursor
+                    .checked_add(size)
+                    .and_then(|value| value.checked_add(2))
+                    .ok_or_else(|| "HTTP chunk 长度超出范围".to_string())?;
+                if bytes.len() < end {
+                    return Ok(false);
+                }
+                if &bytes[end - 2..end] != b"\r\n" {
+                    return Err("HTTP chunk 数据格式非法".into());
+                }
+                self.cursor = end;
+                self.data_size = None;
+                continue;
+            }
+            let rest = &bytes[self.cursor..];
+            let Some(end) = rest.windows(2).position(|window| window == b"\r\n") else {
+                if rest.len() > 8192 {
+                    return Err("HTTP chunk 行超过 8 KiB".into());
+                }
+                return Ok(false);
+            };
+            if end > 8192 {
+                return Err("HTTP chunk 行超过 8 KiB".into());
+            }
+            let line = &rest[..end];
+            self.cursor += end + 2;
+            if self.trailers {
+                if line.is_empty() {
+                    return Ok(true);
+                }
+                if !line.contains(&b':') {
+                    return Err("HTTP chunk trailer 格式非法".into());
+                }
+            } else {
+                let size = line.split(|byte| *byte == b';').next().unwrap_or_default();
+                if size.is_empty() || !size.iter().all(u8::is_ascii_hexdigit) {
+                    return Err("HTTP chunk 长度非法".into());
+                }
+                let text =
+                    std::str::from_utf8(size).map_err(|_| "HTTP chunk 长度非法".to_string())?;
+                let size = usize::from_str_radix(text, 16)
+                    .map_err(|_| "HTTP chunk 长度超出范围".to_string())?;
+                if size == 0 {
+                    self.trailers = true;
+                } else {
+                    self.data_size = Some(size);
+                }
+            }
+        }
+    }
+}
+
+fn decode_chunked_body(mut input: &[u8]) -> Result<Vec<u8>, String> {
+    let mut output = Vec::new();
+    loop {
+        let line_end = input
+            .windows(2)
+            .position(|window| window == b"\r\n")
+            .ok_or_else(|| "HTTP chunk 长度行不完整".to_string())?;
+        let size = input[..line_end]
+            .split(|byte| *byte == b';')
+            .next()
+            .unwrap_or_default();
+        if size.is_empty() || !size.iter().all(u8::is_ascii_hexdigit) {
+            return Err("HTTP chunk 长度非法".into());
+        }
+        let size_text = std::str::from_utf8(size).map_err(|_| "HTTP chunk 长度非法".to_string())?;
+        let size = usize::from_str_radix(size_text, 16)
+            .map_err(|_| "HTTP chunk 长度超出范围".to_string())?;
+        input = &input[line_end + 2..];
+        if size == 0 {
+            loop {
+                let end = input
+                    .windows(2)
+                    .position(|window| window == b"\r\n")
+                    .ok_or_else(|| "HTTP chunk trailer 不完整".to_string())?;
+                let line = &input[..end];
+                input = &input[end + 2..];
+                if line.is_empty() {
+                    if !input.is_empty() {
+                        return Err("HTTP chunk 之后有额外数据".into());
+                    }
+                    return Ok(output);
+                }
+                if !line.contains(&b':') {
+                    return Err("HTTP chunk trailer 格式非法".into());
+                }
+            }
+        }
+        let end = size
+            .checked_add(2)
+            .ok_or_else(|| "HTTP chunk 长度超出范围".to_string())?;
+        if input.len() < end || &input[size..end] != b"\r\n" {
+            return Err("HTTP chunk 数据不完整".into());
+        }
+        output.extend_from_slice(&input[..size]);
+        input = &input[end..];
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]

@@ -122,11 +122,11 @@ fn the_bff_writes_the_session_operator_into_audit_not_the_claimed_one() {
         3_000,
     );
     assert_eq!(audit.0.status, 200, "审计回读: {}", audit.0.body);
-    let records: Vec<serde_json::Value> =
-        serde_json::from_str(&audit.0.body).expect("audit 是 JSON 数组");
+    let page: serde_json::Value = serde_json::from_str(&audit.0.body).expect("audit 是分页合同");
+    let records = page["entries"].as_array().expect("audit entries 是数组");
     assert_eq!(records.len(), 1, "审计应当只有那一条: {}", audit.0.body);
     assert_eq!(
-        records[0]["operator_id"].as_str(),
+        records[0]["record"]["operator_id"].as_str(),
         Some(OPERATOR),
         "审计身份必须由服务端按会话注入，命令体里自称的 {FORGED} 不许进账"
     );

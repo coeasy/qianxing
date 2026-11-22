@@ -55,7 +55,7 @@ pub fn single_strategy_backtest_bindings_from_runtime(
         qx_strategy::BuiltinStrategyKind::SmaCross,
         input.strategy_id.to_string(),
     );
-    let app_spec = qx_app::assemble_strategy_backtest_spec(
+    let mut app_spec = qx_app::assemble_strategy_backtest_spec(
         qx_app::BacktestDatasetInput {
             run_id: "strategy-backtest".into(),
             instrument: input.frame.instrument.to_string(),
@@ -106,6 +106,12 @@ pub fn single_strategy_backtest_bindings_from_runtime(
                 Some(path) => format!("{error}；runtime_config={}", path.display()),
                 None => error,
             })?;
+            // The application spec is also the stable input to read-only backtest preflight.
+            // Keep its strategy declaration aligned with the runtime-selected builtin instead
+            // of leaving the placeholder SMA kind assembled above.
+            app_spec = app_spec
+                .with_builtin_strategy_config(&builtin_config)
+                .map_err(|error| format!("内置策略无法投影到回测规格: {error}"))?;
             let provenance =
                 qx_runtime::builtin_signal_provenance(builtin_config.kind, &input.config.strategy);
             let signal = qx_app::artifact_store::BacktestSignalParams::from_builtin_config(
@@ -170,7 +176,11 @@ mod tests {
             .expect("runtime bindings should produce an application spec");
 
         assert_eq!(bindings.app_spec.bars_path, "bars.json");
-        assert_eq!(bindings.app_spec.strategy.strategy_id, "sma_cross");
+        assert_eq!(bindings.app_spec.strategy.strategy_id, "builtin-sma_cross");
+        assert_eq!(
+            bindings.app_spec.strategy.kind,
+            qx_strategy::BuiltinStrategyKind::SmaCross
+        );
         assert_eq!(
             bindings.account_base.source,
             BACKTEST_ACCOUNT_BASE_DEFAULT_SOURCE
@@ -179,5 +189,39 @@ mod tests {
         assert!(bindings.builtin_execution.is_some());
         assert!(bindings.builtin_signal.is_some());
         assert!(bindings.builtin_signal_note.is_some());
+    }
+
+    #[test]
+    fn runtime_binding_preserves_the_selected_builtin_kind_in_the_application_spec() {
+        let mut config = RuntimeConfig::from_json(include_str!(
+            "../../../../deploy/qianxing.runtime.example.json"
+        ))
+        .expect("runtime example config is valid");
+        config.strategy.builtin_strategy = Some("macd".into());
+        let frame = qx_datastruct::BarFrame::from_json(include_str!(
+            "../../../../deploy/qianxing.bar-frame.example.json"
+        ))
+        .expect("BarFrame example is valid");
+
+        let bindings =
+            single_strategy_backtest_bindings_from_runtime(SingleStrategyBacktestBindingInput {
+                config: &config,
+                runtime_config_path: Some(Path::new("runtime.json")),
+                frame: &frame,
+                input_path: "bars.json".into(),
+                strategy_id: "macd",
+                instrument_spec: None,
+                margin_model: None,
+                instrument_spec_version: "market-spec-default-v1",
+                ashare_rules: None,
+                ashare_rules_path: None,
+            })
+            .expect("runtime bindings should produce an application spec");
+
+        assert_eq!(
+            bindings.app_spec.strategy.kind,
+            qx_strategy::BuiltinStrategyKind::Macd
+        );
+        assert_eq!(bindings.app_spec.strategy.strategy_id, "builtin-macd");
     }
 }

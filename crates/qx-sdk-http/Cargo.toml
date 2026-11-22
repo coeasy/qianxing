@@ -1,0 +1,13 @@
+[package]
+name = "qx-sdk-http"
+description = "Optional HTTP transport for the Qianxing Rust SDK"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+# The public package boundary and crates.io dependency closure are not yet released.
+publish = false
+
+[dependencies]
+qx-sdk = { version = "0.4.0", path = "../qx-sdk" }
+qx-adapter = { version = "0.4.0", path = "../qx-adapter" }

@@ -102,14 +102,15 @@ pub use bar_fill_model::{
     bar_fill_model, fill_model_failure, fill_model_problem, BarFillModelBinding,
 };
 pub use cases::kernels::{BAR_MATCHING_KERNEL, ORDER_BOOK_MATCHING_KERNEL, TICK_MATCHING_KERNEL};
+pub use cases::BACKTEST_PREFLIGHT_SCHEMA_VERSION_V1;
 pub use cases::{
     bind_ashare_backtest_rules, compare_runs, paper_available_margin_raw, plan_algo_execution,
-    plan_capital_allocation, plan_risk_parity, prepare_multi_leg_experiment_artifacts,
-    prepare_quick_research_spec_v1, publish_dataset_snapshot, run_backtest, run_depth_backtest,
-    run_depth_backtest_with_strategy, run_depth_backtest_with_strategy_slots, run_depth_experiment,
-    run_experiment, run_multi_account_backtest, run_multi_account_depth_backtest,
-    run_multi_account_joint_backtest, run_multi_builtin_backtest,
-    run_multi_builtin_backtest_with_inputs, run_multi_leg_backtest,
+    plan_capital_allocation, plan_risk_parity, preflight_backtest_v1,
+    prepare_multi_leg_experiment_artifacts, prepare_quick_research_spec_v1,
+    publish_dataset_snapshot, run_backtest, run_depth_backtest, run_depth_backtest_with_strategy,
+    run_depth_backtest_with_strategy_slots, run_depth_experiment, run_experiment,
+    run_multi_account_backtest, run_multi_account_depth_backtest, run_multi_account_joint_backtest,
+    run_multi_builtin_backtest, run_multi_builtin_backtest_with_inputs, run_multi_leg_backtest,
     run_multi_leg_backtest_with_strategy, run_multi_leg_experiment, run_multi_market_backtest,
     run_multi_market_depth_backtest, run_multi_market_depth_experiment,
     run_multi_market_experiment, run_provider_backtest_with_manifest, run_provider_depth_backtest,
@@ -117,7 +118,8 @@ pub use cases::{
     validate_dataset_manifest, validate_depth_dataset_manifest, validate_multi_builtin_frames,
     validate_trade_control, verify_depth_run, verify_multi_leg_report_quality_evidence_bytes_v1,
     verify_multi_leg_report_quality_evidence_v1, verify_run, AshareBacktestBinding,
-    CompareRunsResult, CompareRunsSpec, ComparedRun, ComparedRunResult,
+    BacktestPreflightCheckStatusV1, BacktestPreflightCheckV1, BacktestPreflightDataV1,
+    BacktestPreflightResultV1, CompareRunsResult, CompareRunsSpec, ComparedRun, ComparedRunResult,
     DatasetManifestValidationResult, DatasetSnapshotPublicationResult,
     DepthDatasetManifestValidationResult, DepthExperimentCandidate, DepthExperimentRankedCandidate,
     ExecutionCostSensitivityFoldDelta, ExecutionCostSensitivityNeighborResult,
@@ -144,6 +146,7 @@ pub use cases::{
     RUN_MULTI_LEG_EXPERIMENT_SCHEMA_VERSION, RUN_MULTI_MARKET_DEPTH_EXPERIMENT_SCHEMA_VERSION,
     RUN_MULTI_MARKET_EXPERIMENT_SCHEMA_VERSION, TRADE_CONTROL_SCHEMA_VERSION,
 };
+pub use cases::{verify_depth_run_with_reader, verify_run_with_reader};
 pub use cases::{
     ExperimentBaselineReport, ExperimentFoldReport, ExperimentOutOfSampleReport,
     ExperimentSplitPlan,
@@ -245,6 +248,11 @@ pub use multi_market_research_report::{
     MAX_MULTI_MARKET_REPORT_BAR_ROWS, MAX_MULTI_MARKET_REPORT_EQUITY_ROWS,
     MAX_MULTI_MARKET_REPORT_FILL_ROWS, MAX_MULTI_MARKET_REPORT_SCHEDULE_PREVIEW_ROWS,
     MULTI_MARKET_RESEARCH_REPORT_SCHEMA_VERSION_V1,
+};
+pub use qx_control::{
+    CommandStatus as ControlAuditStatus, ControlAuditEntryV1, ControlAuditPageV1,
+    ControlAuditRecordV1, CONTROL_AUDIT_DEFAULT_PAGE_SIZE, CONTROL_AUDIT_MAX_PAGE_BYTES,
+    CONTROL_AUDIT_MAX_PAGE_SIZE,
 };
 pub use qx_core::MakerTakerFeeSchedule;
 pub use qx_data::{

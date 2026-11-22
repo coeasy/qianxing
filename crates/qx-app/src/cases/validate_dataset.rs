@@ -45,7 +45,14 @@ pub fn validate_dataset(
     outcome.map_err(|error| attach(error, &correlation_id))
 }
 
-fn validate_dataset_inner(spec: &DatasetSpec) -> Result<DatasetVerdict, AppError> {
+pub(super) struct DatasetInspection {
+    pub verdict: DatasetVerdict,
+    pub first_ts: Option<u64>,
+    pub last_ts: Option<u64>,
+    pub instrument: qx_core::InstrumentId,
+}
+
+pub(super) fn inspect_dataset(spec: &DatasetSpec) -> Result<DatasetInspection, AppError> {
     spec.validate()?;
     let payload = read_text(&spec.bars_path)?;
     let frame = BarFrame::from_json(&payload).map_err(|error| {
@@ -70,12 +77,21 @@ fn validate_dataset_inner(spec: &DatasetSpec) -> Result<DatasetVerdict, AppError
             "样本过短：读到 {rows} 根 Bar，Bar 回测下限 {MIN_BACKTEST_BARS} 根——指标在这么短的样本上不是指标而是噪声"
         ));
     }
-    Ok(DatasetVerdict {
-        dataset_id: spec.dataset_id.clone(),
-        instrument: frame.instrument.to_string(),
-        rows: rows as u64,
-        content_fingerprint,
-        usable: gaps.is_empty(),
-        gaps,
+    Ok(DatasetInspection {
+        verdict: DatasetVerdict {
+            dataset_id: spec.dataset_id.clone(),
+            instrument: frame.instrument.to_string(),
+            rows: rows as u64,
+            content_fingerprint,
+            usable: gaps.is_empty(),
+            gaps,
+        },
+        first_ts: frame.ts.first().copied(),
+        last_ts: frame.ts.last().copied(),
+        instrument: frame.instrument,
     })
+}
+
+fn validate_dataset_inner(spec: &DatasetSpec) -> Result<DatasetVerdict, AppError> {
+    inspect_dataset(spec).map(|inspection| inspection.verdict)
 }

@@ -34,6 +34,7 @@ members = [
     # 不重写任何业务逻辑。它**是** qx-app 的门面，所以 `layer_dependency_check` 的
     # `LAYER_SOLE_DEPENDENTS` 里 qx-app 的被依赖集合必须点名它。
     "crates/qx-sdk",
+    "crates/qx-sdk-http",
     "crates/qx-cli",
     # 跨 crate 契约用例宿主（方案 §5.4 P1-12）：纯测试 crate，无生产代码，无人依赖它。
     # 放进 workspace 是为了它仍被 `cargo test --workspace` 跑到并执行跨 crate 契约用例。

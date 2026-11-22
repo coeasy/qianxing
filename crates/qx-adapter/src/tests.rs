@@ -4,6 +4,142 @@
 //! 测试按连接层主题组织，确保拼帧上限与传输行为可以独立回归。
 //!
 use super::*;
+
+fn read_request_headers(stream: &mut TcpStream) {
+    let mut request = Vec::new();
+    let mut chunk = [0_u8; 256];
+    loop {
+        let read = stream.read(&mut chunk).unwrap();
+        if read == 0 {
+            break;
+        }
+        request.extend_from_slice(&chunk[..read]);
+        if request.windows(4).any(|window| window == b"\r\n\r\n") {
+            break;
+        }
+    }
+    assert!(request.windows(4).any(|window| window == b"\r\n\r\n"));
+}
+
+#[test]
+fn http_response_enforces_message_framing_and_utf8() {
+    let parse = |bytes: &[u8]| parse_http_response(bytes, "GET");
+    let response = parse(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello").unwrap();
+    assert_eq!(response.body, "hello");
+    assert!(parse(b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\nhello").is_err());
+    assert!(parse(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nhello").is_err());
+    assert!(
+        parse(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 4\r\n\r\nhello").is_err()
+    );
+    assert!(parse(b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n\xff").is_err());
+    assert!(parse(
+        b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"
+    )
+    .is_err());
+    assert_eq!(parse(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2;example=x\r\nhe\r\n3\r\nllo\r\n0\r\nX-Foo: bar\r\n\r\n").unwrap().body, "hello");
+    assert!(parse(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhel").is_err());
+    assert!(parse(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n").is_err());
+    assert!(
+        parse(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n0\r\n\r\n").is_err()
+    );
+    assert!(parse(b"HTTP/1.1 204 No Content\r\n\r\nx").is_err());
+    assert_eq!(
+        parse_http_response(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n", "HEAD")
+            .unwrap()
+            .body,
+        ""
+    );
+}
+
+#[test]
+fn tcp_transport_decodes_chunks_and_rejects_truncated_response() {
+    use std::net::TcpListener;
+    use std::thread;
+
+    for (wire, expected) in [
+        (b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n2\r\nok\r\n0\r\n\r\n".as_slice(), true),
+        (b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nok".as_slice(), false),
+    ] {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            read_request_headers(&mut stream);
+            stream.write_all(wire).unwrap();
+        });
+        let response = TcpHttpTransport::default().send(HttpRequest {
+            method: "GET".into(), host: "127.0.0.1".into(), port,
+            path: "/".into(), body: String::new(), headers: BTreeMap::new(),
+        });
+        server.join().unwrap();
+        assert_eq!(response.is_ok(), expected);
+        if let Ok(response) = response { assert_eq!(response.body, "ok"); }
+    }
+}
+
+#[test]
+fn tcp_transport_finishes_framed_responses_without_waiting_for_server_close() {
+    for (method, wire, expected) in [
+        ("GET", b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".as_slice(), "ok"),
+        ("GET", b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\nX-End: yes\r\n\r\n".as_slice(), "ok"),
+        ("HEAD", b"HTTP/1.1 200 OK\r\nContent-Length: 50\r\n\r\n".as_slice(), ""),
+    ] {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let worker = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            read_request_headers(&mut stream);
+            stream.write_all(wire).unwrap();
+            // Keep the server connection open until the client finishes reading.
+            let mut byte = [0_u8; 1];
+            assert_eq!(stream.read(&mut byte).unwrap(), 0);
+        });
+        let response = TcpHttpTransport::new(Duration::from_millis(500)).send(HttpRequest {
+            method: method.into(), host: address.ip().to_string(), port: address.port(),
+            path: "/".into(), body: String::new(), headers: BTreeMap::new(),
+        }).unwrap();
+        worker.join().unwrap();
+        assert_eq!(response.body, expected);
+    }
+}
+
+#[test]
+fn chunk_scanner_handles_fragmented_lines_and_payloads() {
+    let body = b"3;v=x\r\nabc\r\n2\r\nde\r\n0\r\nX-End: yes\r\n\r\n";
+    let mut scanner = ChunkScanner::default();
+    for end in 0..body.len() {
+        assert!(
+            !scanner.advance(&body[..end]).unwrap(),
+            "premature completion at {end}"
+        );
+    }
+    assert!(scanner.advance(body).unwrap());
+}
+
+#[test]
+fn http_frame_detection_handles_one_byte_reads() {
+    struct OneByte<'a>(&'a [u8]);
+    impl Read for OneByte<'_> {
+        fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+            if self.0.is_empty() || output.is_empty() {
+                return Ok(0);
+            }
+            output[0] = self.0[0];
+            self.0 = &self.0[1..];
+            Ok(1)
+        }
+    }
+    for wire in [
+        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".as_slice(),
+        b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n".as_slice(),
+    ] {
+        let mut input = OneByte(wire);
+        let response =
+            read_capped_response(&mut input, 1024, Duration::from_secs(5), "GET").unwrap();
+        assert_eq!(parse_http_response(&response, "GET").unwrap().body, "ok");
+    }
+}
 use std::io::Cursor;
 use std::net::TcpListener;
 use std::thread;
@@ -38,20 +174,20 @@ fn http_response_read_aborts_over_the_byte_cap() {
     // 上限之内逐字原样读出：改动不得影响 ≤ 上限 的响应（happy path 与旧行为等价）。
     let mut within = Cursor::new(b"0123456789".to_vec());
     assert_eq!(
-        read_capped_response(&mut within, 16, Duration::from_secs(5)).unwrap(),
+        read_capped_response(&mut within, 16, Duration::from_secs(5), "GET").unwrap(),
         b"0123456789".to_vec()
     );
     // 恰好等于上限不误伤：越界判的是**真读到**第 `limit + 1` 字节。
     let mut exact = Cursor::new(vec![b'y'; 8]);
     assert_eq!(
-        read_capped_response(&mut exact, 8, Duration::from_secs(5))
+        read_capped_response(&mut exact, 8, Duration::from_secs(5), "GET")
             .unwrap()
             .len(),
         8
     );
     // 越界那一臂提前中止，而不是把缓冲一路攒下去。
     let mut over = Cursor::new(vec![b'x'; 20]);
-    let error = read_capped_response(&mut over, 8, Duration::from_secs(5)).unwrap_err();
+    let error = read_capped_response(&mut over, 8, Duration::from_secs(5), "GET").unwrap_err();
     assert!(error.contains("字节上限"), "{error}");
     // 行长版的四臂：换行内的行按原样交出（保留行尾 `\n` 与旧 `read_line` 等价），
     // 尾行没有换行也要交出，管道 EOF 说成"没有行"而不是错误，只有越界那臂中止整条泵。
@@ -322,7 +458,7 @@ fn dripping_upstream_is_cut_by_the_wall_clock_not_by_the_byte_cap() {
         payload: vec![b'y'; 400],
         position: 0,
     };
-    let error = read_capped_response(&mut body, 1024, Duration::from_millis(20))
+    let error = read_capped_response(&mut body, 1024, Duration::from_millis(20), "GET")
         .expect_err("滴字节的响应必须被整体预算切断，而不是读完");
     assert!(error.contains("整体截止"), "{error}");
     // 正向对照：预算内到位的握手块照旧读回来，时间臂不能把好上游一起切断。

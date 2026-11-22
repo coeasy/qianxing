@@ -81,6 +81,25 @@ groups:
           summary: "Qianxing consumer ACK failures"
           description: "worker={{ $labels.worker }} could not acknowledge JetStream messages."
 
+      - alert: QianxingControlCommandCapacityHigh
+        expr: qx_control_pending_commands / qx_control_pending_commands_limit >= 0.8
+        for: 5m
+        labels:
+          severity: warning
+          service: qianxing
+        annotations:
+          summary: "Qianxing control command queue is nearing capacity"
+          description: "The API has {{ $value | humanizePercentage }} of its pending command capacity in use; investigate stuck or slow command execution."
+
+      - alert: QianxingControlCommandCapacityRejected
+        expr: increase(qx_api_control_capacity_rejections_total[5m]) > 0
+        labels:
+          severity: warning
+          service: qianxing
+        annotations:
+          summary: "Qianxing rejected a control command because its queue is full"
+          description: "The API rejected {{ $value }} control command(s) in the last 5 minutes because pending capacity was exhausted."
+
       - alert: QianxingReconcileMetricsUnavailable
         expr: qx_reconcile_metrics_available == 0
         for: 1m

@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qianxing.dev/schemas/backtest-preflight-result-v1.json",
+  "title": "Qianxing BacktestPreflightResultV1",
+  "description": "Read-only local Bar readiness snapshot returned by the qx-app preflight use case.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "instrument",
+    "ready",
+    "data",
+    "checks",
+    "limitations"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string"},
+    "instrument": {"type": "string"},
+    "ready": {"type": "boolean"},
+    "data": {"$ref": "#/$defs/BacktestPreflightDataV1"},
+    "checks": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/BacktestPreflightCheckV1"}
+    },
+    "limitations": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {"properties": {"ready": {"const": true}}, "required": ["ready"]},
+      "then": {
+        "properties": {
+          "checks": {
+            "not": {
+              "contains": {
+                "properties": {"status": {"const": "blocked"}},
+                "required": ["status"]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"ready": {"const": false}}, "required": ["ready"]},
+      "then": {
+        "properties": {
+          "checks": {
+            "contains": {
+              "properties": {"status": {"const": "blocked"}},
+              "required": ["status"]
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "BacktestPreflightCheckV1": {
+      "type": "object",
+      "required": ["id", "status"],
+      "properties": {
+        "id": {"type": "string"},
+        "status": {"enum": ["ready", "blocked", "not_applicable"]},
+        "detail": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "BacktestPreflightDataV1": {
+      "type": "object",
+      "required": ["instrument", "rows", "content_fingerprint", "usable", "gaps", "first_ts", "last_ts"],
+      "properties": {
+        "instrument": {"type": "string"},
+        "rows": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+        "content_fingerprint": {"type": "string"},
+        "usable": {"type": "boolean"},
+        "gaps": {"type": "array", "items": {"type": "string"}},
+        "first_ts": {
+          "anyOf": [
+            {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+            {"type": "null"}
+          ]
+        },
+        "last_ts": {
+          "anyOf": [
+            {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+            {"type": "null"}
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"usable": {"const": true}}, "required": ["usable"]},
+          "then": {"properties": {"gaps": {"maxItems": 0}}}
+        },
+        {
+          "if": {"properties": {"usable": {"const": false}}, "required": ["usable"]},
+          "then": {"properties": {"gaps": {"minItems": 1}}}
+        }
+      ]
+    }
+  }
+}

@@ -231,6 +231,8 @@ cargo run --release -p qx-cli -- serve deploy/qianxing.runtime.example.json
 
 研究与交易 API 入口使用与 CLI/Python 相同的版本化 `qx-app` contract，覆盖同步与异步 Bar、L1 Tick、L2/L3 OrderBook 工作流，以及经现有控制面提交的 Paper/Live 命令。异步任务可查询状态并协作取消。输入文件必须位于 `QX_API_DATA_ROOT`（默认 `.qianxing/api-data`）内；输出只写入 `QX_API_ARTIFACT_ROOT`（默认系统临时目录下的 `qianxing-api-runs/<run_id>`）。请求中的路径不能越出输入根目录，也不能覆盖服务端产物根目录。服务启动前把数据放入输入目录，并用 mTLS Operator 身份保护远程 API。
 
+研究报告和产物复核通过已打开的产物根目录句柄读取，避免检查后的链接替换将读取重定向到根目录外。部署时仍须由可信管理员控制产物根目录及其父目录，并限制非可信用户修改目录内的文件；此保护不涵盖所有数据输入路径或目录内已有的硬链接。
+
 API 的认证边界由 `transport` 与 `api.operators` 决定，同时明文模式被限定为 paper 模拟：
 
 - `transport: "plaintext"`：明文 API 仅允许 paper 环境与 loopback bind；启用的 `Execution` / `SpreadRecovery` worker 必须绑定 `venue_id: "paper"`。服务只开放固定 `local-paper` / `Trading` 授权的 Paper workflow；通用 `POST /control/commands` 在未认证时返回 403。`sandbox`、`testnet` 与 `production` 必须使用 mTLS。
@@ -307,20 +309,22 @@ sandbox 2 份、testnet 1 份、production 1 份，逐份都被用例按 `config
 | `GET /account/ledger[?account_id=]` | 数组 | 读模型来自 `storage.data_dir`，非实时推送；`?account_id=` 在结果集上按账户过滤，过滤不出条目时是空数组而不是 `404`（V13 R31） |
 | `GET /account/order-groups[?account_id=&venue_id=]` | 订单组数组 | 从持久订单组读模型读取；两把键可同时提供并按 AND 过滤，venue ID 比较忽略大小写。没有匹配组时返回空数组，读模型不可用时返回 `503` |
 | `GET /reconcile/reports[?account_id=&venue_id=]` | 数组 | 同上，`ReconcileReportSnapshot` 还带 `venue_id`，所以这把键也认；两把都认时是 AND（V13 R31） |
-| `GET /scheduler/runs`、`/control/audit` | 数组 | 读模型同上，非实时推送；Scheduler 返回活动运行与最多 4,096 条终态保留窗口，`/control/audit` 返回整份现读模型；两条都**没有收窄键**，带任何查询串一律 `400`（V13 R2 #205） |
+| `GET /scheduler/runs` | 数组 | 读模型同上，非实时推送；返回活动运行与最多 4,096 条终态保留窗口；没有收窄键，带查询串一律 `400`（V13 R2 #205） |
+| `GET /control/audit[?request_id=&cursor=&limit=]` | `ControlAuditPageV1` 分页 envelope | 最新记录优先，默认 `limit=100`、最大 1,000，序列化页不超过 1 MiB；`next_cursor` 绑定持久化序号快照，进程重启后可继续；`request_id` 精确查询最多返回一条命令的受理/终态记录且不与 cursor 同用；错误参数回 `400`，已退场导致游标过期回 `409 control_audit_cursor_expired`，单条记录超过字节预算回 `413 control_audit_record_exceeds_response_budget` |
 | `GET /events?after=<seq>` | `Event` 数组，每格 `{seq, ts, prio, kind, receive_time, engine_time, source_seq, correlation_id, metadata}` | 快照式读取；游标越界 → `409 event_cursor_requires_snapshot` |
 | `GET /events/live?after=<seq>` | `ProjectionEnvelope` 数组，每格 `{schema_version, kind, tenant_id, run_id, account_id, portfolio_id, venue_id, as_of, event_seq, cursor, state_hash, source, lineage, data}` | 一次性 read-after，不是长连接；每条事件外面套一层投影信封、事件本体在 `data` 里，与 `/events` 的裸 `Event` **不同形**；游标语义与 `/events` 同口径（V12 R4-g） |
-| `POST /control/commands` | 受理结果 | 载荷非法 → `400`；未识别操作员 → `403`；先持久化再入队，入队失败不回滚受理、计入 `qx_api_command_enqueue_failures_total`（见下「指标出口」） |
-| `POST /app/paper/commands` | Paper `TradeControlSpec` 经 `qx-app` 校验后的 `Accepted` 审计回执 | 复用现有 ControlPlane 持久化、队列与 Paper Execution worker；本地可用，若启用访问策略则必须经认证 |
-| `POST /app/live/commands` | Live `TradeControlSpec` 经 `qx-app` 校验后的 `Accepted` 审计回执 | 必须配置 Operator 权限策略并通过客户端认证；复用现有 ControlPlane、队列与 venue worker，不绕过风险/执行路径 |
+| `POST /control/commands` | 受理结果 | 载荷非法 → `400`；未识别操作员 → `403`；待办达到 4,096 硬上限 → `503 control_command_capacity_exceeded`；先持久化再入队，入队失败不回滚受理、计入 `qx_api_command_enqueue_failures_total`（见下「指标出口」） |
+| `POST /app/paper/commands` | Paper `TradeControlSpec` 经 `qx-app` 校验后的 `Accepted` 审计回执 | 复用现有 ControlPlane 持久化、队列与 Paper Execution worker；待办满载时返回 `503 control_command_capacity_exceeded`；本地可用，若启用访问策略则必须经认证 |
+| `POST /app/live/commands` | Live `TradeControlSpec` 经 `qx-app` 校验后的 `Accepted` 审计回执 | 必须配置 Operator 权限策略并通过客户端认证；待办满载时返回 `503 control_command_capacity_exceeded`；复用现有 ControlPlane、队列与 venue worker，不绕过风险/执行路径 |
 | `POST /app/validate-dataset` | 应用层用例 `qx_app::validate_dataset` 的裁决文档（请求体是 `DatasetSpec` JSON） | 数据集**不足**是成功返回（裁决里 `usable` 为假且 `gaps` 非空，仍 200），不是非 200；只有"在盘但读不出来"才失败（T2-2） |
+| `POST /app/backtest/preflight` | 应用层用例 `qx_app::preflight_backtest_v1` 的只读就绪报告（请求体是 `BacktestSpec` JSON） | 返回数据标的/行数/指纹/时间范围与逐项检查；`ready=false` 是正常结果，不启动回测、不写产物，也不保证策略产生信号或盈利；请求路径仍限定在服务端 data root |
 | `POST /app/backtest` | 应用层用例 `qx_app::run_backtest` 的结果文档（请求体是 `BacktestSpec` JSON） | 四份产物落在 spec 的 `output_dir` 下；与 `qx-cli app backtest`、Python 的 `app.run_backtest` 是**同一份结果文档**（同一 use case、同一 `result_hash`，退出门 G1） |
 | `POST /app/provider-backtest` | 应用层 Provider Bar 回测（请求体为含完整 `DatasetSnapshotContextV1` 的 `ProviderBacktestSpec` JSON） | `qx-cli serve` 从 `api.data_providers` 构造 ProviderRegistry；第三方宿主也可用 `ApiService::with_provider_registry` 注入；服务端固定数据/manifest/snapshot/产物路径于 artifact root；同步等待 Provider 响应，需配置上游 deadline |
 | `POST /app/provider-depth-backtest` | 应用层 Provider Quote→DepthFrame/manifest/DatasetSnapshotV1→共享 Tick/OrderBook 回测（请求体为含完整 EventTime 快照上下文的 `ProviderDepthBacktestSpec` JSON） | 服务必须注入支持 Quote 快照的 ProviderRegistry；服务端固定深度帧/manifest/snapshot/产物路径于 artifact root；来源身份含 Provider/request/retry/source hash；同步等待 Provider 响应，需配置上游 deadline |
 | `POST /app/backtest/start` | 应用层 `BacktestSpec::start` 的运行句柄（请求体仍为 `BacktestSpec` JSON） | 立即返回 `run_id/status`，结果通过 `GET /app/runs/{run_id}` 读取；取消通过对应 cancel 路由协作传入 Rust Bar 撮合循环 |
 | `GET /app/runs/{run_id}` | 运行状态以及完成后的原始 outcome/error 文档 | 有界保留 1024 项；最多 64 个异步任务并行持有终态持久化观察器，满额时启动请求以可重试错误拒绝；终态结果保存在 artifact 根目录 `.app-runs`，服务重启后仍可读取，未完成任务恢复为带中断原因的 `failed`；容量淘汰只移除终态项；未知 ID 为 404 |
 | `POST /app/runs/{run_id}/cancel` | 请求协作取消并返回当前状态 | 取消在 Rust 撮合边界生效，不返回部分报告；取消可能与成功完成竞态，客户端以随后状态查询为准；未知 ID 为 404 |
-| `POST /app/verify` | 应用层用例 `qx_app::verify_run` 的复核文档（请求体取上一行的响应体） | 产物缺失/互不一致是成功返回（`verified` 为假 + `mismatches` 非空，仍 200）；只有"这份 outcome 自己没带 run_id"才失败（T2-2） |
+| `POST /app/verify` | 应用层用例 `qx_app::verify_run` 的复核文档（请求体取上一行的响应体） | 产物路径及间接引用限于服务端产物根目录；越界路径返回 400。根目录内产物缺失或互不一致返回 200，`verified` 为假且 `mismatches` 非空 |
 | `POST /app/research-artifacts` | 交互式研究报告的经复核明细（支持单次 Bar/深度结果、多市场 Bar 与多账户 Bar/深度批次） | 只读取配置的 artifact/data root 内产物；逐运行或逐账户复核输入、manifest、事件重放、权益与成交，返回有界明细；每个产物上限 128 MiB、单行上限 1 MiB；请求与响应契约见 `schemas/research-artifact-request-v1.json` 和 `schemas/research-artifact-view-v*.json` |
 | `POST /app/compare-runs` | 应用层用例 `qx_app::compare_runs` 的确定性排序结果（请求体为 `CompareRunsSpec` JSON） | 只比较相同标的、相同数据指纹的已完成运行；收益降序、回撤升序、run_id 升序 |
 | `POST /app/plan-risk-parity` | 应用层用例 `qx_app::plan_risk_parity` 的确定性组合调仓计划（请求体为 `RiskParitySpec` JSON） | 使用冻结的对齐收益序列求 long-only 等风险贡献权重；校验资金与换手预算，只返回计划，不提交订单 |
@@ -354,7 +358,7 @@ sandbox 2 份、testnet 1 份、production 1 份，逐份都被用例按 `config
 | `POST /app/run-multi-market-experiment/start` | `RunMultiMarketExperimentSpec::start` 的后台共享账户多市场实验句柄 | 候选间与 Rust Bar 循环协作取消；状态、结果、事件和取消复用 `/app/runs/{run_id}` 生命周期 |
 | `POST /app/run-experiment/start` | `RunExperimentSpec::start` 的后台参数实验句柄 | 立即返回 `run_id/status`，候选和 Bar 循环复用 Rust 协作取消；状态与取消走 `/app/runs/{run_id}` 路由 |
 | `POST /app/run-multi-leg-experiment/start` | `RunMultiLegExperimentSpec::start` 的后台多腿参数实验句柄 | 立即返回 `run_id/status`；候选之间及双腿 Rust 撮合循环协作取消；状态与取消走 `/app/runs/{run_id}` 路由 |
-| `POST /app/verify-depth` | 用例 `qx_app::verify_depth_run` 复核 L1/L2 产物（请求体取 depth-backtest 响应） | 重新读取并核对 manifest、summary、权益/成交计数与重放账簿条数；不一致为 200 + verified=false |
+| `POST /app/verify-depth` | 用例 `qx_app::verify_depth_run` 复核 L1/L2 产物（请求体取 depth-backtest 响应） | 直接路径与间接引用受服务端产物根目录约束；直接路径越界返回 400，目录内产物缺失、间接引用不合规或内容不一致返回 200 + verified=false |
 | 任意路径 + `Upgrade: websocket` | `101` 帧流 | 见下 |
 
 API 运行时若要从账户 EventLog 生成 v5 快照，必须在 `api.account_trading_days_path` 配置由市场日历同步器维护的 JSON 文件。文件形状为 `{"schema_version":1,"account_trading_days":{"<account_id>":{"<venue_id>":"YYYYMMDD"}}}`；API 在启动装载和每次快照刷新时重新读取，以支持日历同步器原子更新。缺少映射、日期无效或文件不可读时，该账户快照不会发布；服务不会从 `as_of`、UTC 日期或事件时间推断交易日。
@@ -370,7 +374,7 @@ API 运行时若要从账户 EventLog 生成 v5 快照，必须在 `api.account_
 投影存在但还没发布快照时**仍是**文档承诺的 200 空数组 / `null`（快照入口则是 `404
 snapshot_not_found`）：一个账户刚挂上投影、还没算出第一份快照，与这个账户根本不在这份部署里，
 是两件事，合成一个码就读不回来了。`/account/snapshot/diff` 不在这七条里——它的定位符是
-`base_hash`，基准不存在已经由 `409 snapshot_base_not_found` 说话；它同样认 `account_id`/`venue_id` 这一对（只给一半是 400，那一格写在第二张表里）。这条路由**不产出 `404`**：`publish_snapshot` 把基准历史与当前快照同批写入，基准查得到就一定有当前快照，所以实现里那条 `404 snapshot_not_found` 是到不了的分支，已随 #205 删掉——两张表也就不用再去解释一个永不返回的码。反过来，那四条整体现读端点里只有两条**没有收窄键**：`/scheduler/runs` 与 `/control/audit` 带任何查询串一律 `400`（第一张表原先在 `/account/ledger` 那一格写着 `[?…]`，而那条臂从头到尾没读过 `query`，递来 `?account_id=shadow` 只会把默认账户的流水念成 shadow 的流水，V13 R2 第十三遍 #205）。`/account/ledger`、`/account/order-groups` 与 `/reconcile/reports` 则反过来**真能收窄**——#205 的口径对它们当时只是暂时正确（两条臂确实都没读 `query`），而数据模型一直在：`LedgerEntry` 带 `account_id`，`ReconcileReportSnapshot` 还多带 `venue_id`，只有 `JobRun` 与 `AuditRecord` 两格什么账户列都没有。R31 把账簿与对账两条臂接上 `read_scope::ScopeFilter::from_query`；订单组读面也使用同一收窄规则，键形状合法但过滤不出条目时回 `200` 空数组，而不是投影那族的 `404 account_projection_not_found`：它读的还是整份现读模型，收窄只发生在结果集上，跟「这份部署里没有这个账户的投影」不是一回事，两条通道各说各话才不会把「空流水」读成「这个账户不存在」；账簿那一格只认 `account_id` 不是取巧，`LedgerEntry` 没有 `venue_id` 字段，递 `?venue_id=` 照样 `400` 并点名被拒的那把键。
+`base_hash`，基准不存在已经由 `409 snapshot_base_not_found` 说话；它同样认 `account_id`/`venue_id` 这一对（只给一半是 400，那一格写在第二张表里）。这条路由**不产出 `404`**：`publish_snapshot` 把基准历史与当前快照同批写入，基准查得到就一定有当前快照，所以实现里那条 `404 snapshot_not_found` 是到不了的分支，已随 #205 删掉——两张表也就不用再去解释一个永不返回的码。这几条整体现读端点中，`/scheduler/runs` 没有收窄键，带查询串一律 `400`；`/control/audit` 只认 `request_id`、`cursor`、`limit`，拒绝空值、重复键、越界页大小与非法编码；响应始终为有界 `ControlAuditPageV1`，过期游标回 `409 control_audit_cursor_expired`。`/account/ledger`、`/account/order-groups` 与 `/reconcile/reports` 则反过来**真能收窄**——#205 的口径对它们当时只是暂时正确（两条臂确实都没读 `query`），而数据模型一直在：`LedgerEntry` 带 `account_id`，`ReconcileReportSnapshot` 还多带 `venue_id`，只有 `JobRun` 与 `AuditRecord` 两格什么账户列都没有。R31 把账簿与对账两条臂接上 `read_scope::ScopeFilter::from_query`；订单组读面也使用同一收窄规则，键形状合法但过滤不出条目时回 `200` 空数组，而不是投影那族的 `404 account_projection_not_found`：它读的还是整份现读模型，收窄只发生在结果集上，跟「这份部署里没有这个账户的投影」不是一回事，两条通道各说各话才不会把「空流水」读成「这个账户不存在」；账簿那一格只认 `account_id` 不是取巧，`LedgerEntry` 没有 `venue_id` 字段，递 `?venue_id=` 照样 `400` 并点名被拒的那把键。
 
 账户快照的八个汇总钱字段（`raw` 是整数量纲）在本构建中，Paper 输入完整时有算点的是 `equity_raw`、`available_raw`、
 `margin_raw`、`fees_raw`、`realized_pnl_raw`、`unrealized_pnl_raw`；**账户级无生产者字段**：`frozen_raw`、
@@ -443,11 +447,12 @@ WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分
 | `GET /scheduler/runs` | 每次请求现读调度记录，返回所有活动运行与最多 4,096 条终态运行；更早终态以 `scheduler.state_path` 中的作业级 retention anchor 留下日期水位与摘要 | 400 带任何查询串——这条入口没有收窄键（`JobRun` 没有账户列），正文点名被拒的那把键（V13 R2 第十三遍 / R6）；503 读不到即报错，不念开机那份；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /events[?after=&account_id=&venue_id=]` | 投影事件全量，或 `after` 游标之后的增量 | 400 游标形状非法或名单外的查询键；409 `event_cursor_requires_snapshot`；带键但无该投影 404 `account_projection_not_found`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /events/live[?after=&…]` | 事件总线现读增量，游标口径与上一行同一条实现 | 400 游标形状非法或名单外的查询键；409 `event_cursor_requires_snapshot`（游标过旧/超前，含空日志）；404 `account_projection_not_found`；500；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
-| `GET /control/audit` | 控制面审计流水 | 400 带任何查询串——这条入口同样没有收窄键（`AuditRecord` 没有账户列），与上一行同属整体现读面，正文点名被拒的那把键（V13 R2 第十三遍 / R6）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
-| `POST /control/commands` | 提交控制命令；启用访问策略时 operator 身份必须来自认证边界 | 400 请求体不合法（缺审计字段，或该命令类型在当前构建里没有派发者）；403 未认证 `authenticated_operator_required`／已认证但策略给不出权限 `forbidden`；409 命令被控制面拒绝（`ControlError` 的 Debug 形态，四个变体名见下段）；503 队列不可用 `control_state_unavailable`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
-| `POST /app/paper/commands` | 受 Rust Paper 能力档保护的命令校验、持久化和入队 | 请求体为 `TradeControlSpec`；400 输入或不可执行命令、403 权限不足、409 控制面拒绝、503 控制面不可用；成功返回 202 Accepted；终态由原有 worker 与审计读面提供；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
-| `POST /app/live/commands` | 受 Rust Live 能力档保护的实盘控制命令校验、持久化和入队 | 必须启用认证策略并授予 Trading；400 输入或试运行命令、403 权限不足、409 控制面拒绝、503 控制面不可用；不接受命令体自声明权限替代服务端 Operator 授权；成功返回 202 Accepted；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `GET /control/audit[?request_id=&cursor=&limit=]` | 最新优先的 `ControlAuditPageV1` 控制面审计页，最大 1,000 条且序列化后不超过 1 MiB | 400 空值、重复键、limit 超出 1–1,000、cursor 与 request_id 同用或其他不支持的查询键；409 `control_audit_cursor_expired`；413 `control_audit_record_exceeds_response_budget`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /control/commands` | 提交控制命令；启用访问策略时 operator 身份必须来自认证边界 | 400 请求体不合法（缺审计字段，或该命令类型在当前构建里没有派发者）；403 未认证 `authenticated_operator_required`／已认证但策略给不出权限 `forbidden`；409 命令被控制面拒绝（`ControlError` 的 Debug 形态，四个变体名见下段）；503 待办满载 `control_command_capacity_exceeded` 或控制状态不可用 `control_state_unavailable`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/paper/commands` | 受 Rust Paper 能力档保护的命令校验、持久化和入队 | 请求体为 `TradeControlSpec`；400 输入或不可执行命令、403 权限不足、409 控制面拒绝、503 待办满载 `control_command_capacity_exceeded` 或控制面不可用；成功返回 202 Accepted；终态由原有 worker 与审计读面提供；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/live/commands` | 受 Rust Live 能力档保护的实盘控制命令校验、持久化和入队 | 必须启用认证策略并授予 Trading；400 输入或试运行命令、403 权限不足、409 控制面拒绝、503 待办满载 `control_command_capacity_exceeded` 或控制面不可用；不接受命令体自声明权限替代服务端 Operator 授权；成功返回 202 Accepted；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/validate-dataset` | 应用层用例 ValidateDataset：这份数据能否支撑一次 Bar 回测（请求体是 DatasetSpec JSON） | 非 200 状态码由响应体里的类别字段派生（crates/qx-api/src/app_surface.rs 的类别映射是唯一一份）：400 输入不合法；404 数据取不到；422 档位不足；403 权限不足；409 冲突；503 超时或存储故障；500 内部不一致。所有 `/app/*` 路由都拒绝查询串（400 `application_routes_do_not_accept_query_parameters`）；错误体是与 CLI/Python 逐字节相同的应用层错误文档，不是读面那套错误码形态；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/backtest/preflight` | 本地 Bar 回测运行前检查；请求体为 `BacktestSpec`，成功响应是版本化 readiness 文档 | `ready=false` 用 200 返回并列出阻断项；无效输入/路径按应用错误类别返回；只读、不创建输出目录；所有 `/app/*` 路由拒绝查询串；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /app/strategies` | 读取由 `qx-strategy` 定义、经 `qx-app` 投影的 17 种内置策略目录（名称、说明、信号旋钮和多腿要求）；Rust/Python/C++ 客户端用于发现与选择，不执行回测 | 返回稳定顺序的 JSON 数组；所有 `/app/*` 路由拒绝查询串；配置 API operator policy 时要求已认证操作者；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /app/strategy-recipes` | 读取 Rust-owned `schema_version=1` 策略 recipe 目录，含内核默认参数、数据形态、成本输入、风险提示和 OOS 说明；不执行回测、不构成交易授权 | JSON envelope `{schema_version, recipes}`；所有 `/app/*` 路由拒绝查询串；配置 API operator policy 时要求已认证操作者；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `GET /app/capabilities` | 读取共享 Rust 应用用例、路由与 Provider 声明目录（含 Bar、深度、多腿、多市场及多市场 L1/L2 参数实验同步/RunHandle 路由）；声明目录不代表 Provider/Venue 当前就绪 | 所有 `/app/*` 路由拒绝查询串；配置 API operator policy 时要求已认证操作者；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable`；目录编码失败时 500 |
@@ -482,7 +487,7 @@ WebSocket 不占路由表：任何路径带 `Upgrade: websocket` 即在 HTTP 分
 | `POST /app/multi-leg-backtest/start` | 创建双腿 Rust Bar 回测后台任务 | 运行状态通过 GET 读取，取消通过 POST 请求并协作进入策略与撮合循环；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/run-experiment/start` | 创建 Rust 参数实验后台任务 | 候选和 Bar 循环复用协作取消；状态走 GET 查询，取消走 POST 请求；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/run-multi-leg-experiment/start` | 创建 Rust 多腿参数实验后台任务 | 候选与双腿撮合循环复用协作取消；状态走 GET 查询，取消走 POST 请求；429/503 同全局限流出口；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
-| `POST /app/verify` | 应用层用例 VerifyRun：四份产物是否互相印证（请求体取上一行的响应体） | 与上一行同一份类别映射；产物缺失或互相矛盾是 200 加一个为假的裁决（不是非 200——「复核不通过」与「复核跑不起来」是两件事）；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
+| `POST /app/verify` | 应用层用例 VerifyRun：四份产物是否互相印证（请求体取上一行的响应体） | 产物路径限定在服务端产物根目录，越界返回 400；根目录内产物缺失或互相矛盾返回 200 且 `verified=false`；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/research-artifacts` | 经复核的 Bar 回测权益、成交与事件轨迹，供交互式研究报告行级钻取 | 请求体为 `BacktestOutcome`；所有文件必须规范化到服务端 artifact root 内；复核不通过时只返回裁决与摘要、不返回明细；成功返回有界采样；400/404/409/503 沿用应用层类别映射；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/read-provider-report` | Provider Bar `ProviderBacktestReportV1` 版本化 reader | 请求体为 `ProviderBacktestOutcome`（`schemas/provider-backtest-result-v1.json`）；核验 manifest lineage、摘要与工件，所有引用必须规范化到服务端 artifact root 内；响应契约为 `schemas/provider-backtest-report-v1.json`；400/404/409/422/503 沿用应用层类别映射；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
 | `POST /app/read-provider-depth-report` | Provider Tick/OrderBook `ProviderDepthBacktestReportV1` 版本化 reader | 请求体为 `ProviderDepthBacktestOutcome`（`schemas/provider-depth-backtest-result-v1.json`）；重新读取并核验冻结 DepthFrame 身份，所有引用必须规范化到服务端 artifact root 内；响应契约为 `schemas/provider-depth-backtest-report-v1.json`；400/404/409/422/503 沿用应用层类别映射；429 `api_rate_limit_exceeded`；503 `api_rate_limit_backend_unavailable` |
@@ -599,13 +604,19 @@ Error"` 那一句，客户端按状态行分支会把"没权限"与"闸门坏了
 整份正文是一行，一条样本都解析不出来。Prometheus 抓取端在这种正文上解析失败**不报错**，后果不是
 看到错误，而是所有以这些指标为条件的告警永不触发——监控看着在跑，实际是瞎的。
 
-- API 自身固定四条样本：`qx_api_requests_total`、`qx_api_rate_limit_rejected_total`、
-  `qx_api_authentication_rejected_total`、`qx_api_command_enqueue_failures_total`，各带一行 `# HELP`
+- API 自身固定五条样本：`qx_api_requests_total`、`qx_api_rate_limit_rejected_total`、
+  `qx_api_authentication_rejected_total`、`qx_api_command_enqueue_failures_total`、
+  `qx_api_control_capacity_rejections_total`，各带一行 `# HELP`
   与一行 `# TYPE`。第四条是第十二遍 #189 补上的：`POST /control/commands` 在命令已经落盘后把队列写
   失败原先是 `let _ =` 丢掉的，进程内不留痕迹；现在它计入这条计数，并在 stderr 打一行
   `控制命令入队失败，等 worker 补入`。202 回执不变——控制面按 `pending()` 补入队列是 worker 每个
   tick 都做的工作，一次入队失败最坏是延迟一个 tick，不是丢命令。
-- `worker-metrics/<worker_id>.prom` 的聚合**追加**在这四条之后，不是替换；带 worker 标签的
+- 控制面固定四条样本：`qx_control_retired_commands_total`、`qx_control_retired_audit_records_total`、
+  `qx_control_pending_commands` 与 `qx_control_pending_commands_limit`。待执行命令硬上限为 4,096；满载时新命令
+  返回 `503 control_command_capacity_exceeded` 并增加 `qx_api_control_capacity_rejections_total`，命令执行到终态后释放名额。快照恢复会重建旧格式的待办计数，
+  并拒绝与审计状态不一致的新格式快照。Prometheus 在容量连续 5 分钟达到 80% 时预警，并对实际满载拒绝即时告警；升级前已超过上限的
+  快照仍保留既有命令，不会为了容量治理而静默丢弃待执行工作。
+- `worker-metrics/<worker_id>.prom` 的聚合**追加**在 API 与控制面样本之后，不是替换；带 worker 标签的
   `qx_worker_up{worker="<worker_id>"} 0|1` 是线上形态，不是标量。
 - 这一族指标现在有出口了，而且只在 paper 侧：`crates/qx-cli/src/pipeline_metrics_report.rs` 的
   `PipelineMetricsReporter` 是 `LiveEventPipeline::metrics()` 在生产里唯一的读者。它按 **worker 进程**

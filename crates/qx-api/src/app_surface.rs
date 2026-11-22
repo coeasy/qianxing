@@ -26,16 +26,16 @@
 
 use crate::ApiResponse;
 use qx_app::{
-    compare_runs, plan_algo_execution, plan_capital_allocation, plan_risk_parity, run_backtest,
-    run_depth_backtest, run_depth_experiment, run_experiment, run_multi_account_joint_backtest,
-    run_multi_leg_backtest, run_multi_leg_experiment, run_multi_market_backtest,
-    run_multi_market_depth_experiment, run_multi_market_experiment, validate_dataset,
-    verify_depth_run, verify_run, AlgoExecutionSpec, AppError, AppErrorCategory, BacktestOutcome,
-    BacktestSpec, CallerCapability, CapitalAllocationSpec, CompareRunsSpec, DatasetSpec,
-    DepthBacktestOutcome, DepthBacktestSpec, MultiAccountJointBacktestSpec, MultiLegBacktestSpec,
-    MultiMarketBacktestSpec, ProviderBacktestSpec, ProviderDepthBacktestSpec, RiskParitySpec,
-    RunContext, RunDepthExperimentSpec, RunExperimentSpec, RunMultiLegExperimentSpec,
-    RunMultiMarketDepthExperimentSpec, RunMultiMarketExperimentSpec,
+    compare_runs, plan_algo_execution, plan_capital_allocation, plan_risk_parity,
+    preflight_backtest_v1, run_backtest, run_depth_backtest, run_depth_experiment, run_experiment,
+    run_multi_account_joint_backtest, run_multi_leg_backtest, run_multi_leg_experiment,
+    run_multi_market_backtest, run_multi_market_depth_experiment, run_multi_market_experiment,
+    validate_dataset, AlgoExecutionSpec, AppError, AppErrorCategory, BacktestArtifacts,
+    BacktestOutcome, BacktestSpec, CallerCapability, CapitalAllocationSpec, CompareRunsSpec,
+    DatasetSpec, DepthBacktestOutcome, DepthBacktestSpec, MultiAccountJointBacktestSpec,
+    MultiLegBacktestSpec, MultiMarketBacktestSpec, ProviderBacktestSpec, ProviderDepthBacktestSpec,
+    RiskParitySpec, RunContext, RunDepthExperimentSpec, RunExperimentSpec,
+    RunMultiLegExperimentSpec, RunMultiMarketDepthExperimentSpec, RunMultiMarketExperimentSpec,
 };
 use qx_provider::ProviderRegistry;
 use std::path::PathBuf;
@@ -46,6 +46,9 @@ mod capabilities;
 mod multi_market_depth;
 #[path = "app_surface/research_artifacts.rs"]
 mod research_artifacts;
+#[cfg(test)]
+#[path = "app_surface/verify_tests.rs"]
+mod verify_tests;
 pub(crate) use multi_market_depth::multi_market_depth;
 #[path = "app_surface/multi_account.rs"]
 mod multi_account;
@@ -126,6 +129,25 @@ pub(crate) fn dataset(body: &str, paths: &AppPaths) -> ApiResponse {
     respond(
         validate_dataset(&spec, &context(&spec.dataset_id)).and_then(|verdict| verdict.to_json()),
     )
+}
+
+pub(crate) fn preflight_backtest(body: &str, paths: &AppPaths) -> ApiResponse {
+    let mut spec = match BacktestSpec::from_json(body) {
+        Ok(spec) => spec,
+        Err(error) => return respond(Err(error)),
+    };
+    if let Err(error) = resolve_input_path(&mut spec.bars_path, &paths.data_root) {
+        return respond(Err(error));
+    }
+    let result = preflight_backtest_v1(&spec, &context(&spec.run_id)).and_then(|result| {
+        serde_json::to_string(&result).map_err(|error| {
+            AppError::new(
+                AppErrorCategory::InternalInvariant,
+                format!("BacktestPreflightResultV1 JSON serialization failed: {error}"),
+            )
+        })
+    });
+    respond(result)
 }
 
 pub(crate) fn post_run_backtest(body: &str, paths: &AppPaths) -> ApiResponse {
@@ -240,12 +262,19 @@ pub(crate) fn provider_depth_backtest(
     respond(result)
 }
 
-pub(crate) fn post_verify_run(body: &str) -> ApiResponse {
-    let outcome = match BacktestOutcome::from_json(body) {
+pub(crate) fn post_verify_run(body: &str, paths: &AppPaths) -> ApiResponse {
+    let mut outcome = match BacktestOutcome::from_json(body) {
         Ok(outcome) => outcome,
         Err(error) => return respond(Err(error)),
     };
-    respond(verify_run(&outcome, &context(&outcome.run_id)).and_then(|result| result.to_json()))
+    let reader = match rooted_verification_reader(&mut outcome.artifacts, paths) {
+        Ok(reader) => reader,
+        Err(error) => return respond(Err(error)),
+    };
+    respond(
+        qx_app::verify_run_with_reader(&outcome, &context(&outcome.run_id), &reader)
+            .and_then(|result| result.to_json()),
+    )
 }
 
 pub(crate) fn post_verify_depth_run(body: &str, paths: &AppPaths) -> ApiResponse {
@@ -253,19 +282,31 @@ pub(crate) fn post_verify_depth_run(body: &str, paths: &AppPaths) -> ApiResponse
         Ok(outcome) => outcome,
         Err(error) => return respond(Err(error)),
     };
-    for artifact in [
-        &mut outcome.artifacts.run_manifest,
-        &mut outcome.artifacts.summary,
-        &mut outcome.artifacts.equity,
-        &mut outcome.artifacts.fills,
-    ] {
-        if let Err(error) = resolve_input_path(artifact, &paths.artifact_root) {
-            return respond(Err(error));
-        }
-    }
+    let reader = match rooted_verification_reader(&mut outcome.artifacts, paths) {
+        Ok(reader) => reader,
+        Err(error) => return respond(Err(error)),
+    };
     respond(
-        verify_depth_run(&outcome, &context(&outcome.run_id)).and_then(|result| result.to_json()),
+        qx_app::verify_depth_run_with_reader(&outcome, &context(&outcome.run_id), &reader)
+            .and_then(|result| result.to_json()),
     )
+}
+
+fn rooted_verification_reader(
+    artifacts: &mut BacktestArtifacts,
+    paths: &AppPaths,
+) -> Result<research_artifacts::RootedArtifactReader, AppError> {
+    for artifact in [
+        &mut artifacts.run_manifest,
+        &mut artifacts.summary,
+        &mut artifacts.equity,
+        &mut artifacts.fills,
+    ] {
+        resolve_input_path(artifact, &paths.artifact_root)?;
+    }
+    let root = std::fs::canonicalize(&paths.artifact_root)
+        .map_err(|error| AppError::from_io("解析 API 产物根目录", &error))?;
+    research_artifacts::RootedArtifactReader::new(root)
 }
 
 pub(crate) fn post_compare_runs(body: &str) -> ApiResponse {

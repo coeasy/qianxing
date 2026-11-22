@@ -4,13 +4,57 @@ from __future__ import annotations
 
 import json
 import math
+from http.client import HTTPException
 from ssl import SSLContext
 from typing import Any, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
-from .app import QianxingError, _APP_ERRORS, _encode_payload
+from .app import OutcomeUnknownError, QianxingError, _APP_ERRORS, _encode_payload
+
+MAX_HTTP_RESPONSE_BYTES = 16 * 1024 * 1024
+
+
+class _RejectRedirects(HTTPRedirectHandler):
+    def redirect_request(self, request, file_pointer, code, message, headers, new_url):
+        return None
+
+
+def _urlopen(request, *, timeout, context):
+    """Open one request without forwarding credentials or side effects to a redirect."""
+    return build_opener(_RejectRedirects(), HTTPSHandler(context=context)).open(request, timeout=timeout)
+
+
+def _read_bounded(response) -> bytes:
+    headers = getattr(response, "headers", None)
+    lengths = headers.get_all("Content-Length", []) if headers is not None else []
+    transfer_encodings = headers.get_all("Transfer-Encoding", []) if headers is not None else []
+    if len(lengths) > 1 or (lengths and transfer_encodings):
+        raise QianxingError("Rust API response has conflicting framing headers",
+                            payload={"category": "REMOTE_RESPONSE_INVALID"})
+    expected = None
+    if lengths:
+        raw = lengths[0].strip()
+        if not raw.isascii() or not raw.isdigit():
+            raise QianxingError("Rust API response has invalid Content-Length",
+                                payload={"category": "REMOTE_RESPONSE_INVALID"})
+        expected = int(raw)
+        if expected > MAX_HTTP_RESPONSE_BYTES:
+            raise QianxingError("Rust API response exceeds the 16 MiB limit",
+                                payload={"category": "REMOTE_RESPONSE_INVALID"})
+    body = response.read(MAX_HTTP_RESPONSE_BYTES + 1)
+    if len(body) > MAX_HTTP_RESPONSE_BYTES:
+        raise QianxingError("Rust API response exceeds the 16 MiB limit",
+                            payload={"category": "REMOTE_RESPONSE_INVALID"})
+    if expected is not None and len(body) != expected:
+        raise QianxingError("Rust API response body is incomplete",
+                            payload={"category": "REMOTE_RESPONSE_INVALID"})
+    return body
+
+
+def _reject_non_finite_json(value: str) -> None:
+    raise ValueError(f"non-finite JSON number: {value}")
 
 
 class _HttpJsonClient:
@@ -60,6 +104,18 @@ class _HttpJsonClient:
             raise QianxingError("Rust API returned a non-object JSON document")
         return value
 
+    def _request_mutation(
+        self, path: str, *, payload: Any, recovery_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Send once; report ambiguous failures without attempting automatic retries."""
+        try:
+            return self._request_json(path, method="POST", payload=payload)
+        except QianxingError as exc:
+            status = exc.payload.get("http_status")
+            if isinstance(status, int) and 400 <= status < 500 and status not in (408, 409):
+                raise
+            raise OutcomeUnknownError(path, recovery_id, exc) from exc
+
     def _request_json_value(
         self,
         path: str,
@@ -79,23 +135,34 @@ class _HttpJsonClient:
             method=method,
         )
         try:
-            with urlopen(request, timeout=self.timeout, context=self.ssl_context) as response:
-                body = response.read().decode("utf-8")
-                value = json.loads(body) if body else {}
+            with _urlopen(request, timeout=self.timeout, context=self.ssl_context) as response:
+                body = _read_bounded(response)
+                try:
+                    text = body.decode("utf-8")
+                    value = json.loads(text, parse_constant=_reject_non_finite_json) if text else {}
+                except (UnicodeError, ValueError) as exc:
+                    raise QianxingError("Rust API returned invalid UTF-8 or JSON",
+                                        payload={"category": "REMOTE_RESPONSE_INVALID"}) from exc
                 return value
         except HTTPError as exc:
-            raw = exc.read().decode("utf-8", errors="replace")
             try:
-                document = json.loads(raw)
+                raw = _read_bounded(exc).decode("utf-8", errors="replace")
+            except (OSError, HTTPException) as error:
+                raise QianxingError(f"Rust API error response could not be read: {error}",
+                                    payload={"category": "REMOTE_RESPONSE_INVALID"}) from error
+            try:
+                document = json.loads(raw, parse_constant=_reject_non_finite_json)
             except ValueError:
                 document = {"message": raw, "status": exc.code}
             if isinstance(document, dict):
+                document["http_status"] = exc.code
                 category = document.get("category")
-                if category in _APP_ERRORS:
+                if isinstance(category, str) and category in _APP_ERRORS:
                     raise _APP_ERRORS[category](document.get("message", raw), payload=document) from exc
                 message = document.get("message", document.get("error", raw))
                 raise QianxingError(str(message), payload=document) from exc
-            raise QianxingError(raw, payload={"status": exc.code}) from exc
-        except (URLError, TimeoutError, OSError) as exc:
-            raise QianxingError(f"Rust API request failed: {exc}") from exc
+            raise QianxingError(raw, payload={"http_status": exc.code}) from exc
+        except (URLError, TimeoutError, OSError, HTTPException) as exc:
+            raise QianxingError(f"Rust API request failed: {exc}",
+                                payload={"category": "TRANSPORT_ERROR"}) from exc
 

@@ -382,7 +382,7 @@ fn documented_statuses(cell: &str) -> Vec<u16> {
         .collect::<String>();
     for run in digits.split(' ').filter(|run| run.len() == 3) {
         if let Ok(code) = run.parse::<u16>() {
-            if code != 200 {
+            if (100..=599).contains(&code) && code != 200 {
                 codes.push(code);
             }
         }

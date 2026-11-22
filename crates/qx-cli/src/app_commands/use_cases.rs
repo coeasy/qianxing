@@ -82,6 +82,18 @@ pub(super) fn validate(spec_path: &Path) -> Result<String, AppError> {
     validate_dataset(&spec, &context(&spec.dataset_id))?.to_json()
 }
 
+pub(super) fn preflight_backtest(spec_path: &Path) -> Result<String, AppError> {
+    let spec = BacktestSpec::from_json(&read_document(spec_path)?)?;
+    qx_app::preflight_backtest_v1(&spec, &context(&spec.run_id)).and_then(|result| {
+        serde_json::to_string(&result).map_err(|error| {
+            AppError::new(
+                AppErrorCategory::InternalInvariant,
+                format!("BacktestPreflightResultV1 JSON serialization failed: {error}"),
+            )
+        })
+    })
+}
+
 pub(super) fn backtest(spec_path: &Path) -> Result<String, AppError> {
     let spec = BacktestSpec::from_json(&read_document(spec_path)?)?;
     run_backtest(&spec, &context(&spec.run_id))?.to_json()
