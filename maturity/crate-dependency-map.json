@@ -1,0 +1,5076 @@
+{
+  "schema_version": 1,
+  "source": {
+    "cargo_metadata": "cargo metadata --no-deps --locked --format-version 1",
+    "distribution_catalog": "maturity/package-distribution.json"
+  },
+  "workspace_package_count": 30,
+  "internal_edge_count": 156,
+  "packages": [
+    {
+      "name": "contract-tests",
+      "version": "0.4.1",
+      "manifest": "crates/contract-tests/Cargo.toml",
+      "owner": "release-contract-tests",
+      "role": "test-only",
+      "channel": "ci-only",
+      "cargo_publish": [],
+      "external_dependency_count": {
+        "normal": 0,
+        "build": 0,
+        "dev": 1
+      },
+      "external_dependencies": [
+        {
+          "kind": "dev",
+          "name": "serde_json",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "arbitrary_precision"
+          ]
+        }
+      ],
+      "direct_dependencies": [
+        {
+          "from": "contract-tests",
+          "to": "qx-adapter",
+          "kind": "dev",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "contract-tests",
+          "to": "qx-api",
+          "kind": "dev",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "contract-tests",
+          "to": "qx-control",
+          "kind": "dev",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "contract-tests",
+          "to": "qx-core",
+          "kind": "dev",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "contract-tests",
+          "to": "qx-execution",
+          "kind": "dev",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "contract-tests",
+          "to": "qx-guanxing",
+          "kind": "dev",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "contract-tests",
+          "to": "qx-risk",
+          "kind": "dev",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "contract-tests",
+          "to": "qx-runtime",
+          "kind": "dev",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "contract-tests",
+          "to": "qx-sdk-http",
+          "kind": "dev",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "contract-tests",
+          "to": "qx-zhenlu",
+          "kind": "dev",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": []
+    },
+    {
+      "name": "qx-adapter",
+      "version": "0.4.1",
+      "manifest": "crates/qx-adapter/Cargo.toml",
+      "owner": "venue-provider-adapters",
+      "role": "internal",
+      "channel": "workspace-only",
+      "cargo_publish": [],
+      "external_dependency_count": {
+        "normal": 6,
+        "build": 0,
+        "dev": 0
+      },
+      "external_dependencies": [
+        {
+          "kind": "normal",
+          "name": "ring",
+          "requirement": "^0.17.14",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": []
+        },
+        {
+          "kind": "normal",
+          "name": "rustls",
+          "requirement": "^0.23.43",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "ring",
+            "std"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "rustls-pki-types",
+          "requirement": "^1.15.1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": []
+        },
+        {
+          "kind": "normal",
+          "name": "serde",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "derive"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde_json",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "arbitrary_precision"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "webpki-roots",
+          "requirement": "^1.0.9",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_dependencies": [
+        {
+          "from": "qx-adapter",
+          "to": "qx-runtime",
+          "kind": "dev",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-adapter",
+          "to": "qx-core",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-adapter",
+          "to": "qx-genglu",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-adapter",
+          "to": "qx-guanxing",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-adapter",
+          "to": "qx-process-io",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-adapter",
+          "to": "qx-provider",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-adapter",
+          "to": "qx-zhenlu",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": [
+        {
+          "package": "contract-tests",
+          "kind": "dev",
+          "target": null
+        },
+        {
+          "package": "qx-cli",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-sdk-http",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-service",
+          "kind": "normal",
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "qx-api",
+      "version": "0.4.1",
+      "manifest": "crates/qx-api/Cargo.toml",
+      "owner": "http-query-control",
+      "role": "internal",
+      "channel": "workspace-only",
+      "cargo_publish": [],
+      "external_dependency_count": {
+        "normal": 4,
+        "build": 0,
+        "dev": 0
+      },
+      "external_dependencies": [
+        {
+          "kind": "normal",
+          "name": "cap-std",
+          "requirement": "^4.0.3",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": []
+        },
+        {
+          "kind": "normal",
+          "name": "rustls",
+          "requirement": "^0.23.43",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "ring",
+            "std"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "derive"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde_json",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "arbitrary_precision"
+          ]
+        }
+      ],
+      "direct_dependencies": [
+        {
+          "from": "qx-api",
+          "to": "qx-data",
+          "kind": "dev",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-api",
+          "to": "qx-guanxing",
+          "kind": "dev",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-api",
+          "to": "qx-app",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-api",
+          "to": "qx-control",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-api",
+          "to": "qx-core",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-api",
+          "to": "qx-data",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-api",
+          "to": "qx-datastruct",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-api",
+          "to": "qx-protocol",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-api",
+          "to": "qx-provider",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-api",
+          "to": "qx-runtime",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-api",
+          "to": "qx-scheduler",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-api",
+          "to": "qx-spec",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-api",
+          "to": "qx-storage",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-api",
+          "to": "qx-strategy",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-api",
+          "to": "qx-xingban",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": [
+        {
+          "package": "contract-tests",
+          "kind": "dev",
+          "target": null
+        },
+        {
+          "package": "qx-cli",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-service",
+          "kind": "normal",
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "qx-app",
+      "version": "0.4.1",
+      "manifest": "crates/qx-app/Cargo.toml",
+      "owner": "application-use-cases",
+      "role": "sdk-dependency",
+      "channel": "crates-io",
+      "cargo_publish": null,
+      "external_dependency_count": {
+        "normal": 2,
+        "build": 0,
+        "dev": 0
+      },
+      "external_dependencies": [
+        {
+          "kind": "normal",
+          "name": "serde",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "derive"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde_json",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "arbitrary_precision"
+          ]
+        }
+      ],
+      "direct_dependencies": [
+        {
+          "from": "qx-app",
+          "to": "qx-control",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-app",
+          "to": "qx-core",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-app",
+          "to": "qx-data",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-app",
+          "to": "qx-datastruct",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-app",
+          "to": "qx-guanxing",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-app",
+          "to": "qx-provider",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-app",
+          "to": "qx-risk",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-app",
+          "to": "qx-spec",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-app",
+          "to": "qx-strategy",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-app",
+          "to": "qx-xingban",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-app",
+          "to": "qx-zhenlu",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": [
+        {
+          "package": "qx-api",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-cli",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-python",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-sdk",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-service",
+          "kind": "normal",
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "qx-cli",
+      "version": "0.4.1",
+      "manifest": "crates/qx-cli/Cargo.toml",
+      "owner": "product-cli",
+      "role": "cli",
+      "channel": "github-release",
+      "cargo_publish": [],
+      "external_dependency_count": {
+        "normal": 5,
+        "build": 1,
+        "dev": 1
+      },
+      "external_dependencies": [
+        {
+          "kind": "build",
+          "name": "sha2",
+          "requirement": "^0.10",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": []
+        },
+        {
+          "kind": "dev",
+          "name": "criterion",
+          "requirement": "^0.8.2",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": []
+        },
+        {
+          "kind": "normal",
+          "name": "clap",
+          "requirement": "^4.6.7",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "derive"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "derive"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde_json",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "arbitrary_precision"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "sha2",
+          "requirement": "^0.10",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": []
+        },
+        {
+          "kind": "normal",
+          "name": "zip",
+          "requirement": "=2.4.2",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_dependencies": [
+        {
+          "from": "qx-cli",
+          "to": "qx-adapter",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-cli",
+          "to": "qx-api",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-cli",
+          "to": "qx-app",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-cli",
+          "to": "qx-control",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-cli",
+          "to": "qx-core",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-cli",
+          "to": "qx-data",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-cli",
+          "to": "qx-datastruct",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-cli",
+          "to": "qx-execution",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-cli",
+          "to": "qx-factor",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-cli",
+          "to": "qx-genglu",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-cli",
+          "to": "qx-guanxing",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-cli",
+          "to": "qx-orchestrator",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-cli",
+          "to": "qx-plugin",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-cli",
+          "to": "qx-protocol",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-cli",
+          "to": "qx-provider",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-cli",
+          "to": "qx-risk",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-cli",
+          "to": "qx-runtime",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-cli",
+          "to": "qx-scheduler",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-cli",
+          "to": "qx-service",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-cli",
+          "to": "qx-spec",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-cli",
+          "to": "qx-storage",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-cli",
+          "to": "qx-strategy",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-cli",
+          "to": "qx-xingban",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-cli",
+          "to": "qx-zhenlu",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": []
+    },
+    {
+      "name": "qx-control",
+      "version": "0.4.1",
+      "manifest": "crates/qx-control/Cargo.toml",
+      "owner": "control-plane",
+      "role": "sdk-dependency",
+      "channel": "crates-io",
+      "cargo_publish": null,
+      "external_dependency_count": {
+        "normal": 2,
+        "build": 0,
+        "dev": 0
+      },
+      "external_dependencies": [
+        {
+          "kind": "normal",
+          "name": "serde",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "derive"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde_json",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "arbitrary_precision"
+          ]
+        }
+      ],
+      "direct_dependencies": [
+        {
+          "from": "qx-control",
+          "to": "qx-core",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": [
+        {
+          "package": "contract-tests",
+          "kind": "dev",
+          "target": null
+        },
+        {
+          "package": "qx-api",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-app",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-cli",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-execution",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-orchestrator",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-runtime",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-service",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-storage",
+          "kind": "normal",
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "qx-core",
+      "version": "0.4.1",
+      "manifest": "crates/qx-core/Cargo.toml",
+      "owner": "domain-kernel",
+      "role": "sdk-dependency",
+      "channel": "crates-io",
+      "cargo_publish": null,
+      "external_dependency_count": {
+        "normal": 2,
+        "build": 0,
+        "dev": 1
+      },
+      "external_dependencies": [
+        {
+          "kind": "dev",
+          "name": "criterion",
+          "requirement": "^0.8.2",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": []
+        },
+        {
+          "kind": "normal",
+          "name": "serde",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "derive"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde_json",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "arbitrary_precision"
+          ]
+        }
+      ],
+      "direct_dependencies": [],
+      "direct_consumers": [
+        {
+          "package": "contract-tests",
+          "kind": "dev",
+          "target": null
+        },
+        {
+          "package": "qx-adapter",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-api",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-app",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-cli",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-control",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-data",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-datastruct",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-execution",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-factor",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-genglu",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-guanxing",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-orchestrator",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-plugin",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-protocol",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-provider",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-python",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-risk",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-runtime",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-scheduler",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-service",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-spec",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-storage",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-strategy",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-xingban",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-zhenlu",
+          "kind": "normal",
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "qx-data",
+      "version": "0.4.1",
+      "manifest": "crates/qx-data/Cargo.toml",
+      "owner": "data-platform",
+      "role": "sdk-dependency",
+      "channel": "crates-io",
+      "cargo_publish": null,
+      "external_dependency_count": {
+        "normal": 3,
+        "build": 0,
+        "dev": 0
+      },
+      "external_dependencies": [
+        {
+          "kind": "normal",
+          "name": "ring",
+          "requirement": "^0.17.14",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": []
+        },
+        {
+          "kind": "normal",
+          "name": "serde",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "derive"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde_json",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "arbitrary_precision"
+          ]
+        }
+      ],
+      "direct_dependencies": [
+        {
+          "from": "qx-data",
+          "to": "qx-core",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-data",
+          "to": "qx-datastruct",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": [
+        {
+          "package": "qx-api",
+          "kind": "dev",
+          "target": null
+        },
+        {
+          "package": "qx-api",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-app",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-cli",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-provider",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-python",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-runtime",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-service",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-spec",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-xingban",
+          "kind": "normal",
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "qx-datastruct",
+      "version": "0.4.1",
+      "manifest": "crates/qx-datastruct/Cargo.toml",
+      "owner": "market-data-structures",
+      "role": "sdk-dependency",
+      "channel": "crates-io",
+      "cargo_publish": null,
+      "external_dependency_count": {
+        "normal": 2,
+        "build": 0,
+        "dev": 0
+      },
+      "external_dependencies": [
+        {
+          "kind": "normal",
+          "name": "serde",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "derive"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde_json",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "arbitrary_precision"
+          ]
+        }
+      ],
+      "direct_dependencies": [
+        {
+          "from": "qx-datastruct",
+          "to": "qx-core",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-datastruct",
+          "to": "qx-guanxing",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": [
+        {
+          "package": "qx-api",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-app",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-cli",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-data",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-provider",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-python",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-service",
+          "kind": "normal",
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "qx-execution",
+      "version": "0.4.1",
+      "manifest": "crates/qx-execution/Cargo.toml",
+      "owner": "execution-ports",
+      "role": "sdk-dependency",
+      "channel": "crates-io",
+      "cargo_publish": null,
+      "external_dependency_count": {
+        "normal": 2,
+        "build": 0,
+        "dev": 0
+      },
+      "external_dependencies": [
+        {
+          "kind": "normal",
+          "name": "serde",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "derive"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde_json",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "arbitrary_precision"
+          ]
+        }
+      ],
+      "direct_dependencies": [
+        {
+          "from": "qx-execution",
+          "to": "qx-control",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-execution",
+          "to": "qx-core",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-execution",
+          "to": "qx-guanxing",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-execution",
+          "to": "qx-risk",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-execution",
+          "to": "qx-zhenlu",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": [
+        {
+          "package": "contract-tests",
+          "kind": "dev",
+          "target": null
+        },
+        {
+          "package": "qx-cli",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-runtime",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-sdk",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-service",
+          "kind": "normal",
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "qx-factor",
+      "version": "0.4.1",
+      "manifest": "crates/qx-factor/Cargo.toml",
+      "owner": "factor-research",
+      "role": "internal",
+      "channel": "workspace-only",
+      "cargo_publish": [],
+      "external_dependency_count": {
+        "normal": 2,
+        "build": 0,
+        "dev": 0
+      },
+      "external_dependencies": [
+        {
+          "kind": "normal",
+          "name": "serde",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "derive"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde_json",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "arbitrary_precision"
+          ]
+        }
+      ],
+      "direct_dependencies": [
+        {
+          "from": "qx-factor",
+          "to": "qx-core",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-factor",
+          "to": "qx-guanxing",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": [
+        {
+          "package": "qx-cli",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-runtime",
+          "kind": "normal",
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "qx-genglu",
+      "version": "0.4.1",
+      "manifest": "crates/qx-genglu/Cargo.toml",
+      "owner": "reconciliation",
+      "role": "internal",
+      "channel": "workspace-only",
+      "cargo_publish": [],
+      "external_dependency_count": {
+        "normal": 0,
+        "build": 0,
+        "dev": 0
+      },
+      "external_dependencies": [],
+      "direct_dependencies": [
+        {
+          "from": "qx-genglu",
+          "to": "qx-core",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": [
+        {
+          "package": "qx-adapter",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-cli",
+          "kind": "normal",
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "qx-guanxing",
+      "version": "0.4.1",
+      "manifest": "crates/qx-guanxing/Cargo.toml",
+      "owner": "market-data-semantics",
+      "role": "sdk-dependency",
+      "channel": "crates-io",
+      "cargo_publish": null,
+      "external_dependency_count": {
+        "normal": 2,
+        "build": 0,
+        "dev": 0
+      },
+      "external_dependencies": [
+        {
+          "kind": "normal",
+          "name": "serde",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "derive"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde_json",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "arbitrary_precision"
+          ]
+        }
+      ],
+      "direct_dependencies": [
+        {
+          "from": "qx-guanxing",
+          "to": "qx-core",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": [
+        {
+          "package": "contract-tests",
+          "kind": "dev",
+          "target": null
+        },
+        {
+          "package": "qx-adapter",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-api",
+          "kind": "dev",
+          "target": null
+        },
+        {
+          "package": "qx-app",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-cli",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-datastruct",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-execution",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-factor",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-provider",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-runtime",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-service",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-xingban",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-zhenlu",
+          "kind": "normal",
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "qx-orchestrator",
+      "version": "0.4.1",
+      "manifest": "crates/qx-orchestrator/Cargo.toml",
+      "owner": "process-orchestration",
+      "role": "internal",
+      "channel": "workspace-only",
+      "cargo_publish": [],
+      "external_dependency_count": {
+        "normal": 1,
+        "build": 0,
+        "dev": 0
+      },
+      "external_dependencies": [
+        {
+          "kind": "normal",
+          "name": "serde_json",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "arbitrary_precision"
+          ]
+        }
+      ],
+      "direct_dependencies": [
+        {
+          "from": "qx-orchestrator",
+          "to": "qx-control",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-orchestrator",
+          "to": "qx-core",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-orchestrator",
+          "to": "qx-process-io",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-orchestrator",
+          "to": "qx-runtime",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-orchestrator",
+          "to": "qx-spec",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-orchestrator",
+          "to": "qx-strategy",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": [
+        {
+          "package": "qx-cli",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-service",
+          "kind": "normal",
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "qx-plugin",
+      "version": "0.4.1",
+      "manifest": "crates/qx-plugin/Cargo.toml",
+      "owner": "extension-manifests",
+      "role": "internal",
+      "channel": "workspace-only",
+      "cargo_publish": [],
+      "external_dependency_count": {
+        "normal": 3,
+        "build": 0,
+        "dev": 0
+      },
+      "external_dependencies": [
+        {
+          "kind": "normal",
+          "name": "ring",
+          "requirement": "^0.17.14",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": []
+        },
+        {
+          "kind": "normal",
+          "name": "serde",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "derive"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde_json",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "arbitrary_precision"
+          ]
+        }
+      ],
+      "direct_dependencies": [
+        {
+          "from": "qx-plugin",
+          "to": "qx-core",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": [
+        {
+          "package": "qx-cli",
+          "kind": "normal",
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "qx-process-io",
+      "version": "0.4.1",
+      "manifest": "crates/qx-process-io/Cargo.toml",
+      "owner": "process-io",
+      "role": "internal",
+      "channel": "workspace-only",
+      "cargo_publish": [],
+      "external_dependency_count": {
+        "normal": 0,
+        "build": 0,
+        "dev": 0
+      },
+      "external_dependencies": [],
+      "direct_dependencies": [],
+      "direct_consumers": [
+        {
+          "package": "qx-adapter",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-orchestrator",
+          "kind": "normal",
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "qx-protocol",
+      "version": "0.4.1",
+      "manifest": "crates/qx-protocol/Cargo.toml",
+      "owner": "account-protocol",
+      "role": "internal",
+      "channel": "workspace-only",
+      "cargo_publish": [],
+      "external_dependency_count": {
+        "normal": 2,
+        "build": 0,
+        "dev": 0
+      },
+      "external_dependencies": [
+        {
+          "kind": "normal",
+          "name": "serde",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "derive"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde_json",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "arbitrary_precision"
+          ]
+        }
+      ],
+      "direct_dependencies": [
+        {
+          "from": "qx-protocol",
+          "to": "qx-core",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": [
+        {
+          "package": "qx-api",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-cli",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-service",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-storage",
+          "kind": "normal",
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "qx-provider",
+      "version": "0.4.1",
+      "manifest": "crates/qx-provider/Cargo.toml",
+      "owner": "data-providers",
+      "role": "sdk-dependency",
+      "channel": "crates-io",
+      "cargo_publish": null,
+      "external_dependency_count": {
+        "normal": 2,
+        "build": 0,
+        "dev": 0
+      },
+      "external_dependencies": [
+        {
+          "kind": "normal",
+          "name": "serde",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "derive"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde_json",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "arbitrary_precision"
+          ]
+        }
+      ],
+      "direct_dependencies": [
+        {
+          "from": "qx-provider",
+          "to": "qx-core",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-provider",
+          "to": "qx-data",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-provider",
+          "to": "qx-datastruct",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-provider",
+          "to": "qx-guanxing",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": [
+        {
+          "package": "qx-adapter",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-api",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-app",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-cli",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-python",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-sdk",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-service",
+          "kind": "normal",
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "qx-python",
+      "version": "0.4.1",
+      "manifest": "crates/qx-python/Cargo.toml",
+      "owner": "python-native-extension",
+      "role": "python-extension",
+      "channel": "pypi-wheel",
+      "cargo_publish": [],
+      "external_dependency_count": {
+        "normal": 3,
+        "build": 2,
+        "dev": 0
+      },
+      "external_dependencies": [
+        {
+          "kind": "build",
+          "name": "pyo3-build-config",
+          "requirement": "^0.29.2",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": []
+        },
+        {
+          "kind": "build",
+          "name": "sha2",
+          "requirement": "^0.10",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": []
+        },
+        {
+          "kind": "normal",
+          "name": "pyo3",
+          "requirement": "^0.29.2",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "abi3-py310"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "derive"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde_json",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "arbitrary_precision"
+          ]
+        }
+      ],
+      "direct_dependencies": [
+        {
+          "from": "qx-python",
+          "to": "qx-app",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-python",
+          "to": "qx-core",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-python",
+          "to": "qx-data",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-python",
+          "to": "qx-datastruct",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-python",
+          "to": "qx-provider",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-python",
+          "to": "qx-runtime",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-python",
+          "to": "qx-spec",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-python",
+          "to": "qx-strategy",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-python",
+          "to": "qx-xingban",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": []
+    },
+    {
+      "name": "qx-risk",
+      "version": "0.4.1",
+      "manifest": "crates/qx-risk/Cargo.toml",
+      "owner": "risk-policy",
+      "role": "sdk-dependency",
+      "channel": "crates-io",
+      "cargo_publish": null,
+      "external_dependency_count": {
+        "normal": 1,
+        "build": 0,
+        "dev": 0
+      },
+      "external_dependencies": [
+        {
+          "kind": "normal",
+          "name": "serde",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "derive"
+          ]
+        }
+      ],
+      "direct_dependencies": [
+        {
+          "from": "qx-risk",
+          "to": "qx-core",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": [
+        {
+          "package": "contract-tests",
+          "kind": "dev",
+          "target": null
+        },
+        {
+          "package": "qx-app",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-cli",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-execution",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-service",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-xingban",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-zhenlu",
+          "kind": "normal",
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "qx-runtime",
+      "version": "0.4.1",
+      "manifest": "crates/qx-runtime/Cargo.toml",
+      "owner": "runtime-topology",
+      "role": "internal",
+      "channel": "workspace-only",
+      "cargo_publish": [],
+      "external_dependency_count": {
+        "normal": 3,
+        "build": 0,
+        "dev": 0
+      },
+      "external_dependencies": [
+        {
+          "kind": "normal",
+          "name": "libc",
+          "requirement": "^0.2",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": []
+        },
+        {
+          "kind": "normal",
+          "name": "serde",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "derive"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde_json",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "arbitrary_precision"
+          ]
+        }
+      ],
+      "direct_dependencies": [
+        {
+          "from": "qx-runtime",
+          "to": "qx-control",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-runtime",
+          "to": "qx-core",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-runtime",
+          "to": "qx-data",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-runtime",
+          "to": "qx-execution",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-runtime",
+          "to": "qx-factor",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-runtime",
+          "to": "qx-guanxing",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-runtime",
+          "to": "qx-spec",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-runtime",
+          "to": "qx-storage",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-runtime",
+          "to": "qx-strategy",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-runtime",
+          "to": "qx-zhenlu",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": [
+        {
+          "package": "contract-tests",
+          "kind": "dev",
+          "target": null
+        },
+        {
+          "package": "qx-adapter",
+          "kind": "dev",
+          "target": null
+        },
+        {
+          "package": "qx-api",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-cli",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-orchestrator",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-python",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-service",
+          "kind": "normal",
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "qx-scheduler",
+      "version": "0.4.1",
+      "manifest": "crates/qx-scheduler/Cargo.toml",
+      "owner": "scheduling",
+      "role": "internal",
+      "channel": "workspace-only",
+      "cargo_publish": [],
+      "external_dependency_count": {
+        "normal": 2,
+        "build": 0,
+        "dev": 1
+      },
+      "external_dependencies": [
+        {
+          "kind": "dev",
+          "name": "criterion",
+          "requirement": "^0.8.2",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": []
+        },
+        {
+          "kind": "normal",
+          "name": "serde",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "derive"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde_json",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "arbitrary_precision"
+          ]
+        }
+      ],
+      "direct_dependencies": [
+        {
+          "from": "qx-scheduler",
+          "to": "qx-core",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": [
+        {
+          "package": "qx-api",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-cli",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-service",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-storage",
+          "kind": "normal",
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "qx-sdk",
+      "version": "0.4.1",
+      "manifest": "crates/qx-sdk/Cargo.toml",
+      "owner": "public-sdk-api",
+      "role": "sdk-facade",
+      "channel": "crates-io",
+      "cargo_publish": null,
+      "external_dependency_count": {
+        "normal": 2,
+        "build": 0,
+        "dev": 0
+      },
+      "external_dependencies": [
+        {
+          "kind": "normal",
+          "name": "serde",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "derive"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde_json",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "arbitrary_precision"
+          ]
+        }
+      ],
+      "direct_dependencies": [
+        {
+          "from": "qx-sdk",
+          "to": "qx-app",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-sdk",
+          "to": "qx-execution",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-sdk",
+          "to": "qx-provider",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-sdk",
+          "to": "qx-strategy",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": [
+        {
+          "package": "qx-sdk-http",
+          "kind": "normal",
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "qx-sdk-http",
+      "version": "0.4.1",
+      "manifest": "crates/qx-sdk-http/Cargo.toml",
+      "owner": "rust-sdk-http-transport",
+      "role": "internal",
+      "channel": "workspace-only",
+      "cargo_publish": [],
+      "external_dependency_count": {
+        "normal": 0,
+        "build": 0,
+        "dev": 0
+      },
+      "external_dependencies": [],
+      "direct_dependencies": [
+        {
+          "from": "qx-sdk-http",
+          "to": "qx-adapter",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-sdk-http",
+          "to": "qx-sdk",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": [
+        {
+          "package": "contract-tests",
+          "kind": "dev",
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "qx-service",
+      "version": "0.4.1",
+      "manifest": "crates/qx-service/Cargo.toml",
+      "owner": "worker-service-assembly",
+      "role": "internal",
+      "channel": "workspace-only",
+      "cargo_publish": [],
+      "external_dependency_count": {
+        "normal": 2,
+        "build": 0,
+        "dev": 0
+      },
+      "external_dependencies": [
+        {
+          "kind": "normal",
+          "name": "serde",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "derive"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde_json",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "arbitrary_precision"
+          ]
+        }
+      ],
+      "direct_dependencies": [
+        {
+          "from": "qx-service",
+          "to": "qx-adapter",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-service",
+          "to": "qx-api",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-service",
+          "to": "qx-app",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-service",
+          "to": "qx-control",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-service",
+          "to": "qx-core",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-service",
+          "to": "qx-data",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-service",
+          "to": "qx-datastruct",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-service",
+          "to": "qx-execution",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-service",
+          "to": "qx-guanxing",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-service",
+          "to": "qx-orchestrator",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-service",
+          "to": "qx-protocol",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-service",
+          "to": "qx-provider",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-service",
+          "to": "qx-risk",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-service",
+          "to": "qx-runtime",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-service",
+          "to": "qx-scheduler",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-service",
+          "to": "qx-spec",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-service",
+          "to": "qx-storage",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-service",
+          "to": "qx-strategy",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-service",
+          "to": "qx-xingban",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-service",
+          "to": "qx-zhenlu",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": [
+        {
+          "package": "qx-cli",
+          "kind": "normal",
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "qx-spec",
+      "version": "0.4.1",
+      "manifest": "crates/qx-spec/Cargo.toml",
+      "owner": "strategy-spec",
+      "role": "sdk-dependency",
+      "channel": "crates-io",
+      "cargo_publish": null,
+      "external_dependency_count": {
+        "normal": 2,
+        "build": 0,
+        "dev": 0
+      },
+      "external_dependencies": [
+        {
+          "kind": "normal",
+          "name": "serde",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "derive"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde_json",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "arbitrary_precision"
+          ]
+        }
+      ],
+      "direct_dependencies": [
+        {
+          "from": "qx-spec",
+          "to": "qx-core",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-spec",
+          "to": "qx-data",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": [
+        {
+          "package": "qx-api",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-app",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-cli",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-orchestrator",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-python",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-runtime",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-service",
+          "kind": "normal",
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "qx-storage",
+      "version": "0.4.1",
+      "manifest": "crates/qx-storage/Cargo.toml",
+      "owner": "persistence",
+      "role": "internal",
+      "channel": "workspace-only",
+      "cargo_publish": [],
+      "external_dependency_count": {
+        "normal": 11,
+        "build": 0,
+        "dev": 0
+      },
+      "external_dependencies": [
+        {
+          "kind": "normal",
+          "name": "async-nats",
+          "requirement": "^0.50.0",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": true,
+          "features": [
+            "jetstream"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "futures-util",
+          "requirement": "^0.3",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": true,
+          "features": [
+            "sink",
+            "std"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "native-tls",
+          "requirement": "^0.2.14",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": true,
+          "features": []
+        },
+        {
+          "kind": "normal",
+          "name": "postgres",
+          "requirement": "^0.19.10",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": true,
+          "features": []
+        },
+        {
+          "kind": "normal",
+          "name": "postgres-native-tls",
+          "requirement": "^0.5.0",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": true,
+          "features": []
+        },
+        {
+          "kind": "normal",
+          "name": "rusqlite",
+          "requirement": "^0.32.1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": true,
+          "features": [
+            "bundled"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "derive"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde_json",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "arbitrary_precision"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "sha2",
+          "requirement": "^0.10",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": []
+        },
+        {
+          "kind": "normal",
+          "name": "tokio",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": true,
+          "features": [
+            "net",
+            "rt-multi-thread",
+            "time"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "tokio-postgres",
+          "requirement": "^0.7.18",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": true,
+          "features": []
+        }
+      ],
+      "direct_dependencies": [
+        {
+          "from": "qx-storage",
+          "to": "qx-control",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-storage",
+          "to": "qx-core",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-storage",
+          "to": "qx-protocol",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-storage",
+          "to": "qx-scheduler",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": [
+        {
+          "package": "qx-api",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-cli",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-runtime",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-service",
+          "kind": "normal",
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "qx-strategy",
+      "version": "0.4.1",
+      "manifest": "crates/qx-strategy/Cargo.toml",
+      "owner": "strategy-api",
+      "role": "sdk-dependency",
+      "channel": "crates-io",
+      "cargo_publish": null,
+      "external_dependency_count": {
+        "normal": 5,
+        "build": 0,
+        "dev": 0
+      },
+      "external_dependencies": [
+        {
+          "kind": "normal",
+          "name": "libloading",
+          "requirement": "^0.8.9",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": []
+        },
+        {
+          "kind": "normal",
+          "name": "memmap2",
+          "requirement": "^0.9.9",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": []
+        },
+        {
+          "kind": "normal",
+          "name": "ring",
+          "requirement": "^0.17.14",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": []
+        },
+        {
+          "kind": "normal",
+          "name": "serde",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "derive"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde_json",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "arbitrary_precision"
+          ]
+        }
+      ],
+      "direct_dependencies": [
+        {
+          "from": "qx-strategy",
+          "to": "qx-core",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": [
+        {
+          "package": "qx-api",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-app",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-cli",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-orchestrator",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-python",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-runtime",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-sdk",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-service",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-xingban",
+          "kind": "normal",
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "qx-xingban",
+      "version": "0.4.1",
+      "manifest": "crates/qx-xingban/Cargo.toml",
+      "owner": "backtest-engine",
+      "role": "sdk-dependency",
+      "channel": "crates-io",
+      "cargo_publish": null,
+      "external_dependency_count": {
+        "normal": 2,
+        "build": 0,
+        "dev": 1
+      },
+      "external_dependencies": [
+        {
+          "kind": "dev",
+          "name": "criterion",
+          "requirement": "^0.8.2",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": []
+        },
+        {
+          "kind": "normal",
+          "name": "serde",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "derive"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde_json",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "arbitrary_precision"
+          ]
+        }
+      ],
+      "direct_dependencies": [
+        {
+          "from": "qx-xingban",
+          "to": "qx-core",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-xingban",
+          "to": "qx-data",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-xingban",
+          "to": "qx-guanxing",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-xingban",
+          "to": "qx-risk",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-xingban",
+          "to": "qx-strategy",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-xingban",
+          "to": "qx-zhenlu",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": [
+        {
+          "package": "qx-api",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-app",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-cli",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-python",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-service",
+          "kind": "normal",
+          "target": null
+        }
+      ]
+    },
+    {
+      "name": "qx-zhenlu",
+      "version": "0.4.1",
+      "manifest": "crates/qx-zhenlu/Cargo.toml",
+      "owner": "execution-routing",
+      "role": "sdk-dependency",
+      "channel": "crates-io",
+      "cargo_publish": null,
+      "external_dependency_count": {
+        "normal": 2,
+        "build": 0,
+        "dev": 1
+      },
+      "external_dependencies": [
+        {
+          "kind": "dev",
+          "name": "criterion",
+          "requirement": "^0.8.2",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": []
+        },
+        {
+          "kind": "normal",
+          "name": "serde",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "derive"
+          ]
+        },
+        {
+          "kind": "normal",
+          "name": "serde_json",
+          "requirement": "^1",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": [
+            "arbitrary_precision"
+          ]
+        }
+      ],
+      "direct_dependencies": [
+        {
+          "from": "qx-zhenlu",
+          "to": "qx-core",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-zhenlu",
+          "to": "qx-guanxing",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        },
+        {
+          "from": "qx-zhenlu",
+          "to": "qx-risk",
+          "kind": "normal",
+          "target": null,
+          "alias": null,
+          "optional": false,
+          "features": []
+        }
+      ],
+      "direct_consumers": [
+        {
+          "package": "contract-tests",
+          "kind": "dev",
+          "target": null
+        },
+        {
+          "package": "qx-adapter",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-app",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-cli",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-execution",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-runtime",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-service",
+          "kind": "normal",
+          "target": null
+        },
+        {
+          "package": "qx-xingban",
+          "kind": "normal",
+          "target": null
+        }
+      ]
+    }
+  ],
+  "internal_edges": [
+    {
+      "from": "contract-tests",
+      "to": "qx-adapter",
+      "kind": "dev",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "contract-tests",
+      "to": "qx-api",
+      "kind": "dev",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "contract-tests",
+      "to": "qx-control",
+      "kind": "dev",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "contract-tests",
+      "to": "qx-core",
+      "kind": "dev",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "contract-tests",
+      "to": "qx-execution",
+      "kind": "dev",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "contract-tests",
+      "to": "qx-guanxing",
+      "kind": "dev",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "contract-tests",
+      "to": "qx-risk",
+      "kind": "dev",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "contract-tests",
+      "to": "qx-runtime",
+      "kind": "dev",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "contract-tests",
+      "to": "qx-sdk-http",
+      "kind": "dev",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "contract-tests",
+      "to": "qx-zhenlu",
+      "kind": "dev",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-adapter",
+      "to": "qx-runtime",
+      "kind": "dev",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-adapter",
+      "to": "qx-core",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-adapter",
+      "to": "qx-genglu",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-adapter",
+      "to": "qx-guanxing",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-adapter",
+      "to": "qx-process-io",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-adapter",
+      "to": "qx-provider",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-adapter",
+      "to": "qx-zhenlu",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-api",
+      "to": "qx-data",
+      "kind": "dev",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-api",
+      "to": "qx-guanxing",
+      "kind": "dev",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-api",
+      "to": "qx-app",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-api",
+      "to": "qx-control",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-api",
+      "to": "qx-core",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-api",
+      "to": "qx-data",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-api",
+      "to": "qx-datastruct",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-api",
+      "to": "qx-protocol",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-api",
+      "to": "qx-provider",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-api",
+      "to": "qx-runtime",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-api",
+      "to": "qx-scheduler",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-api",
+      "to": "qx-spec",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-api",
+      "to": "qx-storage",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-api",
+      "to": "qx-strategy",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-api",
+      "to": "qx-xingban",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-app",
+      "to": "qx-control",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-app",
+      "to": "qx-core",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-app",
+      "to": "qx-data",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-app",
+      "to": "qx-datastruct",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-app",
+      "to": "qx-guanxing",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-app",
+      "to": "qx-provider",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-app",
+      "to": "qx-risk",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-app",
+      "to": "qx-spec",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-app",
+      "to": "qx-strategy",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-app",
+      "to": "qx-xingban",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-app",
+      "to": "qx-zhenlu",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-cli",
+      "to": "qx-adapter",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-cli",
+      "to": "qx-api",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-cli",
+      "to": "qx-app",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-cli",
+      "to": "qx-control",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-cli",
+      "to": "qx-core",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-cli",
+      "to": "qx-data",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-cli",
+      "to": "qx-datastruct",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-cli",
+      "to": "qx-execution",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-cli",
+      "to": "qx-factor",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-cli",
+      "to": "qx-genglu",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-cli",
+      "to": "qx-guanxing",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-cli",
+      "to": "qx-orchestrator",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-cli",
+      "to": "qx-plugin",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-cli",
+      "to": "qx-protocol",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-cli",
+      "to": "qx-provider",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-cli",
+      "to": "qx-risk",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-cli",
+      "to": "qx-runtime",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-cli",
+      "to": "qx-scheduler",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-cli",
+      "to": "qx-service",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-cli",
+      "to": "qx-spec",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-cli",
+      "to": "qx-storage",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-cli",
+      "to": "qx-strategy",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-cli",
+      "to": "qx-xingban",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-cli",
+      "to": "qx-zhenlu",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-control",
+      "to": "qx-core",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-data",
+      "to": "qx-core",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-data",
+      "to": "qx-datastruct",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-datastruct",
+      "to": "qx-core",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-datastruct",
+      "to": "qx-guanxing",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-execution",
+      "to": "qx-control",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-execution",
+      "to": "qx-core",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-execution",
+      "to": "qx-guanxing",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-execution",
+      "to": "qx-risk",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-execution",
+      "to": "qx-zhenlu",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-factor",
+      "to": "qx-core",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-factor",
+      "to": "qx-guanxing",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-genglu",
+      "to": "qx-core",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-guanxing",
+      "to": "qx-core",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-orchestrator",
+      "to": "qx-control",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-orchestrator",
+      "to": "qx-core",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-orchestrator",
+      "to": "qx-process-io",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-orchestrator",
+      "to": "qx-runtime",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-orchestrator",
+      "to": "qx-spec",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-orchestrator",
+      "to": "qx-strategy",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-plugin",
+      "to": "qx-core",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-protocol",
+      "to": "qx-core",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-provider",
+      "to": "qx-core",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-provider",
+      "to": "qx-data",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-provider",
+      "to": "qx-datastruct",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-provider",
+      "to": "qx-guanxing",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-python",
+      "to": "qx-app",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-python",
+      "to": "qx-core",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-python",
+      "to": "qx-data",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-python",
+      "to": "qx-datastruct",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-python",
+      "to": "qx-provider",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-python",
+      "to": "qx-runtime",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-python",
+      "to": "qx-spec",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-python",
+      "to": "qx-strategy",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-python",
+      "to": "qx-xingban",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-risk",
+      "to": "qx-core",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-runtime",
+      "to": "qx-control",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-runtime",
+      "to": "qx-core",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-runtime",
+      "to": "qx-data",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-runtime",
+      "to": "qx-execution",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-runtime",
+      "to": "qx-factor",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-runtime",
+      "to": "qx-guanxing",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-runtime",
+      "to": "qx-spec",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-runtime",
+      "to": "qx-storage",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-runtime",
+      "to": "qx-strategy",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-runtime",
+      "to": "qx-zhenlu",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-scheduler",
+      "to": "qx-core",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-sdk",
+      "to": "qx-app",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-sdk",
+      "to": "qx-execution",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-sdk",
+      "to": "qx-provider",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-sdk",
+      "to": "qx-strategy",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-sdk-http",
+      "to": "qx-adapter",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-sdk-http",
+      "to": "qx-sdk",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-service",
+      "to": "qx-adapter",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-service",
+      "to": "qx-api",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-service",
+      "to": "qx-app",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-service",
+      "to": "qx-control",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-service",
+      "to": "qx-core",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-service",
+      "to": "qx-data",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-service",
+      "to": "qx-datastruct",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-service",
+      "to": "qx-execution",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-service",
+      "to": "qx-guanxing",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-service",
+      "to": "qx-orchestrator",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-service",
+      "to": "qx-protocol",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-service",
+      "to": "qx-provider",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-service",
+      "to": "qx-risk",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-service",
+      "to": "qx-runtime",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-service",
+      "to": "qx-scheduler",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-service",
+      "to": "qx-spec",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-service",
+      "to": "qx-storage",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-service",
+      "to": "qx-strategy",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-service",
+      "to": "qx-xingban",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-service",
+      "to": "qx-zhenlu",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-spec",
+      "to": "qx-core",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-spec",
+      "to": "qx-data",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-storage",
+      "to": "qx-control",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-storage",
+      "to": "qx-core",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-storage",
+      "to": "qx-protocol",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-storage",
+      "to": "qx-scheduler",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-strategy",
+      "to": "qx-core",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-xingban",
+      "to": "qx-core",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-xingban",
+      "to": "qx-data",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-xingban",
+      "to": "qx-guanxing",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-xingban",
+      "to": "qx-risk",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-xingban",
+      "to": "qx-strategy",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-xingban",
+      "to": "qx-zhenlu",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-zhenlu",
+      "to": "qx-core",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-zhenlu",
+      "to": "qx-guanxing",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    },
+    {
+      "from": "qx-zhenlu",
+      "to": "qx-risk",
+      "kind": "normal",
+      "target": null,
+      "alias": null,
+      "optional": false,
+      "features": []
+    }
+  ],
+  "cycles": {
+    "normal_build": [],
+    "dev_involving": []
+  }
+}

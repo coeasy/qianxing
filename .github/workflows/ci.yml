@@ -61,6 +61,7 @@ jobs:
       - name: Inspect Rust package dependency closures
         run: |
           python3 tools/check_package_distribution.py
+          python3 tools/generate_crate_dependency_map.py --check
           python3 -m unittest tools.test_package_distribution tools.test_cargo_publish_plan tools.test_check_rust_sdk_packages
           python3 tools/cargo_publish_plan.py qx-sdk
           python3 tools/cargo_publish_plan.py qx-cli
