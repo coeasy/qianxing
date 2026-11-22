@@ -392,7 +392,7 @@ qx_app_run_watcher_rejections_total {}\n",
         })?;
         let value = action(entry);
         if let Some(root) = &self.persistence_root {
-            persistence::save(root, entry)?;
+            let _persisted = persistence::save_if_changed_on_disk(root, entry)?;
         }
         Ok(value)
     }
