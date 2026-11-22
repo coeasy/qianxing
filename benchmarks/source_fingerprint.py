@@ -8,7 +8,131 @@ from pathlib import Path
 import re
 
 
-MEASUREMENT_SOURCE_FINGERPRINT_SCHEMA = 4
+MEASUREMENT_SOURCE_FINGERPRINT_SCHEMA = 5
+
+
+def _normalized_rust_source(source: str) -> bytes:
+    """Return Rust tokens with comments and formatting whitespace removed.
+
+    Documentation edits do not change benchmarked behavior. Treat comments as
+    whitespace, while preserving quoted and raw string contents because those
+    can be runtime inputs or macro tokens.
+    """
+    output: list[str] = []
+    index = 0
+    pending_space = False
+
+    def emit(value: str) -> None:
+        nonlocal pending_space
+        if pending_space and output:
+            output.append(" ")
+        output.append(value)
+        pending_space = False
+
+    def raw_string_start(offset: int) -> tuple[int, int] | None:
+        prefix_length = 0
+        if source.startswith(("br", "cr"), offset):
+            prefix_length = 2
+        elif source.startswith("r", offset):
+            prefix_length = 1
+        else:
+            return None
+        cursor = offset + prefix_length
+        while cursor < len(source) and source[cursor] == "#":
+            cursor += 1
+        if cursor < len(source) and source[cursor] == '"':
+            return cursor, cursor - (offset + prefix_length)
+        return None
+
+    def char_literal_end(offset: int) -> int | None:
+        cursor = offset + 1
+        if cursor >= len(source) or source[cursor] in "\r\n":
+            return None
+        if source[cursor] == "\\":
+            cursor += 1
+            if cursor >= len(source):
+                return None
+            if source.startswith("u{", cursor):
+                end = source.find("}", cursor + 2)
+                if end < 0:
+                    return None
+                cursor = end + 1
+            elif source[cursor] == "x":
+                cursor += 3
+            else:
+                cursor += 1
+        else:
+            cursor += 1
+        return cursor + 1 if cursor < len(source) and source[cursor] == "'" else None
+
+    while index < len(source):
+        char = source[index]
+
+        if char.isspace():
+            pending_space = True
+            index += 1
+            continue
+
+        raw_start = raw_string_start(index)
+        if raw_start is not None:
+            quote, hash_count = raw_start
+            closing = '"' + ("#" * hash_count)
+            end = source.find(closing, quote + 1)
+            end = len(source) if end < 0 else end + len(closing)
+            emit(source[index:end])
+            index = end
+            continue
+
+        if char == '"':
+            end = index + 1
+            while end < len(source):
+                if source[end] == "\\":
+                    end += 2
+                elif source[end] == '"':
+                    end += 1
+                    break
+                else:
+                    end += 1
+            emit(source[index:end])
+            index = end
+            continue
+
+        if char == "'":
+            end = char_literal_end(index)
+            if end is None:
+                emit(char)
+                index += 1
+            else:
+                emit(source[index:end])
+                index = end
+            continue
+
+        if source.startswith("//", index):
+            newline = source.find("\n", index + 2)
+            index = len(source) if newline < 0 else newline + 1
+            pending_space = True
+            continue
+
+        if source.startswith("/*", index):
+            depth = 1
+            cursor = index + 2
+            while cursor < len(source) and depth:
+                if source.startswith("/*", cursor):
+                    depth += 1
+                    cursor += 2
+                elif source.startswith("*/", cursor):
+                    depth -= 1
+                    cursor += 2
+                else:
+                    cursor += 1
+            index = cursor
+            pending_space = True
+            continue
+
+        emit(char)
+        index += 1
+
+    return "".join(output).encode("utf-8")
 
 
 def _workspace_version(root: Path) -> str | None:
@@ -94,6 +218,8 @@ def measurement_source_fingerprint(root: Path) -> str:
         digest.update(b"\0")
         if workspace_version and path.name in {"Cargo.toml", "Cargo.lock"}:
             content = _normalized_manifest(path, workspace_version)
+        elif path.suffix == ".rs":
+            content = _normalized_rust_source(path.read_text(encoding="utf-8"))
         else:
             content = path.read_bytes()
         digest.update(content)
