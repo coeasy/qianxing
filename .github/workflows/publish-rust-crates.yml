@@ -3,6 +3,10 @@ name: Publish Rust crates to crates.io
 on:
   workflow_dispatch:
     inputs:
+      release_tag:
+        description: "Exact source tag to publish, for example v0.4.1"
+        required: true
+        type: string
       confirm:
         description: "Type the exact SDK release identity, for example qx-sdk@0.4.1"
         required: true
@@ -12,7 +16,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: crates-io-${{ github.ref }}
+  group: crates-io-${{ inputs.release_tag }}
   cancel-in-progress: false
 
 jobs:
@@ -23,6 +27,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.ref }}
+          path: publisher
+          fetch-depth: 0
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
+          path: release-source
           fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@stable
@@ -34,15 +46,25 @@ jobs:
       - name: Require a tagged release and configured publisher token
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
-            echo "Dispatch this workflow from an exact vX.Y.Z release tag." >&2
+          if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "release_tag must be an exact vX.Y.Z tag." >&2
             exit 1
           fi
           if [[ -z "${CARGO_REGISTRY_TOKEN}" ]]; then
             echo "Configure CARGO_REGISTRY_TOKEN in repository Actions secrets." >&2
+            exit 1
+          fi
+          if [[ -n "$(git -C release-source status --porcelain --untracked-files=all)" ]]; then
+            echo "The release source checkout must be clean." >&2
+            exit 1
+          fi
+          actual_tag="$(git -C release-source describe --exact-match --tags HEAD)"
+          if [[ "${actual_tag}" != "${RELEASE_TAG}" ]]; then
+            echo "The release source checkout is not exactly ${RELEASE_TAG}." >&2
             exit 1
           fi
 
@@ -51,6 +73,7 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
           QX_PUBLISH_CONFIRM: ${{ inputs.confirm }}
         run: >-
-          python tools/publish_rust_sdk.py qx-sdk
+          python publisher/tools/publish_rust_sdk.py qx-sdk
           --publish
+          --root release-source
           --confirm "$QX_PUBLISH_CONFIRM"
