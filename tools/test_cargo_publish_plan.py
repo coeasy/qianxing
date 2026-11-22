@@ -235,8 +235,14 @@ class RustSdkPublisherGuardTest(unittest.TestCase):
             target = root / "target"
             archive = target / "package" / "qx-core-0.4.1.crate"
             archive.parent.mkdir(parents=True)
-            archive.write_bytes(b"canonical cargo package")
-            with patch("tools.publish_rust_sdk.subprocess.run") as run:
+            archive.write_bytes(b"stale local-patch archive")
+
+            def cargo_package(command, *, cwd, env, check):
+                self.assertEqual(command[:3], ["cargo", "package", "-p"])
+                self.assertFalse(archive.exists(), "canonical packaging must not reuse a preflight archive")
+                archive.write_bytes(b"canonical cargo package")
+
+            with patch("tools.publish_rust_sdk.subprocess.run", side_effect=cargo_package) as run:
                 checksum = package_registry_archive(
                     root, "qx-core", "0.4.1", target=target,
                     cargo_home=Path(temporary) / "cargo-home", environment={},
