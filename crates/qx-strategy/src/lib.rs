@@ -228,7 +228,9 @@ impl StrategyContext {
         }
         for (instrument, exact) in &self.positions_exact {
             if !strategy_position_key_is_valid(instrument) {
-                return Err(format!("StrategyContext exact instrument 非法: {instrument}"));
+                return Err(format!(
+                    "StrategyContext exact instrument 非法: {instrument}"
+                ));
             }
             let projected = project_exact_to_raw(*exact)?;
             if self.positions.get(instrument).copied().unwrap_or_default() != projected {
