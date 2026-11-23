@@ -5025,7 +5025,7 @@ def event_backtest_evidence_check() -> None:
 # 枚举里每个变体必须有构造它的生产者，而 `CrossedBook` 不许在任何 crate 的生产代码里复活。
 QUALITY_ISSUE_FILE = "crates/qx-guanxing/src/lib.rs"
 CROSSED_QUOTE_NAME = "CrossedBook"
-CROSSED_QUOTE_READER_FILE = "crates/qx-adapter/src/binance.rs"
+CROSSED_QUOTE_READER_FILE = "crates/qx-adapter/src/binance/market_data.rs"
 
 
 def quality_issue_producer_check() -> None:
@@ -26691,10 +26691,12 @@ def binance_execution_runner_ownership_check() -> None:
 
 def binance_spot_symbol_validation_check() -> None:
     """The Binance Spot boundary only forwards exchange-shaped symbols."""
-    adapter = production_text(_text_or_empty(ROOT / "crates/qx-adapter/src/binance.rs"))
-    validator_start = adapter.find("fn validate_binance_instrument(")
-    validator_tail = adapter[validator_start:] if validator_start >= 0 else ""
-    validator = validator_tail.split("fn parse_client_order_id(", 1)[0]
+    market_data = production_text(
+        _text_or_empty(ROOT / "crates/qx-adapter/src/binance/market_data.rs")
+    )
+    validator_start = market_data.find("fn validate_binance_instrument(")
+    validator_tail = market_data[validator_start:] if validator_start >= 0 else ""
+    validator = validator_tail.split("fn parse_book_ticker(", 1)[0]
     tests = _text_or_empty(ROOT / "crates/qx-adapter/src/binance/tests.rs")
     case = "binance_spot_symbol_validation_rejects_path_and_request_syntax"
     check(
@@ -26707,7 +26709,38 @@ def binance_spot_symbol_validation_check() -> None:
         and '"BTCUSDT?limit=1"' in tests
         and '"BTCUSDT\\r\\nX-Injected: yes"' in tests,
         "Binance Spot 请求边界拒绝路径片段、分隔符、查询注入与控制字符标的",
-        f"validator tokens={bool(validator)}；behavior case present={case in tests}",
+        f"market-data validator tokens={bool(validator)}；behavior case present={case in tests}",
+    )
+
+
+def binance_spot_market_data_boundary_check() -> None:
+    """Public market feeds and exchange filter parsing have one explicit owner."""
+    facade = production_text(_text_or_empty(ROOT / "crates/qx-adapter/src/binance.rs"))
+    market_data = production_text(
+        _text_or_empty(ROOT / "crates/qx-adapter/src/binance/market_data.rs")
+    )
+    moved = (
+        "pub struct BinanceSpotMarketData",
+        "impl BinanceSpotMarketData",
+        "pub struct BinanceSpotMarketStream",
+        "impl BinanceSpotMarketStream",
+        "fn parse_book_ticker(",
+        "fn parse_spot_market_rules(",
+        "fn parse_exchange_base_assets(",
+        "fn validate_binance_exact_qty_filter(",
+    )
+    check(
+        "mod market_data;" in facade
+        and "pub use market_data::{BinanceQuotePoll, BinanceSpotMarketData, BinanceSpotMarketStream};"
+        in facade
+        and all(marker in market_data for marker in moved)
+        and "impl BinanceSpotMarketData" not in facade
+        and "impl BinanceSpotMarketStream" not in facade
+        and "fn parse_spot_market_rules(" not in facade,
+        "Binance Spot public market feed and exchange-rule parsing have a single market_data owner",
+        f"module declared={'mod market_data;' in facade}；moved owners="
+        f"{sum(marker in market_data for marker in moved)}/{len(moved)}；"
+        f"facade duplicates={('impl BinanceSpotMarketData' in facade or 'fn parse_spot_market_rules(' in facade)}",
     )
 
 
@@ -34187,6 +34220,7 @@ def main() -> int:
     venue_market_runner_ownership_check()
     binance_user_stream_runner_ownership_check()
     binance_execution_runner_ownership_check()
+    binance_spot_market_data_boundary_check()
     binance_spot_symbol_validation_check()
     instrument_id_symbol_validation_check()
     ccxt_user_stream_runner_ownership_check()
