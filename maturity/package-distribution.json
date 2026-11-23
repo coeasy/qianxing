@@ -1,6 +1,7 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "sdk_root": "qx-sdk",
+  "minimum_rust_version": "1.87",
   "ownership_contract": "owner identifies the bounded code domain, not a GitHub team",
   "packages": [
     { "name": "contract-tests", "owner": "release-contract-tests", "role": "test-only", "channel": "ci-only" },

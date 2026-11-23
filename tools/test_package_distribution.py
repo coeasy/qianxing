@@ -8,6 +8,7 @@ def package(name, dependencies=(), publish=None):
         "name": name,
         "id": name,
         "version": "0.4.0",
+        "rust_version": "1.87",
         "publish": publish,
         "description": f"{name} package",
         "license": "MIT",
@@ -29,7 +30,12 @@ def dependency(name, kind=None, optional=False):
 
 
 def catalog(*entries):
-    return {"schema_version": 1, "sdk_root": "qx-sdk", "packages": list(entries)}
+    return {
+        "schema_version": 2,
+        "sdk_root": "qx-sdk",
+        "minimum_rust_version": "1.87",
+        "packages": list(entries),
+    }
 
 
 def entry(name, role, channel, owner=None):
@@ -119,6 +125,38 @@ class PackageDistributionTest(unittest.TestCase):
         )
         errors = validate_distribution(metadata, policy)
         self.assertTrue(any("SDK publish closure and distribution catalog differ" in item for item in errors))
+
+    def test_sdk_closure_packages_must_declare_catalog_msrv(self):
+        metadata = {
+            "workspace_members": ["qx-sdk", "qx-core"],
+            "packages": [
+                package("qx-sdk", [dependency("qx-core")]),
+                package("qx-core"),
+            ],
+        }
+        metadata["packages"][1]["rust_version"] = "1.86"
+        policy = catalog(
+            entry("qx-sdk", "sdk-facade", "crates-io"),
+            entry("qx-core", "sdk-dependency", "crates-io"),
+        )
+        errors = validate_distribution(metadata, policy)
+        self.assertTrue(any("SDK package qx-core must declare rust-version '1.87'" in item for item in errors))
+
+    def test_package_catalog_must_declare_msrv(self):
+        metadata = {
+            "workspace_members": ["qx-sdk", "qx-core"],
+            "packages": [
+                package("qx-sdk", [dependency("qx-core")]),
+                package("qx-core"),
+            ],
+        }
+        policy = catalog(
+            entry("qx-sdk", "sdk-facade", "crates-io"),
+            entry("qx-core", "sdk-dependency", "crates-io"),
+        )
+        del policy["minimum_rust_version"]
+        errors = validate_distribution(metadata, policy)
+        self.assertTrue(any("package catalog must declare minimum_rust_version" in item for item in errors))
 
 
 if __name__ == "__main__":

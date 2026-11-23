@@ -3,6 +3,7 @@ name = "qx-data"
 description = "牵星数据基础设施：统一市场数据契约、目录与校验"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 

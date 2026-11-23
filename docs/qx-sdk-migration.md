@@ -192,7 +192,9 @@ Bar Provider 的 `ProviderBarFrame::dataset_manifest(...)` 与 Python `fetch_bar
 
 **crates.io 状态更新（2026-11-22，已完成）：** PR [#13](https://github.com/coeasy/qianxing/pull/13) 已合并。发布工作流 [run #4](https://github.com/coeasy/qianxing/actions/runs/45019067095) 从默认分支读取发布器、从不可变 `v0.4.1` tag 读取源码，依序发布了 14 个 crate，并逐包核对 canonical SHA-256 与 crates.io。工作流还在独立 Cargo home 中从 crates.io 安装 `qx-sdk 0.4.1`，运行 70 根教学 Bar 快速入门并复核结果：1 笔成交，`Verified: true`。由于 crates.io 上传限流，工作流按服务器给出的时间从同一 tag 安全续跑；已确认 checksum 一致的版本会跳过，不会重复上传。样例使用教学数据，不代表真实历史行情或交易所验收。
 
-已发布版本的跨平台 clean-consumer 检查可从默认分支运行 [Rust SDK crates.io consumer matrix](../.github/workflows/rust-sdk-registry-consumer.yml)：传入精确版本号后，会在独立 Cargo home 中从 registry 安装并运行同一 quickstart，覆盖 Ubuntu、Windows 和 macOS。`qx-sdk 0.4.1` 的三平台验收已通过 [workflow run #45030066158](https://github.com/coeasy/qianxing/actions/runs/45030066158)：每个平台均验证 70 根 Bar、1 笔成交和 `Verified: true`。当前 `qx-sdk` 未声明额外 Cargo features，因此此矩阵不把空的 `--no-default-features` 组合包装成独立能力；MSRV 仍需在确定并声明最低 Rust 版本后单独验收。
+已发布版本的跨平台 clean-consumer 检查可从默认分支运行 [Rust SDK crates.io consumer matrix](../.github/workflows/rust-sdk-registry-consumer.yml)：传入精确版本号后，会在独立 Cargo home 中从 registry 安装并运行同一 quickstart，覆盖 Ubuntu、Windows 和 macOS。`qx-sdk 0.4.1` 的三平台验收已通过 [workflow run #45030066158](https://github.com/coeasy/qianxing/actions/runs/45030066158)：每个平台均验证 70 根 Bar、1 笔成交和 `Verified: true`。当前 `qx-sdk` 未声明额外 Cargo features，因此此矩阵不把空的 `--no-default-features` 组合包装成独立能力。
+
+当前源码中的 14-crate crates.io SDK 闭包统一声明 `rust-version = "1.87"`，发布分类门禁会检查每个包与目录台账一致，CI 在 Rust 1.87 上编译 `qx-sdk` 及其完整依赖闭包。选择该下限是因为 SDK 闭包使用的无符号整数 `is_multiple_of` 从 Rust 1.87 起稳定。此元数据和验收只适用于合入后的源码候选；已发布的 `qx-sdk 0.4.1` artifact 不会被追溯修改，仍需在后续版本发布后以 registry consumer 再验收该 MSRV。
 
 ## Rust 远端 Paper 算法生命周期与事件游标
 
