@@ -1,0 +1,393 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-11-23T12:38:50.159659+00:00",
+  "hardware": {
+    "os": "Linux",
+    "arch": "x86_64",
+    "processor": "AMD EPYC 9V74 80-Core Processor",
+    "logical_cpu_count": 4,
+    "physical_core_count": 2,
+    "total_ram_bytes": 16759422976,
+    "processor_name": "AMD EPYC 9V74 80-Core Processor"
+  },
+  "measurement_source_fingerprint": "97f321057ef149bc9b3a81a4739902bb18a5d24c74f245ea8670a79bbba155d3",
+  "measurement_source_fingerprint_schema": 5,
+  "command": [
+    "cargo",
+    "bench",
+    "-p",
+    "qx-cli",
+    "--bench",
+    "performance",
+    "--offline"
+  ],
+  "criterion_commands": [
+    [
+      "cargo",
+      "bench",
+      "-p",
+      "qx-core",
+      "--bench",
+      "criterion_performance",
+      "--",
+      "qx_core_event_log_validate/cached",
+      "--noplot"
+    ],
+    [
+      "cargo",
+      "bench",
+      "-p",
+      "qx-core",
+      "--bench",
+      "criterion_performance",
+      "--",
+      "qx_core_ledger_entry_lookup/indexed",
+      "--noplot"
+    ],
+    [
+      "cargo",
+      "bench",
+      "-p",
+      "qx-core",
+      "--bench",
+      "criterion_performance",
+      "--",
+      "qx_core_event_log_prefix_digest/cached_after_append",
+      "--noplot"
+    ],
+    [
+      "cargo",
+      "bench",
+      "-p",
+      "qx-zhenlu",
+      "--bench",
+      "criterion_performance",
+      "--",
+      "qx_zhenlu_crypto_paper_lifecycle_v2",
+      "--noplot"
+    ]
+  ],
+  "criterion_profile": "pr",
+  "criterion_required_count": 12,
+  "criterion_records": [
+    {
+      "benchmark": "qx_core_event_log_prefix_digest/cached_after_append/1000",
+      "mean_ns": 12.130200106883628,
+      "mean_ci95_ns": [
+        12.107032686109369,
+        12.15554258650662
+      ],
+      "median_ns": 12.124636005865305,
+      "std_dev_ns": 0.04135920465428638
+    },
+    {
+      "benchmark": "qx_core_event_log_prefix_digest/cached_after_append/64000",
+      "mean_ns": 12.14308533354556,
+      "mean_ci95_ns": [
+        12.114022552007516,
+        12.175297831490951
+      ],
+      "median_ns": 12.139912590658799,
+      "std_dev_ns": 0.05242305090548105
+    },
+    {
+      "benchmark": "qx_core_event_log_prefix_digest/cached_after_append/8000",
+      "mean_ns": 12.210438760025816,
+      "mean_ci95_ns": [
+        12.123227690526756,
+        12.361797991318321
+      ],
+      "median_ns": 12.140645036446934,
+      "std_dev_ns": 0.23061697466626307
+    },
+    {
+      "benchmark": "qx_core_event_log_validate/cached/1000",
+      "mean_ns": 3.005362476960733,
+      "mean_ci95_ns": [
+        3.000488976122553,
+        3.011605120385401
+      ],
+      "median_ns": 3.0016043559369123,
+      "std_dev_ns": 0.00969068492238463
+    },
+    {
+      "benchmark": "qx_core_event_log_validate/cached/64000",
+      "mean_ns": 3.0272041453546366,
+      "mean_ci95_ns": [
+        3.0125583232944066,
+        3.0432873652148893
+      ],
+      "median_ns": 3.026399016171311,
+      "std_dev_ns": 0.026360501802223737
+    },
+    {
+      "benchmark": "qx_core_event_log_validate/cached/8000",
+      "mean_ns": 3.0143599166542203,
+      "mean_ci95_ns": [
+        3.0074496747023414,
+        3.022096543565275
+      ],
+      "median_ns": 3.0120380776688727,
+      "std_dev_ns": 0.012567471257571563
+    },
+    {
+      "benchmark": "qx_core_ledger_entry_lookup/indexed/1000",
+      "mean_ns": 1.3670129168808038,
+      "mean_ci95_ns": [
+        1.3647100386610513,
+        1.3697265800385923
+      ],
+      "median_ns": 1.3673243563683088,
+      "std_dev_ns": 0.004284273847654099
+    },
+    {
+      "benchmark": "qx_core_ledger_entry_lookup/indexed/64000",
+      "mean_ns": 1.364681945750688,
+      "mean_ci95_ns": [
+        1.363825020318927,
+        1.3657095810515312
+      ],
+      "median_ns": 1.3643187323490942,
+      "std_dev_ns": 0.0016067723669208763
+    },
+    {
+      "benchmark": "qx_core_ledger_entry_lookup/indexed/8000",
+      "mean_ns": 1.3651203682607307,
+      "mean_ci95_ns": [
+        1.3645845037946533,
+        1.3657287211092786
+      ],
+      "median_ns": 1.364917295121356,
+      "std_dev_ns": 0.000983108520888214
+    },
+    {
+      "benchmark": "qx_zhenlu_crypto_paper_lifecycle_v2/1",
+      "mean_ns": 11844.573820876554,
+      "mean_ci95_ns": [
+        11820.521995670628,
+        11871.901727937835
+      ],
+      "median_ns": 11789.371201122725,
+      "std_dev_ns": 131.01424404725128
+    },
+    {
+      "benchmark": "qx_zhenlu_crypto_paper_lifecycle_v2/16",
+      "mean_ns": 144160.16191254082,
+      "mean_ci95_ns": [
+        143689.09739675582,
+        144680.60839724165
+      ],
+      "median_ns": 144537.76530612246,
+      "std_dev_ns": 2541.4408754413716
+    },
+    {
+      "benchmark": "qx_zhenlu_crypto_paper_lifecycle_v2/256",
+      "mean_ns": 9381340.976666668,
+      "mean_ci95_ns": [
+        9366807.725000001,
+        9396275.202083332
+      ],
+      "median_ns": 9375838.25,
+      "std_dev_ns": 75463.6899990501
+    }
+  ],
+  "records": [
+    {
+      "benchmark": "full_vs_incremental_replay",
+      "events": 1000,
+      "chunks": 10,
+      "incremental_refresh_p50_ms": 0.701,
+      "full_replay_median_ms": 6.282,
+      "digests_equal": true
+    },
+    {
+      "benchmark": "steady_state_pipeline_ingest",
+      "operations": 1000,
+      "windows": 5,
+      "ticks_per_window": 21,
+      "ticks": 105,
+      "median_ms": 1.550979,
+      "p95_ms": 1.761729,
+      "operations_per_second": 644.754,
+      "event_log_digest": "e0123359e6764d62"
+    },
+    {
+      "benchmark": "append_batch",
+      "operations": 1000,
+      "median_ns": 324107.0,
+      "median_ms": 0.324107,
+      "iterations_per_second": 3085.4,
+      "operations_per_second": 3085400.8
+    },
+    {
+      "benchmark": "event_log_digest",
+      "operations": 1000,
+      "median_ns": 8.0,
+      "median_ms": 8e-06,
+      "iterations_per_second": 125000000.0
+    },
+    {
+      "benchmark": "segmented_event_log_append",
+      "history_events": 1000,
+      "appended_events": 1,
+      "warm_store_median_ms": 1.270364,
+      "cold_store_median_ms": 2.984784
+    },
+    {
+      "benchmark": "full_replay",
+      "operations": 1000,
+      "median_ns": 728854.0,
+      "median_ms": 0.728854,
+      "iterations_per_second": 1372.0,
+      "operations_per_second": 1372016.9
+    },
+    {
+      "benchmark": "l2_matching",
+      "operations": 1000,
+      "median_ns": 619759.0,
+      "median_ms": 0.619759,
+      "iterations_per_second": 1613.5,
+      "operations_per_second": 1613530.4
+    },
+    {
+      "benchmark": "steady_state_pipeline_ingest",
+      "operations": 8000,
+      "windows": 5,
+      "ticks_per_window": 21,
+      "ticks": 105,
+      "median_ms": 2.886088,
+      "p95_ms": 3.68654,
+      "operations_per_second": 346.49,
+      "event_log_digest": "c532a33108e8e0f6"
+    },
+    {
+      "benchmark": "append_batch",
+      "operations": 8000,
+      "median_ns": 2979291.0,
+      "median_ms": 2.979291,
+      "iterations_per_second": 335.7,
+      "operations_per_second": 2685202.6
+    },
+    {
+      "benchmark": "event_log_digest",
+      "operations": 8000,
+      "median_ns": 8.0,
+      "median_ms": 8e-06,
+      "iterations_per_second": 125000000.0
+    },
+    {
+      "benchmark": "segmented_event_log_append",
+      "history_events": 8000,
+      "appended_events": 1,
+      "warm_store_median_ms": 1.290334,
+      "cold_store_median_ms": 15.934202
+    },
+    {
+      "benchmark": "full_replay",
+      "operations": 8000,
+      "median_ns": 6171882.0,
+      "median_ms": 6.171882,
+      "iterations_per_second": 162.0,
+      "operations_per_second": 1296201.1
+    },
+    {
+      "benchmark": "l2_matching",
+      "operations": 8000,
+      "median_ns": 4652542.0,
+      "median_ms": 4.652542,
+      "iterations_per_second": 214.9,
+      "operations_per_second": 1719490.1
+    },
+    {
+      "benchmark": "steady_state_pipeline_ingest",
+      "operations": 64000,
+      "windows": 5,
+      "ticks_per_window": 21,
+      "ticks": 105,
+      "median_ms": 14.871443,
+      "p95_ms": 15.956995,
+      "operations_per_second": 67.243,
+      "event_log_digest": "4f4816bb8c2f3f6b"
+    },
+    {
+      "benchmark": "append_batch",
+      "operations": 64000,
+      "median_ns": 77984429.0,
+      "median_ms": 77.984429,
+      "iterations_per_second": 12.8,
+      "operations_per_second": 820676.7
+    },
+    {
+      "benchmark": "event_log_digest",
+      "operations": 64000,
+      "median_ns": 8.0,
+      "median_ms": 8e-06,
+      "iterations_per_second": 125000000.0
+    },
+    {
+      "benchmark": "segmented_event_log_append",
+      "history_events": 64000,
+      "appended_events": 1,
+      "warm_store_median_ms": 1.427276,
+      "cold_store_median_ms": 122.874605
+    },
+    {
+      "benchmark": "full_replay",
+      "operations": 64000,
+      "median_ns": 102960670.0,
+      "median_ms": 102.96067,
+      "iterations_per_second": 9.7,
+      "operations_per_second": 621596.6
+    },
+    {
+      "benchmark": "l2_matching",
+      "operations": 64000,
+      "median_ns": 36983072.0,
+      "median_ms": 36.983072,
+      "iterations_per_second": 27.0,
+      "operations_per_second": 1730521.5
+    }
+  ],
+  "steady_state_tick_curve": {
+    "method": "adjacent p50 of single LiveEventPipeline::ingest calls; SQLite append + projection",
+    "candidate_positive_knee_threshold_pct": 20.0,
+    "candidate_positive_knee_at_history_events": null,
+    "not_a_statistical_claim": true,
+    "points": [
+      {
+        "history_events": 1000,
+        "ticks": 105,
+        "p50_ms_per_tick": 1.550979,
+        "p95_ms_per_tick": 1.761729
+      },
+      {
+        "history_events": 8000,
+        "ticks": 105,
+        "p50_ms_per_tick": 2.886088,
+        "p95_ms_per_tick": 3.68654
+      },
+      {
+        "history_events": 64000,
+        "ticks": 105,
+        "p50_ms_per_tick": 14.871443,
+        "p95_ms_per_tick": 15.956995
+      }
+    ],
+    "segments": [
+      {
+        "from_history_events": 1000,
+        "to_history_events": 8000,
+        "delta_p50_ms_per_tick": 1.335109,
+        "marginal_us_per_history_event": 0.19073,
+        "marginal_slope_change_pct": null
+      },
+      {
+        "from_history_events": 8000,
+        "to_history_events": 64000,
+        "delta_p50_ms_per_tick": 11.985355,
+        "marginal_us_per_history_event": 0.214024,
+        "marginal_slope_change_pct": 12.213
+      }
+    ]
+  }
+}
