@@ -18194,6 +18194,7 @@ def spread_recovery_service_ownership_check() -> None:
     recovery_body = _rust_fn_body(service, "recover_spread_groups_for_venue_until") or ""
     paper_wrapper = _rust_fn_body(service, "recover_paper_spread_groups_for_account") or ""
     paper_body = _rust_fn_body(service, "recover_paper_spread_groups_inner") or ""
+    validator_body = _rust_fn_body(service, "recovery_order_validator") or ""
     check(
         bool(recovery_wrapper)
         and bool(recovery_body)
@@ -18203,6 +18204,8 @@ def spread_recovery_service_ownership_check() -> None:
         and "pub fn spread_recovery_poll_delay" in service
         and "pub struct RecoveryGuard" in service
         and "pub fn recovery_order_validator" in service
+        and "RecoveryRiskSnapshot::capture(pipeline, worker)" in validator_body
+        and "risk_pipeline: pipeline.clone()" not in validator_body
         and "recover_spread_groups_for_venue_until(context, venue, || false)" in recovery_wrapper
         and "if should_stop()" in recovery_body
         and "venue_recovery_checks_shutdown_between_durable_groups" in service
@@ -18222,7 +18225,9 @@ def spread_recovery_service_ownership_check() -> None:
         and "recover_paper_spread_groups_inner(" in paper_wrapper
         and ".try_on_quote(&instrument, quote)" in paper_body,
         "多腿恢复扫描、退避、补偿风控和 Paper 行情驱动归 qx-service，CLI 只重导出",
-        f"venue恢复={bool(recovery_body)}，Paper恢复={bool(paper_body)}，CLI重导出={'pub(crate) use qx_service::spread_recovery_host' in cli}",
+        f"venue恢复={bool(recovery_body)}，Paper恢复={bool(paper_body)}，"
+        f"恢复风险窄快照={'RecoveryRiskSnapshot::capture(pipeline, worker)' in validator_body}，"
+        f"CLI重导出={'pub(crate) use qx_service::spread_recovery_host' in cli}",
     )
 
 
@@ -18299,7 +18304,7 @@ def live_balance_order_reservation_check() -> None:
     ) or ""
     helper = _rust_fn_body(service_risk, "live_post_snapshot_order_reserve_exact") or ""
     pending_helper = _rust_fn_body(service_risk, "pending_order_reserve_exact") or ""
-    post_snapshot_ids = _rust_fn_body(service_risk, "live_post_snapshot_order_ids") or ""
+    post_snapshot_ids = _rust_fn_body(service_risk, "post_balance_facts") or ""
     spec_resolver = _rust_fn_body(service_risk, "live_order_market_spec") or ""
     disjoint_spot_bucket = re.search(
         r"if !currency\.eq_ignore_ascii_case\(funding_currency\)\s*\{\s*"
@@ -18332,8 +18337,11 @@ def live_balance_order_reservation_check() -> None:
         and "pub fn require_fresh_live_balance_snapshot(" in service_risk
         and "VenueFamily::parse_option(venue_id) == Some(qx_core::VenueFamily::Paper)" in service_risk
         and "LIVE_BALANCE_SNAPSHOT_MAX_AGE_MS: u64 = qx_runtime::LIVE_RECONCILE_MAX_AGE_MS" in service_risk
-        and ".checked_sub(snapshot.ts)" in service_risk
-        and "require_fresh_live_balance_snapshot(" in case_source("crates/qx-service/src/spread_recovery_host.rs")
+        and ".checked_sub(snapshot_ts)" in service_risk
+        and (
+            "require_fresh_live_balance_snapshot_view("
+            in case_source("crates/qx-service/src/spread_recovery_host.rs")
+        )
         and "spec.quote_currency.trim().to_ascii_uppercase()" in service_risk
         and "spec.base_currency.trim().to_ascii_uppercase()" in service_risk
         and "exact_spot_sell_available_inventory(" in service_risk

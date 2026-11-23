@@ -924,6 +924,15 @@ impl LiveEventPipeline {
         self.oms.all_orders()
     }
 
+    /// Copy the current orders for one account without first cloning every account's OMS state.
+    pub fn orders_for_account(&self, account_id: &str) -> Vec<Order> {
+        self.oms
+            .all_orders_ref()
+            .filter(|order| order.account_id == account_id)
+            .cloned()
+            .collect()
+    }
+
     pub fn pending_amendment(&self, client_order_id: u64) -> Option<(&str, &Order)> {
         self.pending_amendments
             .get(&client_order_id)
@@ -934,6 +943,18 @@ impl LiveEventPipeline {
         self.pending_amendments
             .values()
             .any(|(_, order)| order.account_id == account_id)
+    }
+
+    /// Borrow the latest normalized balance rows for one account and venue.
+    pub fn account_balances_for(
+        &self,
+        account_id: &str,
+        venue_id: &str,
+    ) -> Option<&[AccountBalance]> {
+        self.account_balances
+            .iter()
+            .find(|((account, venue), _)| account == account_id && venue == venue_id)
+            .map(|(_, balances)| balances.as_slice())
     }
 
     pub fn venue_order_id(&self, client_order_id: u64) -> Option<String> {

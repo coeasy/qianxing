@@ -3,8 +3,8 @@
 use crate::worker_market_spec::load_worker_market_spec_for_instrument;
 use qx_core::{
     AccountBalance, DecimalRounding, ExactAccountBalanceAmounts, ExactDecimal, InstrumentId,
-    MarginMode, Money, Order, PositionSide, Price, Quantity, TradingInstrumentSpec, TradingProduct,
-    VenueFamily, SCALE,
+    Ledger, MarginMode, Money, Order, PositionSide, Price, Quantity, TradingInstrumentSpec,
+    TradingProduct, VenueFamily, SCALE,
 };
 use qx_risk::{
     ExactOrderRiskFacts, ExactOrderRiskPosition, MaxNotionalRule, MaxQtyRule, NoShortRule,
@@ -14,11 +14,276 @@ use qx_runtime::{
     required_account_event_log, LiveEventPipeline, RuntimeConfig, WorkerConfig, WorkerRole,
 };
 use qx_zhenlu::{RiskContext, RiskGate};
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::Path;
 
 /// The slowest reconciler (Binance) polls every 30s; allow one delayed cycle.
 pub const LIVE_BALANCE_SNAPSHOT_MAX_AGE_MS: u64 = qx_runtime::LIVE_RECONCILE_MAX_AGE_MS;
+
+#[derive(Clone, Debug)]
+enum PostBalanceViolation {
+    Cashflow(String),
+    Fill(u64),
+}
+
+#[derive(Clone, Debug, Default)]
+struct PostBalanceFacts {
+    order_ids: BTreeSet<u64>,
+    violations: Vec<PostBalanceViolation>,
+}
+
+/// Read-only data consumed by account risk checks. The recovery guard snapshots this projection
+/// instead of cloning the full EventLog, OMS, and fill-idempotency index on every recovery pass.
+pub(crate) trait RiskPipelineView {
+    fn live_pipeline(&self) -> Option<&LiveEventPipeline>;
+    fn ledger(&self) -> &Ledger;
+    fn orders(&self) -> Cow<'_, [Order]>;
+    fn marks(&self) -> &BTreeMap<InstrumentId, Price>;
+    fn settlement_currency(&self) -> &str;
+    fn has_pending_amendment_for_account(&self, account_id: &str) -> bool;
+    fn account_balances_for(&self, account_id: &str, venue_id: &str) -> Option<&[AccountBalance]>;
+    fn latest_balance_snapshot_ts(&self, account_id: &str, venue_id: &str) -> Option<u64>;
+    fn post_snapshot_order_ids(
+        &self,
+        candidate_order_id: u64,
+        account_id: &str,
+        venue_id: &str,
+    ) -> Result<BTreeSet<u64>, String>;
+}
+
+pub(crate) struct RecoveryRiskSnapshot {
+    account_id: String,
+    venue_id: String,
+    ledger: Ledger,
+    orders: Vec<Order>,
+    marks: BTreeMap<InstrumentId, Price>,
+    balances: Vec<AccountBalance>,
+    settlement_currency: String,
+    has_pending_amendment: bool,
+    balance_timestamp: Option<u64>,
+    has_balance_snapshot: bool,
+    post_balance_facts: PostBalanceFacts,
+}
+
+impl RecoveryRiskSnapshot {
+    pub(crate) fn capture(pipeline: &LiveEventPipeline, worker: &WorkerConfig) -> Self {
+        let account_id = worker.account_id.clone().unwrap_or_default();
+        let venue_id = worker.venue_id.clone().unwrap_or_default();
+        let (balance_timestamp, has_balance_snapshot, post_balance_facts) =
+            post_balance_facts(pipeline, &account_id, &venue_id);
+        Self {
+            ledger: pipeline.ledger().risk_snapshot_for_account(&account_id),
+            orders: pipeline.orders_for_account(&account_id),
+            marks: pipeline.marks().clone(),
+            balances: pipeline
+                .account_balances_for(&account_id, &venue_id)
+                .unwrap_or_default()
+                .to_vec(),
+            settlement_currency: pipeline.settlement_currency().to_string(),
+            has_pending_amendment: pipeline.has_pending_amendment_for_account(&account_id),
+            account_id,
+            venue_id,
+            balance_timestamp,
+            has_balance_snapshot,
+            post_balance_facts,
+        }
+    }
+}
+
+impl RiskPipelineView for RecoveryRiskSnapshot {
+    fn live_pipeline(&self) -> Option<&LiveEventPipeline> {
+        None
+    }
+
+    fn ledger(&self) -> &Ledger {
+        &self.ledger
+    }
+
+    fn orders(&self) -> Cow<'_, [Order]> {
+        Cow::Borrowed(&self.orders)
+    }
+
+    fn marks(&self) -> &BTreeMap<InstrumentId, Price> {
+        &self.marks
+    }
+
+    fn settlement_currency(&self) -> &str {
+        &self.settlement_currency
+    }
+
+    fn has_pending_amendment_for_account(&self, account_id: &str) -> bool {
+        self.account_id == account_id && self.has_pending_amendment
+    }
+
+    fn account_balances_for(&self, account_id: &str, venue_id: &str) -> Option<&[AccountBalance]> {
+        (self.account_id == account_id && self.venue_id == venue_id)
+            .then_some(self.balances.as_slice())
+    }
+
+    fn latest_balance_snapshot_ts(&self, account_id: &str, venue_id: &str) -> Option<u64> {
+        (self.account_id == account_id && self.venue_id.eq_ignore_ascii_case(venue_id))
+            .then_some(self.balance_timestamp)
+            .flatten()
+    }
+
+    fn post_snapshot_order_ids(
+        &self,
+        candidate_order_id: u64,
+        account_id: &str,
+        venue_id: &str,
+    ) -> Result<BTreeSet<u64>, String> {
+        if self.account_id != account_id || !self.venue_id.eq_ignore_ascii_case(venue_id) {
+            return Err(format!(
+                "FAIL_CLOSED: {venue_id} 有余额读数但找不到对应账户的余额快照"
+            ));
+        }
+        post_snapshot_order_ids_from_facts(
+            self.has_balance_snapshot,
+            &self.post_balance_facts,
+            candidate_order_id,
+            venue_id,
+        )
+    }
+}
+
+impl RiskPipelineView for LiveEventPipeline {
+    fn live_pipeline(&self) -> Option<&LiveEventPipeline> {
+        Some(self)
+    }
+
+    fn ledger(&self) -> &Ledger {
+        LiveEventPipeline::ledger(self)
+    }
+
+    fn orders(&self) -> Cow<'_, [Order]> {
+        Cow::Owned(LiveEventPipeline::orders(self))
+    }
+
+    fn marks(&self) -> &BTreeMap<InstrumentId, Price> {
+        LiveEventPipeline::marks(self)
+    }
+
+    fn settlement_currency(&self) -> &str {
+        LiveEventPipeline::settlement_currency(self)
+    }
+
+    fn has_pending_amendment_for_account(&self, account_id: &str) -> bool {
+        LiveEventPipeline::has_pending_amendment_for_account(self, account_id)
+    }
+
+    fn account_balances_for(&self, account_id: &str, venue_id: &str) -> Option<&[AccountBalance]> {
+        LiveEventPipeline::account_balances_for(self, account_id, venue_id)
+    }
+
+    fn latest_balance_snapshot_ts(&self, account_id: &str, venue_id: &str) -> Option<u64> {
+        self.log().events().iter().rev().find_map(|event| {
+            matches!(
+                &event.kind,
+                qx_core::EventKind::AccountBalanceSnapshot {
+                    account_id: snapshot_account,
+                    venue_id: snapshot_venue,
+                    ..
+                } if snapshot_account == account_id && snapshot_venue.eq_ignore_ascii_case(venue_id)
+            )
+            .then_some(event.ts)
+        })
+    }
+
+    fn post_snapshot_order_ids(
+        &self,
+        candidate_order_id: u64,
+        account_id: &str,
+        venue_id: &str,
+    ) -> Result<BTreeSet<u64>, String> {
+        let (timestamp, has_snapshot, facts) = post_balance_facts(self, account_id, venue_id);
+        let _ = timestamp;
+        post_snapshot_order_ids_from_facts(has_snapshot, &facts, candidate_order_id, venue_id)
+    }
+}
+
+fn post_balance_facts(
+    pipeline: &LiveEventPipeline,
+    account_id: &str,
+    venue_id: &str,
+) -> (Option<u64>, bool, PostBalanceFacts) {
+    let latest_snapshot = pipeline.log().events().iter().rev().find_map(|event| {
+        matches!(
+            &event.kind,
+            qx_core::EventKind::AccountBalanceSnapshot {
+                account_id: snapshot_account,
+                venue_id: snapshot_venue,
+                ..
+            } if snapshot_account == account_id && snapshot_venue.eq_ignore_ascii_case(venue_id)
+        )
+        .then_some((event.seq, event.ts))
+    });
+    let Some((balance_seq, timestamp)) = latest_snapshot else {
+        return (None, false, PostBalanceFacts::default());
+    };
+    let mut facts = PostBalanceFacts::default();
+    for event in pipeline
+        .log()
+        .events()
+        .iter()
+        .filter(|event| event.seq > balance_seq)
+    {
+        match &event.kind {
+            qx_core::EventKind::OrderSubmitted { order } if order.account_id == account_id => {
+                facts.order_ids.insert(order.client_id);
+            }
+            qx_core::EventKind::AccountCashflow { cashflow }
+                if cashflow.account_id == account_id
+                    && cashflow.venue_id.eq_ignore_ascii_case(venue_id) =>
+            {
+                facts
+                    .violations
+                    .push(PostBalanceViolation::Cashflow(cashflow.external_id.clone()));
+            }
+            qx_core::EventKind::Filled { fill } if fill.account_id == account_id => {
+                facts
+                    .violations
+                    .push(PostBalanceViolation::Fill(fill.order_id));
+            }
+            _ => {}
+        }
+    }
+    (Some(timestamp), true, facts)
+}
+
+fn post_snapshot_order_ids_from_facts(
+    has_balance_snapshot: bool,
+    facts: &PostBalanceFacts,
+    candidate_order_id: u64,
+    venue_id: &str,
+) -> Result<BTreeSet<u64>, String> {
+    if !has_balance_snapshot {
+        return Err(format!(
+            "FAIL_CLOSED: {venue_id} 有余额读数但找不到对应账户的余额快照"
+        ));
+    }
+    for violation in &facts.violations {
+        match violation {
+            PostBalanceViolation::Cashflow(external_id) => {
+                return Err(format!(
+                    "FAIL_CLOSED: 账户余额快照后发生现金流 {external_id}，需先刷新交易所余额再继续下单"
+                ));
+            }
+            PostBalanceViolation::Fill(order_id) if *order_id != candidate_order_id => {
+                return Err(format!(
+                    "FAIL_CLOSED: 账户余额快照后订单 {order_id} 已成交，需先刷新交易所余额再继续下单"
+                ));
+            }
+            PostBalanceViolation::Fill(_) => {}
+        }
+    }
+    Ok(facts
+        .order_ids
+        .iter()
+        .copied()
+        .filter(|order_id| *order_id != candidate_order_id)
+        .collect())
+}
 
 /// Fail closed when live order admission has no recent exchange balance fact.
 pub fn require_fresh_live_balance_snapshot(
@@ -28,28 +293,28 @@ pub fn require_fresh_live_balance_snapshot(
     pipeline: &LiveEventPipeline,
     now: u64,
 ) -> Result<(), String> {
+    require_fresh_live_balance_snapshot_view(worker_id, account_id, venue_id, pipeline, now)
+}
+
+pub(crate) fn require_fresh_live_balance_snapshot_view(
+    worker_id: &str,
+    account_id: Option<&str>,
+    venue_id: Option<&str>,
+    pipeline: &dyn RiskPipelineView,
+    now: u64,
+) -> Result<(), String> {
     if qx_core::VenueFamily::parse_option(venue_id) == Some(qx_core::VenueFamily::Paper) {
         return Ok(());
     }
     let account_id = account_id.ok_or_else(|| format!("worker {worker_id} 缺少 account_id"))?;
     let venue_id = venue_id.ok_or_else(|| format!("worker {worker_id} 缺少 venue_id"))?;
-    let snapshot = pipeline.log().events().iter().rev().find(|event| {
-        matches!(
-            &event.kind,
-            qx_core::EventKind::AccountBalanceSnapshot {
-                account_id: snapshot_account,
-                venue_id: snapshot_venue,
-                ..
-            } if snapshot_account == account_id && snapshot_venue.eq_ignore_ascii_case(venue_id)
-        )
-    });
-    let Some(snapshot) = snapshot else {
+    let Some(snapshot_ts) = pipeline.latest_balance_snapshot_ts(account_id, venue_id) else {
         return Err(format!(
             "FAIL_CLOSED: worker {worker_id} 尚无账户余额快照，拒绝提交订单"
         ));
     };
     let age_ms = now
-        .checked_sub(snapshot.ts)
+        .checked_sub(snapshot_ts)
         .ok_or_else(|| format!("FAIL_CLOSED: worker {worker_id} 的账户余额快照时间晚于下单时间"))?;
     if age_ms > LIVE_BALANCE_SNAPSHOT_MAX_AGE_MS {
         return Err(format!(
@@ -69,6 +334,22 @@ pub fn require_no_unresolved_live_order_operations(
     pipeline: &LiveEventPipeline,
     except_client_order_id: Option<u64>,
 ) -> Result<(), String> {
+    require_no_unresolved_live_order_operations_view(
+        worker_id,
+        account_id,
+        venue_id,
+        pipeline,
+        except_client_order_id,
+    )
+}
+
+pub(crate) fn require_no_unresolved_live_order_operations_view(
+    worker_id: &str,
+    account_id: Option<&str>,
+    venue_id: Option<&str>,
+    pipeline: &dyn RiskPipelineView,
+    except_client_order_id: Option<u64>,
+) -> Result<(), String> {
     if qx_core::VenueFamily::parse_option(venue_id) == Some(qx_core::VenueFamily::Paper) {
         return Ok(());
     }
@@ -79,7 +360,7 @@ pub fn require_no_unresolved_live_order_operations(
             "FAIL_CLOSED: worker {worker_id} 账户存在改单结果未知的订单操作，需先完成交易所对账"
         ));
     }
-    if let Some(order) = pipeline.orders().into_iter().find(|order| {
+    if let Some(order) = pipeline.orders().iter().find(|order| {
         order.account_id == account_id
             && Some(order.client_id) != except_client_order_id
             && order
@@ -888,6 +1169,26 @@ pub fn paper_account_market_specs_and_fx(
     reporting_currency: &str,
     runtime_config_path: Option<&Path>,
 ) -> Result<PaperAccountMarketValuationInputs, String> {
+    paper_account_market_specs_and_fx_view(
+        config,
+        account_id,
+        pipeline,
+        current_spec,
+        open_orders,
+        reporting_currency,
+        runtime_config_path,
+    )
+}
+
+fn paper_account_market_specs_and_fx_view(
+    config: &RuntimeConfig,
+    account_id: &str,
+    pipeline: &dyn RiskPipelineView,
+    current_spec: &TradingInstrumentSpec,
+    open_orders: &[Order],
+    reporting_currency: &str,
+    runtime_config_path: Option<&Path>,
+) -> Result<PaperAccountMarketValuationInputs, String> {
     for order in open_orders
         .iter()
         .filter(|order| order.account_id == account_id && !order.status.is_terminal())
@@ -902,11 +1203,7 @@ pub fn paper_account_market_specs_and_fx(
     let mut specs = BTreeMap::from([(current_spec.instrument.clone(), current_spec.clone())]);
     let mut held_instruments = pipeline
         .ledger()
-        .entries()
-        .iter()
-        .filter(|entry| entry.account_id == account_id)
-        .filter_map(|entry| entry.instrument.clone())
-        .collect::<BTreeSet<_>>();
+        .position_instruments_for_account(account_id);
     held_instruments.extend(
         open_orders
             .iter()
@@ -1028,9 +1325,9 @@ pub fn paper_account_market_specs_and_fx(
 
     let mut required_fx = pipeline
         .ledger()
-        .cash_balances_for(account_id)
-        .into_iter()
-        .filter(|(_, amount)| *amount != 0)
+        .cash_balances_for_ref(account_id)
+        .iter()
+        .filter(|(_, amount)| **amount != 0)
         .map(|(currency, _)| currency.trim().to_ascii_uppercase())
         .collect::<BTreeSet<_>>();
     if current_spec.product == qx_core::TradingProduct::Spot {
@@ -1178,6 +1475,16 @@ pub fn worker_risk_context(
     runtime_config: Option<&RuntimeConfig>,
     runtime_config_path: Option<&Path>,
 ) -> Result<Option<(RiskContext, OrderRiskPosition)>, String> {
+    worker_risk_context_view(worker, order, pipeline, runtime_config, runtime_config_path)
+}
+
+pub(crate) fn worker_risk_context_view(
+    worker: &WorkerConfig,
+    order: &Order,
+    pipeline: &dyn RiskPipelineView,
+    runtime_config: Option<&RuntimeConfig>,
+    runtime_config_path: Option<&Path>,
+) -> Result<Option<(RiskContext, OrderRiskPosition)>, String> {
     let Some(spec) = crate::worker_market_spec::load_worker_market_spec_for_instrument(
         worker,
         &order.instrument,
@@ -1230,11 +1537,9 @@ pub fn worker_risk_context(
         }
         _ => settlement.clone(),
     };
-    let pipeline_snapshot = pipeline.snapshot();
     let observed_balance = worker.venue_id.as_deref().and_then(|venue_id| {
-        pipeline_snapshot
-            .account_balances
-            .get(&(account_id.to_string(), venue_id.to_string()))
+        pipeline
+            .account_balances_for(account_id, venue_id)
             .and_then(|balances| {
                 balances
                     .iter()
@@ -1267,15 +1572,26 @@ pub fn worker_risk_context(
         (exact_to_raw_floor(available)?, pending_reserve)
     } else if is_paper {
         let (market_specs, fx_rates) = match runtime_config {
-            Some(config) => paper_account_market_specs_and_fx(
-                config,
-                account_id,
-                pipeline,
-                &spec,
-                &open_orders,
-                &settlement,
-                runtime_config_path,
-            )?,
+            Some(config) => match pipeline.live_pipeline() {
+                Some(live_pipeline) => paper_account_market_specs_and_fx(
+                    config,
+                    account_id,
+                    live_pipeline,
+                    &spec,
+                    &open_orders,
+                    &settlement,
+                    runtime_config_path,
+                )?,
+                None => paper_account_market_specs_and_fx_view(
+                    config,
+                    account_id,
+                    pipeline,
+                    &spec,
+                    &open_orders,
+                    &settlement,
+                    runtime_config_path,
+                )?,
+            },
             None => (
                 BTreeMap::from([(spec.instrument.clone(), spec.clone())]),
                 BTreeMap::new(),
@@ -1416,7 +1732,7 @@ pub fn worker_risk_context(
     // max-position limit against an unchanged Ledger snapshot.
     let pending_gross_exact = if worker.max_position_notional_raw.is_some() {
         qx_risk::pending_order_gross_notional_exact(
-            &pipeline.orders(),
+            pipeline.orders().as_ref(),
             order.client_id,
             account_id,
             &order.instrument,
@@ -1809,7 +2125,7 @@ fn exact_live_order_risk_facts(
 }
 
 struct LiveOrderReserveInputs<'a> {
-    pipeline: &'a LiveEventPipeline,
+    pipeline: &'a dyn RiskPipelineView,
     candidate_order_id: u64,
     account_id: &'a str,
     venue_id: &'a str,
@@ -1820,61 +2136,12 @@ struct LiveOrderReserveInputs<'a> {
 }
 
 fn live_post_snapshot_order_ids(
-    pipeline: &LiveEventPipeline,
+    pipeline: &dyn RiskPipelineView,
     candidate_order_id: u64,
     account_id: &str,
     venue_id: &str,
 ) -> Result<BTreeSet<u64>, String> {
-    let Some(balance_seq) = pipeline.log().events().iter().rev().find_map(|event| {
-        matches!(
-            &event.kind,
-            qx_core::EventKind::AccountBalanceSnapshot {
-                account_id: snapshot_account,
-                venue_id: snapshot_venue,
-                ..
-            } if snapshot_account == account_id && snapshot_venue.eq_ignore_ascii_case(venue_id)
-        )
-        .then_some(event.seq)
-    }) else {
-        return Err(format!(
-            "FAIL_CLOSED: {venue_id} 有余额读数但找不到对应账户的余额快照事实"
-        ));
-    };
-
-    let mut post_snapshot_order_ids = BTreeSet::new();
-    for event in pipeline
-        .log()
-        .events()
-        .iter()
-        .filter(|event| event.seq > balance_seq)
-    {
-        match &event.kind {
-            qx_core::EventKind::OrderSubmitted { order }
-                if order.account_id == account_id && order.client_id != candidate_order_id =>
-            {
-                post_snapshot_order_ids.insert(order.client_id);
-            }
-            qx_core::EventKind::AccountCashflow { cashflow }
-                if cashflow.account_id == account_id
-                    && cashflow.venue_id.eq_ignore_ascii_case(venue_id) =>
-            {
-                return Err(format!(
-                    "FAIL_CLOSED: 账户余额快照后发生现金流 {}，需先刷新交易所余额再继续下单",
-                    cashflow.external_id
-                ));
-            }
-            qx_core::EventKind::Filled { fill }
-                if fill.account_id == account_id && fill.order_id != candidate_order_id =>
-            {
-                return Err(format!(
-                    "FAIL_CLOSED: 账户余额快照后订单 {} 已成交，需先刷新交易所余额再继续下单",
-                    fill.order_id
-                ));
-            }
-            _ => {}
-        }
-    }
-    Ok(post_snapshot_order_ids)
+    pipeline.post_snapshot_order_ids(candidate_order_id, account_id, venue_id)
 }
 
 fn pending_order_reserve_exact(
@@ -2469,5 +2736,139 @@ mod spot_fx_resolution_tests {
             .checked_cmp(available)
             .unwrap()
             .is_gt());
+    }
+}
+
+#[cfg(test)]
+mod recovery_risk_snapshot_tests {
+    use super::*;
+    use qx_core::{AccountBalance, Fill, InstrumentId, OrderStatus, Side};
+    use qx_runtime::{RuntimeEventEnvelope, RuntimeExternalEvent, WorkerRole};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn recovery_snapshot_keeps_only_risk_state_and_balance_tail_facts() {
+        let root = std::env::temp_dir().join(format!(
+            "qx-recovery-risk-snapshot-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut pipeline = LiveEventPipeline::open(&root, "main", "USDT").unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::AccountBalanceSnapshot {
+                    account_id: "main".into(),
+                    venue_id: "BINANCE".into(),
+                    balances: vec![AccountBalance {
+                        asset: "USDT".into(),
+                        free: Money::from_i64(100),
+                        locked: Money::ZERO,
+                        borrowed: Money::ZERO,
+                        net_cash_balance: None,
+                        exact_amounts: None,
+                    }],
+                },
+                10,
+                10,
+                1,
+                "balance-1",
+            ))
+            .unwrap();
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let order = Order {
+            client_id: 7,
+            instrument,
+            side: Side::Buy,
+            qty: Quantity::from_i64(1),
+            limit: None,
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: None,
+            exact_amounts: None,
+        };
+        pipeline.register_order(order.clone(), 11).unwrap();
+        let mut other_account_order = order.clone();
+        other_account_order.client_id = 8;
+        other_account_order.account_id = "other".into();
+        pipeline.register_order(other_account_order, 11).unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::Accepted {
+                    client_order_id: 7,
+                    venue_order_id: Some("venue-7".into()),
+                },
+                12,
+                12,
+                2,
+                "accepted-7",
+            ))
+            .unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::Fill {
+                    fill: Fill {
+                        order_id: 7,
+                        qty: Quantity::from_i64(1),
+                        price: Price::from_i64(10),
+                        fee: Money::ZERO,
+                        ts: 13,
+                        account_id: "main".into(),
+                        venue_id: Some("BINANCE".into()),
+                        venue_order_id: Some("venue-7".into()),
+                        ..Fill::default()
+                    },
+                },
+                13,
+                13,
+                3,
+                "fill-7",
+            ))
+            .unwrap();
+
+        let worker = WorkerConfig {
+            id: "recovery".into(),
+            role: WorkerRole::SpreadRecovery,
+            enabled: true,
+            account_id: Some("main".into()),
+            venue_id: Some("BINANCE".into()),
+            endpoint: None,
+            symbols: Vec::new(),
+            settlement_currency: Some("USDT".into()),
+            credential_env: None,
+            credential_files: None,
+            instrument_spec_path: None,
+            paper_initial_cash_raw: None,
+            max_order_notional_raw: None,
+            max_position_notional_raw: None,
+        };
+        let snapshot = RecoveryRiskSnapshot::capture(&pipeline, &worker);
+
+        assert_eq!(snapshot.orders.len(), 1);
+        assert!(!pipeline.ledger().entries().is_empty());
+        assert!(snapshot.ledger.entries().is_empty());
+        assert_eq!(snapshot.balances[0].asset, "USDT");
+        assert!(snapshot.account_balances_for("main", "BINANCE").is_some());
+        assert!(snapshot.account_balances_for("main", "binance").is_none());
+        assert_eq!(
+            snapshot.latest_balance_snapshot_ts("main", "binance"),
+            Some(10)
+        );
+        assert!(snapshot
+            .post_snapshot_order_ids(7, "main", "BINANCE")
+            .unwrap()
+            .is_empty());
+        assert!(snapshot
+            .post_snapshot_order_ids(99, "main", "BINANCE")
+            .unwrap_err()
+            .contains("订单 7 已成交"));
+
+        drop(snapshot);
+        drop(pipeline);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
