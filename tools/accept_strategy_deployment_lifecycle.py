@@ -347,7 +347,7 @@ def main() -> int:
     supervisor: subprocess.Popen[bytes] | None = None
     console: subprocess.Popen[bytes] | None = None
     result: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "qianxing_strategy_deployment_lifecycle_acceptance",
         "run_id": run_id,
         "environment": f"{platform.system().lower()}_local_{args.storage_backend}_paper_loopback",
@@ -621,6 +621,28 @@ def main() -> int:
         failed = submit_operation("deploy", 3, expect="failed")
         error_text = str(failed.get("error_message") or "")
         require("restored" in error_text.lower(), f"failed deployment did not confirm restoration: {failed}")
+        process_log_dir = work_dir / "data" / "process-logs"
+        preserved_stderr = process_log_dir / f"{worker_id}.failed.err.log"
+        require(
+            "bounded replacement diagnostics retained" in error_text.lower()
+            and preserved_stderr.name in error_text,
+            f"failed deployment response did not identify its diagnostic snapshot: {failed}",
+        )
+        require(
+            preserved_stderr.is_file(),
+            "failed replacement stderr was overwritten before it could be inspected",
+        )
+        preserved_bytes = preserved_stderr.read_bytes()
+        require(
+            0 < len(preserved_bytes) <= 64 * 1024
+            and preserved_bytes.startswith(
+                b"failed strategy replacement; retained process output tail follows\n"
+            )
+            and len(preserved_bytes) > len(
+                b"failed strategy replacement; retained process output tail follows\n"
+            ),
+            "failed replacement stderr snapshot is empty or outside its size bound",
+        )
         restored = projection()
         require(restored.get("desired_revision") == 2, f"previous revision was not restored: {restored}")
         require("running" in json.dumps(restored).lower(), f"previous worker is not observed running: {restored}")
@@ -682,6 +704,11 @@ def main() -> int:
                 "csrf_cookie_issued": True,
                 "revision_count": 4,
                 "restored_revision": restored.get("desired_revision"),
+                "replacement_failure_diagnostics": {
+                    "stderr_file": preserved_stderr.name,
+                    "stderr_bytes": len(preserved_bytes),
+                    "stderr_sha256": hashlib.sha256(preserved_bytes).hexdigest(),
+                },
                 "final_projection": stopped,
                 "supervisor_restarted": True,
                 "supervisor_stopped_gracefully": supervisor_stopped_gracefully,
@@ -731,11 +758,18 @@ def main() -> int:
                 ("supervisor", work_dir / "supervisor.log"),
                 ("console", work_dir / "console.log"),
             ]
-            worker_logs = sorted(
-                (work_dir / "data" / "process-logs").glob("*.err.log"),
+            process_log_dir = work_dir / "data" / "process-logs"
+            failed_worker_logs = sorted(
+                process_log_dir.glob("*.failed.err.log"),
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )
+            current_worker_logs = sorted(
+                process_log_dir.glob("*.err.log"),
                 key=lambda path: path.stat().st_mtime,
                 reverse=True,
             )[:3]
+            worker_logs = list(dict.fromkeys(failed_worker_logs + current_worker_logs))[:6]
             diagnostic_paths.extend((f"worker_stderr_{path.name}", path) for path in worker_logs)
             tails: dict[str, str] = {}
             for label, path in diagnostic_paths:

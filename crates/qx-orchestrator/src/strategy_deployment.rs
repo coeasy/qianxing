@@ -483,6 +483,16 @@ fn execute_operation(
                 if error.starts_with("FENCE_FAILED:") {
                     return Err(error);
                 }
+                let error = match preserve_failed_replacement_logs(log_dir, &operation.worker_id) {
+                    Ok(retained) if !retained.is_empty() => format!(
+                        "{error}; bounded replacement diagnostics retained: {}",
+                        retained.join(", ")
+                    ),
+                    Ok(_) => error,
+                    Err(diagnostic_error) => format!(
+                        "{error}; could not preserve replacement diagnostics: {diagnostic_error}"
+                    ),
+                };
                 if had_previous_worker {
                     let previous_path = previous_config_path.ok_or_else(|| {
                         "FENCE_FAILED: previous strategy config snapshot is unavailable".to_string()
@@ -545,6 +555,29 @@ fn execute_operation(
         active_bundles.insert(operation.worker_id.clone(), bundle);
     }
     Ok(())
+}
+
+fn preserve_failed_replacement_logs(
+    log_dir: &Path,
+    worker_id: &str,
+) -> Result<Vec<String>, String> {
+    let mut retained = Vec::new();
+    for stream in ["out", "err"] {
+        let source = log_dir.join(format!("{worker_id}.{stream}.log"));
+        let destination = log_dir.join(format!("{worker_id}.failed.{stream}.log"));
+        match crate::process_logs::preserve_failure_tail(&source, &destination) {
+            Ok(true) => retained.push(
+                destination
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("worker.failed.log")
+                    .to_string(),
+            ),
+            Ok(false) => {}
+            Err(error) => return Err(format!("{}: {error}", source.display())),
+        }
+    }
+    Ok(retained)
 }
 
 #[allow(clippy::too_many_arguments)]
