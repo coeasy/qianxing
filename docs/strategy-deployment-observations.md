@@ -225,6 +225,12 @@ Both fragments are additive to a complete runtime configuration; certificate pat
 
 This Paper run started no venue worker, sent no orders, made no external network requests, and did not assess API/live readiness. The reusable runner now supports Windows and POSIX process control plus file, SQLite, and PostgreSQL storage. The `strategy-storage-recovery` job passed on hosted Ubuntu in PR CI #423 (source `3e92babb`), including PostgreSQL deployment lifecycle, supervisor/checkpoint restart, queue capacity, and six worker crash boundaries; the uploaded artifact and run details are recorded in `maturity/evidence/hosted-ci-release-candidate-2026-11-10.json`. Full live-readiness proof and authorized venue evidence remain open.
 
+## R12 hosted Live Unknown recovery acceptance
+
+The Backend service contracts job in [hosted PR CI #423](https://github.com/coeasy/qianxing/actions/runs/42685651313/job/129391633146) passed R12-AC01 on Ubuntu with file, SQLite, and PostgreSQL storage. For both `failed` and `executed` outcomes, a child process persisted an Unknown result, confirmed the execution cursor stayed fixed, and exited with code 86; a separate process recovered after lease expiry and advanced the cursor only after fixture venue facts and a newer reconciliation were present. The PostgreSQL test DSN was configured in the hosted job. The review record is [r12-hosted-linux-review-2026-11-23.json](../maturity/evidence/r12-hosted-linux-review-2026-11-23.json).
+
+This is process-restart and storage-contract evidence, not venue behavior validation: venue outcomes/reconciliation are fixtures, no external network was used, and no order was sent. The separate `strategy-storage-recovery-linux` artifact covers six Paper worker crash boundaries and queue limits; it does not replace the R12 Live Unknown test. Authorized venue/testnet acceptance, credentials, trust roots, and production/live readiness remain open.
+
 ## R13 SQLite lifecycle and reconciliation gate
 
 `maturity/evidence/r13-strategy-deployment-lifecycle-sqlite-2026-11-04.json` repeats the local Paper deploy/pause/resume/rollback/failure-restoration/stop sequence with the control store and control-command queue configured for SQLite. The deployment revision registry, strategy observations, and execution cursor remain file-backed under `storage.data_dir`; this evidence therefore proves the SQLite control-plane path and its interaction with file-backed deployment state, not PostgreSQL or a database-backed checkpoint cursor.
