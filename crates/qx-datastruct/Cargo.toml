@@ -3,6 +3,7 @@ name = "qx-datastruct"
 description = "确定性 Bar/Quote 列式数据边界与 DataView facade"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 

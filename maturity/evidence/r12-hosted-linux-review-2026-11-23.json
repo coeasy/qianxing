@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "kind": "qianxing_acceptance_human_review",
+  "work_package": "R12",
+  "acceptance_id": "R12-AC01",
+  "reviewed_at": "2026-11-23",
+  "decision": "accepted_for_hosted_test_evidence_only",
+  "source": {
+    "commit": "3e92babbfde35284b6da44c14bf31fcf6b95d433",
+    "pull_request": "https://github.com/coeasy/qianxing/pull/423",
+    "workflow_run_id": 42685651313,
+    "workflow_run_url": "https://github.com/coeasy/qianxing/actions/runs/42685651313",
+    "backend_service_contracts_job_id": 129391633146,
+    "backend_service_contracts_job_url": "https://github.com/coeasy/qianxing/actions/runs/42685651313/job/129391633146",
+    "acceptance_run_id": "14c7f947-f1da-4c20-9351-8576518647f9"
+  },
+  "reviewed_evidence": {
+    "live_unknown_process_recovery": {
+      "result": "passed",
+      "backends": ["file", "sqlite", "postgres"],
+      "outcomes": ["failed", "executed"],
+      "process_boundary": "a child process persists Unknown, verifies the cursor is unchanged, then exits with code 86; a separate recovery process waits for lease expiry, resolves fixture-provided venue facts and a fresh reconciliation, and advances the cursor",
+      "postgres_test_dsn_present": true,
+      "external_network_access": false,
+      "real_order_sent": false,
+      "evidence_location": "GitHub Actions Backend service contracts job log; the R12 acceptance log and source manifest were not bundled in the separate strategy-storage artifact"
+    },
+    "linux_strategy_storage_artifact": {
+      "artifact_id": 13704274109,
+      "artifact_name": "strategy-storage-recovery-linux",
+      "size_bytes": 40419984,
+      "sha256": "58cb545dd80224b843473f9c90ae470e49cbbb59a7a4a94dce3125609dc4678b",
+      "downloaded_sha256_verified": true,
+      "reviewed_files": [
+        "evidence/strategy-worker-crash-recovery-linux-file.json",
+        "evidence/strategy-worker-crash-recovery-linux-sqlite.json",
+        "evidence/strategy-worker-crash-recovery-linux-postgres.json",
+        "evidence/r13-strategy-deployment-lifecycle-linux-postgres.json",
+        "evidence/r13-strategy-deployment-lifecycle-linux-postgres-checkpoint-restart.json",
+        "evidence/job-queue-capacity-linux-file.json",
+        "evidence/job-queue-capacity-linux-sqlite.json",
+        "evidence/job-queue-capacity-linux-postgres.json",
+        "evidence/control-command-queue-capacity-linux-file.json",
+        "evidence/control-command-queue-capacity-linux-sqlite.json",
+        "evidence/control-command-queue-capacity-linux-postgres.json"
+      ],
+      "paper_crash_recovery": {
+        "backends": ["file", "sqlite", "postgres"],
+        "crash_points": [
+          "control_command_persisted",
+          "command_result_persisted",
+          "cursor_checkpoint_committed",
+          "scheduler_run_completed",
+          "queue_job_acknowledged",
+          "prepared_journal_cleaned_after_ack"
+        ],
+        "injected_exit_code": 86,
+        "recovery_exit_code": 0,
+        "idempotent_restart_exit_code": 0,
+        "external_network_access": false,
+        "real_order_sent": false
+      },
+      "queue_capacity": {
+        "job_queue_capacity": 4096,
+        "control_command_queue_capacity": 4096,
+        "overflow_rejected": true,
+        "oversize_control_command_rejected": true
+      }
+    }
+  },
+  "limitations": [
+    "Venue outcomes and reconciliation in R12-AC01 are fixture-provided; no authorized venue or testnet request was made.",
+    "The six-boundary artifact covers Paper worker crash recovery and does not replace the separate Live Unknown contract test.",
+    "These results do not establish production/live readiness, licensed market-data provenance, or supplier trust-root provisioning."
+  ]
+}

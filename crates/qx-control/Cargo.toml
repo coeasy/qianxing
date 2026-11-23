@@ -3,6 +3,7 @@ name = "qx-control"
 description = "查询、事件订阅与带审计的控制命令契约"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 

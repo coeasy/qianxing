@@ -3,6 +3,7 @@ name = "qx-spec"
 description = "牵星声明式规格对象：项目/实验/运行/能力/证据/模式登记册的地基契约"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 

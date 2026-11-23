@@ -52,10 +52,13 @@ def validate_distribution(metadata, catalog, package="qx-sdk"):
                if item["id"] in set(metadata["workspace_members"])}
     entries = catalog.get("packages")
     errors = []
-    if catalog.get("schema_version") != 1:
-        errors.append("package distribution schema_version must be 1")
+    if catalog.get("schema_version") != 2:
+        errors.append("package distribution schema_version must be 2")
     if catalog.get("sdk_root") != package:
         errors.append(f"package catalog sdk_root must match selected SDK root {package!r}")
+    minimum_rust_version = catalog.get("minimum_rust_version")
+    if not isinstance(minimum_rust_version, str) or not minimum_rust_version.strip():
+        errors.append("package catalog must declare minimum_rust_version")
     if not isinstance(entries, list):
         return [*errors, "package distribution catalog must contain a packages array"]
 
@@ -114,6 +117,12 @@ def validate_distribution(metadata, catalog, package="qx-sdk"):
 
     closure_items = {item["name"]: item for item in plan["packages"]}
     for name, item in closure_items.items():
+        manifest = members.get(name)
+        if manifest is not None and manifest.get("rust_version") != minimum_rust_version:
+            errors.append(
+                f"SDK package {name} must declare rust-version {minimum_rust_version!r}; "
+                f"found {manifest.get('rust_version')!r}"
+            )
         if item["missing_metadata"]:
             errors.append(f"SDK package {name} is missing metadata: {', '.join(item['missing_metadata'])}")
         if item["outside_workspace_path_dependencies"]:
@@ -128,6 +137,7 @@ def build_report(metadata, catalog):
     return {
         "schema_version": catalog["schema_version"],
         "sdk_root": catalog["sdk_root"],
+        "minimum_rust_version": catalog["minimum_rust_version"],
         "publish_order": plan["publish_order"],
         "packages": [
             {

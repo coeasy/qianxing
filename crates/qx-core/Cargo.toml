@@ -3,6 +3,7 @@ name = "qx-core"
 description = "牵星内核：时间戳口径、事件溯源、重放校验与定点数值"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 

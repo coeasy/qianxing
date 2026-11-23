@@ -203,6 +203,18 @@ jobs:
           node --check web/console/app.js
           node --test web/console/*.test.js web/console/*.test.cjs
 
+  rust-sdk-msrv:
+    name: Rust SDK dependency closure (MSRV 1.87)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.87.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Check published SDK closure at its declared MSRV
+        run: |
+          python3 tools/check_package_distribution.py
+          cargo check --locked -p qx-sdk --lib
+
   architecture-shards:
     name: Architecture invariants (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest

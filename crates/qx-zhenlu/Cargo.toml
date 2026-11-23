@@ -3,6 +3,7 @@ name = "qx-zhenlu"
 description = "针路：执行与路由，风控门禁、订单管理、路由决策"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
