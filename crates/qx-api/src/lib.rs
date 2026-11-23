@@ -3148,6 +3148,7 @@ mod tests {
         Priority, EXECUTION_CAPABILITY_DECISION_SCHEMA_VERSION,
     };
     use qx_protocol::AccountSnapshot;
+    use rustls::pki_types::pem::PemObject;
     use rustls::server::{ClientHello, ResolvesServerCert};
     use rustls::sign::CertifiedKey;
     use std::collections::BTreeMap;
@@ -4290,6 +4291,76 @@ mod tests {
         client.shutdown(Shutdown::Write).unwrap();
         let result = worker.join().unwrap();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn tls_handshake_deadline_driver_completes_a_verified_application_exchange() {
+        let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../contract-tests/tests/fixtures/mtls");
+        let server_certificates = load_certificate_chain_from_pem(fixtures.join("server.pem"))
+            .expect("load TLS server certificate fixture");
+        let server_key =
+            rustls::pki_types::PrivateKeyDer::from_pem_file(fixtures.join("server-key.pem"))
+                .expect("load TLS server key fixture");
+        let server_config = Arc::new(
+            ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(server_certificates, server_key)
+                .expect("valid TLS server fixture"),
+        );
+        let mut roots = rustls::RootCertStore::empty();
+        for certificate in load_certificate_chain_from_pem(fixtures.join("ca.pem"))
+            .expect("load TLS root certificate fixture")
+        {
+            roots.add(certificate).expect("add TLS test root");
+        }
+        let client_config = Arc::new(
+            rustls::ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth(),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").expect("loopback TLS listener");
+        let address = listener.local_addr().expect("TLS listener address");
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept TLS client");
+            let mut secured = tls_stream(stream, server_config).expect("complete TLS handshake");
+            let mut request = [0; 4];
+            secured
+                .read_exact(&mut request)
+                .expect("read encrypted application request");
+            assert_eq!(&request, b"ping");
+            secured
+                .write_all(b"pong")
+                .expect("write encrypted application response");
+        });
+
+        let socket = TcpStream::connect(address).expect("connect TLS client");
+        socket
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .expect("set TLS client read timeout");
+        socket
+            .set_write_timeout(Some(Duration::from_secs(3)))
+            .expect("set TLS client write timeout");
+        let server_name = "localhost".try_into().expect("valid TLS server name");
+        let connection = rustls::ClientConnection::new(client_config, server_name)
+            .expect("create TLS client connection");
+        let mut client = rustls::StreamOwned::new(connection, socket);
+        while client.conn.is_handshaking() {
+            client
+                .conn
+                .complete_io(&mut client.sock)
+                .expect("client side TLS handshake");
+        }
+        client
+            .write_all(b"ping")
+            .expect("write encrypted application request");
+        client.flush().expect("flush encrypted application request");
+        let mut response = [0; 4];
+        client
+            .read_exact(&mut response)
+            .expect("read encrypted application response");
+        assert_eq!(&response, b"pong");
+        server.join().expect("TLS server worker completes");
     }
 
     #[test]
