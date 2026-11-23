@@ -168,7 +168,7 @@ jobs:
       - name: Confirm this matrix leg produced a wheel
         shell: bash
         run: test -n "$(find dist -maxdepth 1 -name '*.whl' -print -quit)"
-      - name: Clean-install and exercise the published Python surface
+      - name: Clean-install, verify offline quickstart report, and exercise Python API
         shell: bash
         run: |
           set -euo pipefail

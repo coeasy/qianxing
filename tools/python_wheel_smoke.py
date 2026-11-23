@@ -4,8 +4,12 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
 import sys
 import tempfile
+import time
 from importlib.metadata import version as package_version
 from pathlib import Path
 
@@ -75,6 +79,74 @@ def write_ashare_frame(path: Path, bars: int = 60) -> None:
     )
 
 
+def exercise_installed_quickstart() -> dict[str, object]:
+    """Run the installed console script through a complete offline report flow."""
+    command = shutil.which("qianxing")
+    if command is None:
+        raise AssertionError("installed qianxing console entry point is missing from PATH")
+
+    environment = os.environ.copy()
+    environment.pop("QX_DEPLOY_DIR", None)
+    environment["QX_PYTHON"] = sys.executable
+    with tempfile.TemporaryDirectory(prefix="qianxing-wheel-first-run-") as temporary:
+        working = Path(temporary).resolve()
+        project = working / "sample-project"
+        started = time.perf_counter()
+        process = subprocess.run(
+            [command, "quickstart", str(project), "--rows", "80", "--format", "html"],
+            cwd=working,
+            env=environment,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+            check=False,
+        )
+        elapsed_seconds = time.perf_counter() - started
+        if process.returncode != 0:
+            raise AssertionError(
+                "installed qianxing quickstart failed "
+                f"(exit {process.returncode})\nstdout:\n{process.stdout}\nstderr:\n{process.stderr}"
+            )
+        try:
+            result = json.loads(process.stdout)
+        except json.JSONDecodeError as error:
+            raise AssertionError(
+                f"installed qianxing quickstart must emit one JSON result: {process.stdout!r}"
+            ) from error
+
+        assert result["status"] == "succeeded", result
+        assert result["project_root"] == str(project), result["project_root"]
+        data = result["data"]
+        assert data["source"] == "sample", data
+        assert data["is_sample"] is True, data
+        assert data["rows"] == 80, data
+        assert isinstance(data["instrument"], str) and data["instrument"], data
+        assert result["preflight"]["status"] == "ready", result["preflight"]
+        assert isinstance(result["project_run_id"], str) and result["project_run_id"], result
+        assert result["artifacts_verified"] is True, result
+
+        report = result["report"]
+        assert report["status"] == "succeeded", report
+        assert report["source_artifacts_verified_after_render"] is True, report
+        assert report["report_renderer"]["origin"] == "bundled", report["report_renderer"]
+        assert report["report_renderer"]["status"] == "ready", report["report_renderer"]
+        html = Path(report["report_paths"]["html"]).resolve(strict=True)
+        html.relative_to(project)
+        assert html.stat().st_size > 0, html
+        assert report["report_artifacts"]["html"]["present"] is True, report
+        assert len(report["report_sha256"]) == 64, report
+
+        return {
+            "project_run_id": result["project_run_id"],
+            "rows": result["data"]["rows"],
+            "elapsed_seconds": round(elapsed_seconds, 3),
+            "report_bytes": html.stat().st_size,
+            "report_sha256": report["report_sha256"],
+            "renderer_origin": report["report_renderer"]["origin"],
+        }
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         raise SystemExit("usage: python_wheel_smoke.py <repository-root>")
@@ -83,6 +155,7 @@ def main() -> int:
     assert qx.__version__ == installed_version, (qx.__version__, installed_version)
     assert native_version == installed_version, (native_version, installed_version)
     root = Path(sys.argv[1]).resolve()
+    quickstart = exercise_installed_quickstart()
     bars = root / "deploy" / "qianxing.bar-frame.example.json"
     primary = root / "deploy" / "qianxing.bar-frame.pairs-primary.example.json"
     reference = root / "deploy" / "qianxing.bar-frame.pairs-reference.example.json"
@@ -370,6 +443,12 @@ def main() -> int:
 
         print(
             "wheel e2e "
+            f"quickstart_run={quickstart['project_run_id']} "
+            f"quickstart_rows={quickstart['rows']} "
+            f"quickstart_seconds={quickstart['elapsed_seconds']} "
+            f"quickstart_report_bytes={quickstart['report_bytes']} "
+            f"quickstart_report_sha256={quickstart['report_sha256']} "
+            f"quickstart_renderer={quickstart['renderer_origin']} "
             f"strategies={len(strategies)} rows={verdict.rows} fills={outcome.fills} "
             f"ashare_fills={ashare_outcome.fills} "
             f"classic_selection={classic_selection.succeeded_candidates}/{classic_selection.total_candidates} "
