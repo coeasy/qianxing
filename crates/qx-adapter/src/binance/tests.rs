@@ -1,3 +1,4 @@
+use super::market_data::parse_book_ticker;
 use super::*;
 use qx_core::{
     ConditionalOrderIntent, ConditionalOrderKind, ExactDecimal, ExactOrderAmounts,
