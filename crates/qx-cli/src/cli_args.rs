@@ -398,6 +398,7 @@ impl Command {
             Self::Report(args) => args.json,
             Self::Plan(args) => args.json,
             Self::Ecosystem(args) | Self::All(args) | Self::Verify(args) => args.json,
+            Self::Guide(args) => args.json,
             Self::Config { action } => action.as_ref().is_some_and(ConfigCommand::machine_output),
             Self::Run { action } => action.as_ref().is_some_and(RunCommand::machine_output),
             // version 与 app 只有机读正文，和 --json 一样抑制横幅（U1）。

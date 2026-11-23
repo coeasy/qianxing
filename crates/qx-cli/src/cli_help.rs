@@ -83,8 +83,8 @@ pub(crate) fn print_cli_help() {
       --profile ccxt 默认使用 OKX BTC 永续合约最近 30 天 1h 真实公开行情，可用 --exchange/--instrument/--days/--timeframe 调整；--as-of-ms 固定窗口上限以复现同一结束 K 线；只读，不加载密钥或提交订单。
       CCXT 专属参数只能与 --profile ccxt 组合；最多 365 天、100000 根 Bar，月份周期不支持。
       --html 可额外生成自包含 HTML 报告与 SVG 图表；只写指定目录，任一步失败只回显那一步的命令原文并以 2 退出。
-  guide [researcher|strategy-author|operator|integrator]
-      按角色打印可复制的上手步骤；不传角色时列出四条路径。
+  guide [researcher|strategy-author|operator|integrator] [--json]
+      按角色打印可复制的上手步骤；--json 输出 schema_version=1 的机器可读指南，不传角色时包含四条路径。
   doctor [runtime.json] [--json]
       一次检查配置、路径、策略输入和"这份配置能否构建出运行时监督器"；不启动 worker，
       因此不判运行健康，也不连接交易所、不发送订单。

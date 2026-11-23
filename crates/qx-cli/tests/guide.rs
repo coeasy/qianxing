@@ -100,6 +100,62 @@ fn role_guides_are_reachable_and_keep_the_first_report_path_within_five_steps() 
 }
 
 #[test]
+fn guide_json_lists_four_machine_readable_five_step_paths() {
+    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args(["guide", "--json"])
+        .output()
+        .expect("run qx-cli guide --json");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    let document: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("guide --json emits one JSON document");
+    assert_eq!(document["schema_version"], 1);
+    let audiences = document["audiences"]
+        .as_array()
+        .expect("guide JSON audiences is an array");
+    assert_eq!(
+        audiences
+            .iter()
+            .map(|audience| audience["id"].as_str().unwrap_or_default())
+            .collect::<Vec<_>>(),
+        ["researcher", "strategy-author", "operator", "integrator"]
+    );
+    for audience in audiences {
+        let steps = audience["steps"]
+            .as_array()
+            .expect("each audience has structured steps");
+        assert_eq!(steps.len(), 5, "{}", audience["id"]);
+        for (index, step) in steps.iter().enumerate() {
+            assert_eq!(step["number"], index as u64 + 1);
+            assert!(step["action"].as_str().is_some());
+            assert!(step["result"].as_str().is_some());
+            if let Some(command) = step["command"].as_str() {
+                assert!(command.starts_with("qx-cli "), "{command}");
+            }
+        }
+        assert_eq!(audience["terms"].as_array().map(Vec::len), Some(3));
+    }
+}
+
+#[test]
+fn guide_json_can_select_one_audience() {
+    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args(["guide", "--json", "operator"])
+        .output()
+        .expect("run qx-cli guide --json operator");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    let document: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("filtered guide emits JSON");
+    assert_eq!(document["schema_version"], 1);
+    let audiences = document["audiences"]
+        .as_array()
+        .expect("guide JSON audiences is an array");
+    assert_eq!(audiences.len(), 1);
+    assert_eq!(audiences[0]["id"], "operator");
+}
+
+#[test]
 fn researcher_guide_command_produces_a_report_that_can_be_read_back() {
     let binary = env!("CARGO_BIN_EXE_qx-cli");
     let guide = Command::new(binary)

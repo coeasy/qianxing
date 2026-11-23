@@ -25308,32 +25308,37 @@ def cli_behavior_parity_check() -> None:
 
 
 def cli_guide_acceptance_check() -> None:
-    """WP-5.4: require the documented researcher route to produce and read back a report."""
+    """WP-5.4: require shared human/JSON role guides and a readable first report."""
     guide_path = ROOT / "crates/qx-cli/src/guide.rs"
     test_path = ROOT / "crates/qx-cli/tests/guide.rs"
+    cargo_manifest_path = ROOT / "crates/qx-cli/Cargo.toml"
     quickstart = (ROOT / "crates/qx-cli/src/quickstart.rs").read_text(encoding="utf-8")
     guide = guide_path.read_text(encoding="utf-8") if guide_path.is_file() else ""
     test = test_path.read_text(encoding="utf-8") if test_path.is_file() else ""
+    cargo_manifest = (
+        cargo_manifest_path.read_text(encoding="utf-8") if cargo_manifest_path.is_file() else ""
+    )
+    cli_args = _read_text(ROOT / "crates/qx-cli/src/cli_args.rs")
     check(
-        all(
-            function in guide
-            for function in (
-                "fn print_researcher()",
-                "fn print_strategy_author()",
-                "fn print_operator()",
-                "fn print_integrator()",
-            )
-        )
+        "fn audience_guide(" in guide
+        and "fn all_audience_guides()" in guide
+        and "fn print_audience(" in guide
+        and "fn print_json(" in guide
+        and "schema_version: 1" in guide
+        and "Self::Guide(args) => args.json" in cli_args
         and "qx-cli quickstart ./qianxing-demo" in guide
         and "plan schema-registry maturity/schema-registry.json --json" in guide
         and "fn researcher_guide_command_produces_a_report_that_can_be_read_back()" in test
+        and "fn guide_json_lists_four_machine_readable_five_step_paths()" in test
+        and "fn guide_json_can_select_one_audience()" in test
+        and 'name = "guide"\npath = "tests/guide.rs"' in cargo_manifest
         and "run the command printed by the researcher guide" in test
         and ".summary.json" in test
         and '"--json"' in test
         and "contains_result_hash" in test
         and "use super::*;" not in production_text(quickstart),
-        "WP-5.4 研究者指南按原样命令实际生成摘要并以 JSON 复读同一 result_hash",
-        "缺少四角色入口、真实指南 quickstart→摘要→复读用例未覆盖产物与指纹，"
+        "WP-5.4 四角色指南共用定义支持文本与版本化 JSON，研究者路径实际生成摘要并复读同一 result_hash",
+        "缺少四角色共享指南、可选角色 JSON，或 guide 集成用例未注册/未覆盖产物与指纹，"
         "或 quickstart 生产模块重新隐式依赖 crate 根导入",
     )
 
