@@ -27862,7 +27862,7 @@ def capability_matrix_check() -> None:
     zhenlu_source = _text_or_empty(ROOT / "crates/qx-zhenlu/src/lib.rs")
     execution_source = _text_or_empty(ROOT / "crates/qx-execution/src/lib.rs")
     capability_test_source = _text_or_empty(ROOT / "crates/qx-execution/src/tests/gateway_port.rs")
-    binance_source = _text_or_empty(ROOT / "crates/qx-adapter/src/binance.rs")
+    binance_reconcile_source = _text_or_empty(ROOT / "crates/qx-adapter/src/binance/reconcile.rs")
     ccxt_source = _text_or_empty(ROOT / "crates/qx-adapter/src/ccxt.rs")
     capability_impl_source = _text_or_empty(ROOT / "crates/qx-zhenlu/src/venue_capabilities.rs")
     capability_boundary_ready = (
@@ -27870,8 +27870,8 @@ def capability_matrix_check() -> None:
         is not None
         and "self.venue.validate_submit_capabilities(&order)?" in execution_source
         and "self.venue.capabilities().validate_cancel()?" in execution_source
-        and ".require_query()?" in function_body(binance_source, "fetch_remote_snapshot")
-        and ".require_reconciliation()?" in function_body(binance_source, "reconcile_remote")
+        and ".require_query()?" in function_body(binance_reconcile_source, "fetch_remote_snapshot")
+        and ".require_reconciliation()?" in function_body(binance_reconcile_source, "reconcile_remote")
         and ".require_query()?" in function_body(ccxt_source, "sync_order")
         and "VenueMarketScope::BinanceSpot" in capability_impl_source
         and "VenueMarketScope::RuntimeConfigured" in capability_impl_source
@@ -33536,7 +33536,13 @@ def binance_unknown_outcome_recovery_check() -> None:
     pipeline_source = (ROOT / "crates/qx-runtime/src/pipeline.rs").read_text(encoding="utf-8")
     commit_source = (ROOT / "crates/qx-runtime/src/pipeline/commit.rs").read_text(encoding="utf-8")
     reconcile_source = (ROOT / "crates/qx-service/src/binance_reconcile_host.rs").read_text(encoding="utf-8")
-    adapter_source = (ROOT / "crates/qx-adapter/src/binance.rs").read_text(encoding="utf-8")
+    adapter_source = "\n".join(
+        (ROOT / path).read_text(encoding="utf-8")
+        for path in (
+            "crates/qx-adapter/src/binance.rs",
+            "crates/qx-adapter/src/binance/reconcile.rs",
+        )
+    )
     query_gate_source = (ROOT / "crates/qx-service/src/execution_capability_gate.rs").read_text(encoding="utf-8")
     strategy_updates = "\n".join(
         (ROOT / path).read_text(encoding="utf-8")
