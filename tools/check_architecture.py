@@ -17893,7 +17893,9 @@ def pipeline_cursor_refresh_check() -> None:
     check(
         apply_tail is not None
         and "self.log.append_batch(tail)?" in apply_tail
-        and "apply_index_event(event)?" in apply_tail
+        and "let tail_start = self.log.events().len();" in apply_tail
+        and "tail.iter().enumerate()" in apply_tail
+        and "self.apply_index_event(event, tail_start + offset)?" in apply_tail
         and "rebuild_runtime_indexes(" not in apply_tail,
         "apply_tail 用 append_batch 接日志 + 逐条增量应用索引，不做整份重建",
         "apply_tail 不在盘，或没走 append_batch / 仍在整份重建索引",
@@ -18294,6 +18296,7 @@ def paper_execution_service_ownership_check() -> None:
 def live_balance_order_reservation_check() -> None:
     """Live admission reserves local orders created after the latest exchange balance fact."""
     service_risk = case_source("crates/qx-service/src/risk_host.rs")
+    runtime_pipeline = case_source("crates/qx-runtime/src/pipeline.rs")
     runtime = service_risk
     binance = case_source("crates/qx-service/src/binance_execution_host.rs")
     ccxt_submit = case_source("crates/qx-service/src/ccxt_execution_host.rs")
@@ -18328,7 +18331,11 @@ def live_balance_order_reservation_check() -> None:
         and "pub fn worker_risk_context(" in service_risk
         and "live_post_snapshot_order_reserve_exact(" in service_risk
         and "live_post_snapshot_order_ids(" in helper
-        and "event.seq > balance_seq" in post_snapshot_ids
+        and "latest_account_balance_snapshot_cursor" in post_snapshot_ids
+        and ".get(tail_start..).unwrap_or_default()" in post_snapshot_ids
+        and "event.seq > balance_seq" not in post_snapshot_ids
+        and "account_balance_snapshot_cursors" in runtime_pipeline
+        and "pub fn latest_account_balance_snapshot_cursor(" in runtime_pipeline
         and "EventKind::OrderSubmitted { order }" in post_snapshot_ids
         and "EventKind::Filled { fill }" in post_snapshot_ids
         and "live_order_market_spec(" in helper
@@ -18373,7 +18380,7 @@ def live_balance_order_reservation_check() -> None:
                 "live_order_admission_rejects_missing_future_and_expired_balance_snapshots",
             )
         ),
-        "Live Binance/CCXT 提交按账户锁、60 秒内余额快照和风险准入；现货 quote/base 资金桶、base 可卖量上限、在途预留及衍生品异币种 fail-closed 均有行为合同",
+        "Live Binance/CCXT 提交按账户锁、60 秒内余额快照和风险准入；恢复快照游标只扫描余额快照之后的事实；现货 quote/base 资金桶、base 可卖量上限、在途预留及衍生品异币种 fail-closed 均有行为合同",
         f"准入顺序={steps}，Live 预留实现={bool(helper)}，市场规格解析={bool(spec_resolver)}，调用入口={len(call_sites)}",
     )
 

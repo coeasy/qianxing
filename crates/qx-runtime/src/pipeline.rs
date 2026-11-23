@@ -484,6 +484,7 @@ pub struct LiveEventPipeline {
     oms: Oms,
     marks: BTreeMap<InstrumentId, Price>,
     account_balances: BTreeMap<(String, String), Vec<AccountBalance>>,
+    account_balance_snapshot_cursors: BTreeMap<(String, String), (usize, u64)>,
     account_positions: BTreeMap<(String, String), Vec<AccountPositionSnapshot>>,
     funding_rates: BTreeMap<InstrumentId, FundingRateSnapshot>,
     pending_amendments: BTreeMap<u64, (String, Order)>,
@@ -736,6 +737,7 @@ impl LiveEventPipeline {
             oms: Oms::new(),
             marks: BTreeMap::new(),
             account_balances: BTreeMap::new(),
+            account_balance_snapshot_cursors: BTreeMap::new(),
             account_positions: BTreeMap::new(),
             funding_rates: BTreeMap::new(),
             pending_amendments: BTreeMap::new(),
@@ -955,6 +957,20 @@ impl LiveEventPipeline {
             .iter()
             .find(|((account, venue), _)| account == account_id && venue == venue_id)
             .map(|(_, balances)| balances.as_slice())
+    }
+
+    /// Return the position and timestamp of the latest account/venue balance snapshot.
+    ///
+    /// The position lets consumers inspect only facts appended after that snapshot without
+    /// rescanning the complete event history or assuming event sequence numbers are ordered.
+    pub fn latest_account_balance_snapshot_cursor(
+        &self,
+        account_id: &str,
+        venue_id: &str,
+    ) -> Option<(usize, u64)> {
+        self.account_balance_snapshot_cursors
+            .get(&account_balance_snapshot_key(account_id, venue_id))
+            .copied()
     }
 
     pub fn venue_order_id(&self, client_order_id: u64) -> Option<String> {
@@ -1253,9 +1269,9 @@ impl LiveEventPipeline {
 
     fn rebuild_runtime_indexes(&mut self) -> QxResult<()> {
         let events = self.log.events().to_vec();
-        for event in &events {
+        for (event_index, event) in events.iter().enumerate() {
             self.event_identities.remember(event);
-            self.apply_index_event(event)?;
+            self.apply_index_event(event, event_index)?;
         }
         Ok(())
     }
@@ -1265,7 +1281,7 @@ impl LiveEventPipeline {
     /// 整份重建与游标增量（[`Self::apply_tail`]）共用它：重建逐条喂整条日志，增量只喂新追加
     /// 的尾部——两条路径必须落在同一份归约上，否则"重启后状态"与"跑着的时候状态"会分叉。
     /// 账簿不在这里动：现金与持仓由 `LedgerApplied` 事实单独驱动（见调用点）。
-    fn apply_index_event(&mut self, event: &Event) -> QxResult<()> {
+    fn apply_index_event(&mut self, event: &Event, event_index: usize) -> QxResult<()> {
         match &event.kind {
             EventKind::OrderSubmitted { order } => {
                 self.oms.insert_replayed(order.clone()).map_err(|error| {
@@ -1368,9 +1384,12 @@ impl LiveEventPipeline {
                 venue_id,
                 balances,
             } => {
-                self.account_balances.insert(
-                    (account_id.clone(), venue_id.clone()),
-                    normalize_balances(balances.clone())?,
+                let normalized_balances = normalize_balances(balances.clone())?;
+                self.account_balances
+                    .insert((account_id.clone(), venue_id.clone()), normalized_balances);
+                self.account_balance_snapshot_cursors.insert(
+                    account_balance_snapshot_key(account_id, venue_id),
+                    (event_index, event.ts),
                 );
             }
             EventKind::AccountPositionSnapshot {
@@ -1805,6 +1824,7 @@ impl LiveEventPipeline {
             oms: Oms::new(),
             marks: BTreeMap::new(),
             account_balances: BTreeMap::new(),
+            account_balance_snapshot_cursors: BTreeMap::new(),
             account_positions: BTreeMap::new(),
             funding_rates: BTreeMap::new(),
             pending_amendments: BTreeMap::new(),
@@ -1824,10 +1844,11 @@ impl LiveEventPipeline {
     /// 把 store 里新追加的尾部接进本地状态：日志按单事务批量追加（P1-1 的 `append_batch`），索引
     /// 与账簿逐条增量应用。索引那一步与整份重建共用 [`Self::apply_index_event`]，归约单源。
     fn apply_tail(&mut self, tail: &[Event]) -> QxResult<()> {
+        let tail_start = self.log.events().len();
         self.log.append_batch(tail)?;
-        for event in tail {
+        for (offset, event) in tail.iter().enumerate() {
             self.event_identities.remember(event);
-            self.apply_index_event(event)?;
+            self.apply_index_event(event, tail_start + offset)?;
             if let EventKind::LedgerApplied { entry } = &event.kind {
                 self.ledger.apply_entry(entry.clone())?;
             }
@@ -1835,6 +1856,10 @@ impl LiveEventPipeline {
         self.last_engine_ts = self.log.events().last().map(|event| event.ts).unwrap_or(0);
         Ok(())
     }
+}
+
+fn account_balance_snapshot_key(account_id: &str, venue_id: &str) -> (String, String) {
+    (account_id.to_owned(), venue_id.to_ascii_lowercase())
 }
 
 fn order_event_context(order: &Order) -> EventContext {
@@ -2008,6 +2033,71 @@ mod tests {
             ));
         std::fs::create_dir_all(&root).expect("create capability EventLog test directory");
         root
+    }
+
+    #[test]
+    fn latest_balance_snapshot_cursor_is_scoped_and_rebuilt_from_event_log() {
+        let root = temp_root("balance-snapshot-cursor");
+        let balance = || AccountBalance {
+            asset: "USDT".into(),
+            free: Money::from_i64(10),
+            locked: Money::ZERO,
+            borrowed: Money::ZERO,
+            net_cash_balance: None,
+            exact_amounts: None,
+        };
+        let snapshot = |account_id: &str, venue_id: &str, ts: u64, source: &str| {
+            RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::AccountBalanceSnapshot {
+                    account_id: account_id.into(),
+                    venue_id: venue_id.into(),
+                    balances: vec![balance()],
+                },
+                ts,
+                ts,
+                1,
+                source,
+            )
+        };
+
+        let mut pipeline = LiveEventPipeline::open(&root, "main", "USDT").unwrap();
+        pipeline
+            .ingest(snapshot("main", "BINANCE", 10, "balance-main-1"))
+            .unwrap();
+        pipeline
+            .ingest(snapshot("main", "binance", 20, "balance-main-2"))
+            .unwrap();
+        let latest_main = pipeline
+            .latest_account_balance_snapshot_cursor("main", "BINANCE")
+            .expect("main Binance balance snapshot cursor");
+        assert_eq!(latest_main.1, 20);
+        assert!(matches!(
+            pipeline.log().events()[latest_main.0].kind,
+            EventKind::AccountBalanceSnapshot { .. }
+        ));
+
+        pipeline
+            .ingest(snapshot("other", "BINANCE", 30, "balance-other"))
+            .unwrap();
+        assert_eq!(
+            pipeline.latest_account_balance_snapshot_cursor("main", "binance"),
+            Some(latest_main)
+        );
+        assert_eq!(
+            pipeline
+                .latest_account_balance_snapshot_cursor("other", "binance")
+                .map(|v| v.1),
+            Some(30)
+        );
+
+        drop(pipeline);
+        let restored = LiveEventPipeline::open(&root, "main", "USDT").unwrap();
+        assert_eq!(
+            restored.latest_account_balance_snapshot_cursor("main", "binance"),
+            Some(latest_main)
+        );
+        drop(restored);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

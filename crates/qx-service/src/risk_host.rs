@@ -177,17 +177,8 @@ impl RiskPipelineView for LiveEventPipeline {
     }
 
     fn latest_balance_snapshot_ts(&self, account_id: &str, venue_id: &str) -> Option<u64> {
-        self.log().events().iter().rev().find_map(|event| {
-            matches!(
-                &event.kind,
-                qx_core::EventKind::AccountBalanceSnapshot {
-                    account_id: snapshot_account,
-                    venue_id: snapshot_venue,
-                    ..
-                } if snapshot_account == account_id && snapshot_venue.eq_ignore_ascii_case(venue_id)
-            )
-            .then_some(event.ts)
-        })
+        self.latest_account_balance_snapshot_cursor(account_id, venue_id)
+            .map(|(_, timestamp)| timestamp)
     }
 
     fn post_snapshot_order_ids(
@@ -207,27 +198,28 @@ fn post_balance_facts(
     account_id: &str,
     venue_id: &str,
 ) -> (Option<u64>, bool, PostBalanceFacts) {
-    let latest_snapshot = pipeline.log().events().iter().rev().find_map(|event| {
-        matches!(
-            &event.kind,
-            qx_core::EventKind::AccountBalanceSnapshot {
-                account_id: snapshot_account,
-                venue_id: snapshot_venue,
-                ..
-            } if snapshot_account == account_id && snapshot_venue.eq_ignore_ascii_case(venue_id)
-        )
-        .then_some((event.seq, event.ts))
-    });
-    let Some((balance_seq, timestamp)) = latest_snapshot else {
+    let Some((balance_event_index, timestamp)) =
+        pipeline.latest_account_balance_snapshot_cursor(account_id, venue_id)
+    else {
         return (None, false, PostBalanceFacts::default());
     };
+    let events = pipeline.log().events();
+    let Some(snapshot_event) = events.get(balance_event_index) else {
+        return (None, false, PostBalanceFacts::default());
+    };
+    if !matches!(
+        &snapshot_event.kind,
+        qx_core::EventKind::AccountBalanceSnapshot {
+            account_id: snapshot_account,
+            venue_id: snapshot_venue,
+            ..
+        } if snapshot_account == account_id && snapshot_venue.eq_ignore_ascii_case(venue_id)
+    ) {
+        return (None, false, PostBalanceFacts::default());
+    }
     let mut facts = PostBalanceFacts::default();
-    for event in pipeline
-        .log()
-        .events()
-        .iter()
-        .filter(|event| event.seq > balance_seq)
-    {
+    let tail_start = balance_event_index.saturating_add(1);
+    for event in events.get(tail_start..).unwrap_or_default() {
         match &event.kind {
             qx_core::EventKind::OrderSubmitted { order } if order.account_id == account_id => {
                 facts.order_ids.insert(order.client_id);
