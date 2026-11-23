@@ -3,6 +3,7 @@ name = "qx-strategy"
 description = "牵星跨语言策略 SDK 与统一 Strategy API"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 

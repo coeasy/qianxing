@@ -3,6 +3,7 @@ name = "qx-app"
 description = "牵星应用层：用例、稳定输入/输出类型、授权与错误边界（facade → application → domain）"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 documentation = "https://docs.rs/qx-app"

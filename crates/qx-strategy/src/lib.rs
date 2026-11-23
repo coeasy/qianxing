@@ -222,12 +222,16 @@ impl StrategyContext {
             return Err("StrategyContext 身份、时间或风险字段非法".into());
         }
         for instrument in self.positions.keys() {
-            strategy_position_key_is_valid(instrument)
-                .ok_or_else(|| format!("StrategyContext instrument 非法: {instrument}"))?;
+            if !strategy_position_key_is_valid(instrument) {
+                return Err(format!("StrategyContext instrument 非法: {instrument}"));
+            }
         }
         for (instrument, exact) in &self.positions_exact {
-            strategy_position_key_is_valid(instrument)
-                .ok_or_else(|| format!("StrategyContext exact instrument 非法: {instrument}"))?;
+            if !strategy_position_key_is_valid(instrument) {
+                return Err(format!(
+                    "StrategyContext exact instrument 非法: {instrument}"
+                ));
+            }
             let projected = project_exact_to_raw(*exact)?;
             if self.positions.get(instrument).copied().unwrap_or_default() != projected {
                 return Err(format!(

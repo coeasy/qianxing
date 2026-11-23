@@ -3,6 +3,7 @@ name = "qx-provider"
 description = "多源数据 ProviderRegistry 与确定性选择策略"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 

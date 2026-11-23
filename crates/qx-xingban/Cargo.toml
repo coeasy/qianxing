@@ -3,6 +3,7 @@ name = "qx-xingban"
 description = "星板：撮合与仿真，FillModel × 数据档位矩阵、成本、延迟、保证金"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
