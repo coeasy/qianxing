@@ -6,17 +6,6 @@ use std::process::{Command, Output};
 #[path = "multi_market_depth_quality_manifest.rs"]
 mod multi_market_depth_quality_manifest;
 
-fn root() -> PathBuf {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .unwrap()
-        .join("target")
-        .join(format!("multi-market-quality-cli-{}", std::process::id()));
-    std::fs::create_dir_all(&root).unwrap();
-    root
-}
-
 fn unique_root(name: &str) -> PathBuf {
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -41,7 +30,7 @@ fn cli(arguments: &[&str]) -> Output {
 
 #[test]
 fn multi_market_quality_reports_survive_evidence_pack_and_offline_verification() {
-    let root = root();
+    let root = unique_root("multi-market-quality-cli");
     let deploy = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
@@ -792,6 +781,7 @@ fn multi_market_quality_reports_survive_evidence_pack_and_offline_verification()
         "{}",
         String::from_utf8_lossy(&bundle_verified.stderr)
     );
+    std::fs::remove_dir_all(&root).unwrap();
 }
 
 #[test]
