@@ -459,9 +459,9 @@
       "title": null,
       "status": "partial",
       "blockers": [
-        "Windows and Debian 12 Podman recovery reviews pass. Hosted PR CI #423 passes Live Unknown recovery across file, SQLite, and PostgreSQL process restarts plus six worker crash boundaries. Authorized venue/testnet integration remains open; hosted artifacts still need review."
+        "Windows and Debian 12 Podman recovery reviews pass. Hosted PR CI #423 R12-AC01 confirms Live Unknown recovery across file, SQLite, and PostgreSQL process restarts; the separate hosted storage artifact confirms six Paper worker crash boundaries. Authorized venue/testnet integration remains open."
       ],
-      "next_action": "Review the hosted recovery artifacts from PR CI #423 against R12-AC01, then assess authorized venue/testnet integration requirements.",
+      "next_action": "Obtain authorized venue integration, testnet credentials, and trust roots, then run venue-specific Unknown recovery and reconciliation acceptance before making live-readiness claims.",
       "code_paths": [
         "maturity/evidence/client-order-submission-identity-2026-10-27.json",
         "crates/qx-cli/src/workers/strategy_worker/admission.rs",
@@ -506,7 +506,8 @@
         "maturity/acceptance-artifacts/0ed00dbe-1bb7-46fd-a002-9bbff7666603.source-tree.json",
         "maturity/acceptance-artifacts/b285c6c8-1694-47d9-9331-cedf152494a1.log",
         "maturity/acceptance-artifacts/b285c6c8-1694-47d9-9331-cedf152494a1.source-tree.json",
-        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json"
+        "maturity/evidence/hosted-ci-release-candidate-2026-11-10.json",
+        "maturity/evidence/r12-hosted-linux-review-2026-11-23.json"
       ]
     },
     {
