@@ -26788,6 +26788,37 @@ def binance_spot_order_protocol_boundary_check() -> None:
     )
 
 
+def binance_spot_account_snapshot_boundary_check() -> None:
+    """Account balance reads/events and account-wide open-order observations have one owner."""
+    facade = production_text(_text_or_empty(ROOT / "crates/qx-adapter/src/binance.rs"))
+    snapshot = production_text(
+        _text_or_empty(ROOT / "crates/qx-adapter/src/binance/account_snapshot.rs")
+    )
+    moved = (
+        "pub struct BinanceBalance",
+        "pub fn fetch_account_balances(",
+        "pub(super) fn fetch_open_orders_for_max_position(",
+        "pub(super) fn ingest_account_position(",
+        "struct BinanceAccountWire",
+        "struct BinanceBalanceWire",
+    )
+    check(
+        "mod account_snapshot;" in facade
+        and "pub use account_snapshot::BinanceBalance;" in facade
+        and "self.ingest_account_position(&value)?" in facade
+        and all(marker in snapshot for marker in moved)
+        and "pub fn fetch_account_balances(" not in facade
+        and "fn fetch_open_orders_for_max_position(" not in facade
+        and "fn ingest_account_position(" not in facade
+        and "struct BinanceAccountWire" not in facade
+        and "struct BinanceBalanceWire" not in facade,
+        "Binance Spot account balance snapshots, account events, and MAX_POSITION open-order reads have one owner",
+        f"module declared={'mod account_snapshot;' in facade}；moved owners="
+        f"{sum(marker in snapshot for marker in moved)}/{len(moved)}；"
+        f"facade account-event delegation={'self.ingest_account_position(&value)?' in facade}",
+    )
+
+
 def instrument_id_symbol_validation_check() -> None:
     """Rust parsing and Serde share the guarded instrument symbol grammar."""
     identity = _text_or_empty(ROOT / "crates/qx-core/src/identity.rs")
@@ -34272,6 +34303,7 @@ def main() -> int:
     binance_execution_runner_ownership_check()
     binance_spot_market_data_boundary_check()
     binance_spot_order_protocol_boundary_check()
+    binance_spot_account_snapshot_boundary_check()
     binance_spot_symbol_validation_check()
     instrument_id_symbol_validation_check()
     ccxt_user_stream_runner_ownership_check()

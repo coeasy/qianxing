@@ -37,15 +37,6 @@ pub use user_stream::{
     BinanceUserStreamSession,
 };
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct BinanceBalance {
-    pub asset: String,
-    pub free: Money,
-    pub locked: Money,
-    pub free_exact: ExactDecimal,
-    pub locked_exact: ExactDecimal,
-}
-
 mod market_data;
 use market_data::{
     parse_exchange_base_assets, parse_spot_market_rules, validate_binance_exact_notional_filter,
@@ -60,6 +51,8 @@ use orders::{
     binance_oco_order_list_cancel_parameters, binance_oco_order_list_parameters, client_order_id,
     parse_client_order_id, BinanceOrderListCancelContext, BinanceOrderListLookupWire,
 };
+mod account_snapshot;
+pub use account_snapshot::BinanceBalance;
 mod reconcile;
 
 fn form_encode(parameters: &BTreeMap<String, String>) -> String {
@@ -133,31 +126,6 @@ struct BinanceAccountTradeWire {
     transact_time: u64,
     #[serde(rename = "isBuyer")]
     is_buyer: bool,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct BinanceOpenOrderWire {
-    symbol: String,
-    #[serde(rename = "orderId")]
-    order_id: u64,
-    side: String,
-    #[serde(rename = "origQty")]
-    original_quantity: String,
-    #[serde(rename = "executedQty")]
-    executed_quantity: String,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct BinanceAccountWire {
-    #[serde(default)]
-    balances: Vec<BinanceBalanceWire>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct BinanceBalanceWire {
-    asset: String,
-    free: String,
-    locked: String,
 }
 
 const BINANCE_MARKET_RULES_MAX_AGE_MS: u64 = 60_000;
@@ -415,48 +383,9 @@ impl BinanceSpotVenue {
         self.market_data.fetch_book_ticker(instrument, receive_ts)
     }
 
-    pub fn balances(&self) -> Vec<BinanceBalance> {
-        self.balances.values().cloned().collect()
-    }
-
     /// Latest source event timestamp observed from the private stream or its reducer fallback.
     pub fn last_event_timestamp_ms(&self) -> Option<u64> {
         (self.last_event_ts > 0).then_some(self.last_event_ts)
-    }
-
-    pub fn fetch_account_balances(&mut self, ts: u64) -> QxResult<Vec<BinanceBalance>> {
-        // A failed account read is retryable observation failure, not an unknown order result.
-        let response = self.request_readonly_with_weight("/api/v3/account", ts, 20)?;
-        let wire: BinanceAccountWire = parse_success(response, "account")?;
-        let balances = wire
-            .balances
-            .into_iter()
-            .map(|balance| {
-                let free_exact = parse_exact_decimal(&balance.free, "free balance")?;
-                let locked_exact = parse_exact_decimal(&balance.locked, "locked balance")?;
-                Ok(BinanceBalance {
-                    asset: balance.asset,
-                    free: Money::from_raw(exact_decimal_projection(free_exact)?),
-                    locked: Money::from_raw(exact_decimal_projection(locked_exact)?),
-                    free_exact,
-                    locked_exact,
-                })
-            })
-            .collect::<QxResult<Vec<_>>>()?;
-        self.balances = balances
-            .iter()
-            .cloned()
-            .map(|balance| (balance.asset.clone(), balance))
-            .collect();
-        Ok(balances)
-    }
-
-    fn fetch_open_orders_for_max_position(
-        &mut self,
-        now_ms: u64,
-    ) -> QxResult<Vec<BinanceOpenOrderWire>> {
-        let response = self.request_readonly_with_weight("/api/v3/openOrders", now_ms, 80)?;
-        parse_success(response, "MAX_POSITION openOrders")
     }
 
     /// 解析并应用 Binance Spot `executionReport`/listenKeyExpired 用户事件。
@@ -1392,38 +1321,6 @@ impl BinanceSpotVenue {
                 "Binance MAX_POSITION 超限: 当前余额与全部交易对未成交买单加本单为 {projected}，上限为 {maximum} {base_asset}"
             )));
         }
-        Ok(())
-    }
-
-    fn ingest_account_position(&mut self, value: &Value) -> QxResult<()> {
-        let event_ts = value
-            .get("E")
-            .and_then(Value::as_u64)
-            .or_else(|| value.get("u").and_then(Value::as_u64))
-            .unwrap_or(self.last_event_ts);
-        let balances = value
-            .get("B")
-            .and_then(Value::as_array)
-            .ok_or_else(|| QxError::ReconcileRequired("Binance 账户事件缺少 B balances".into()))?;
-        for balance in balances {
-            let asset = balance
-                .get("a")
-                .and_then(Value::as_str)
-                .ok_or_else(|| QxError::ReconcileRequired("Binance 账户事件缺少 asset".into()))?;
-            let free = json_string(balance, "f")?;
-            let locked = json_string(balance, "l")?;
-            let free_exact = parse_exact_decimal(&free, "event free balance")?;
-            let locked_exact = parse_exact_decimal(&locked, "event locked balance")?;
-            let snapshot = BinanceBalance {
-                asset: asset.into(),
-                free: Money::from_raw(exact_decimal_projection(free_exact)?),
-                locked: Money::from_raw(exact_decimal_projection(locked_exact)?),
-                free_exact,
-                locked_exact,
-            };
-            self.balances.insert(asset.into(), snapshot);
-        }
-        self.last_event_ts = self.last_event_ts.max(event_ts);
         Ok(())
     }
 }
