@@ -12266,7 +12266,9 @@ def bounded_growth_and_reap_check() -> None:
     # 的成交落到『本地订单不存在』分支"兜底（两个适配器各有一条具名出口，逐字钉住）；运行期
     # `LiveEventPipeline.seen_fills` 没有共用这把封顶，仍只增不减。判据因此从"一律不许淘汰"
     # 改成"退场只许走终态封顶这一条唯一通道，且两个适配器都必须留着『订单已退场』的出口"。
-    binance_raw = (ROOT / BINANCE_VENUE_FILE).read_text(encoding="utf-8")
+    binance_raw = (ROOT / BINANCE_VENUE_FILE).read_text(encoding="utf-8") + (
+        ROOT / "crates/qx-adapter/src/binance/orders.rs"
+    ).read_text(encoding="utf-8")
     ccxt_raw = (ROOT / CCXT_PUMP_FILE).read_text(encoding="utf-8")
     ccxt_restore_raw = (ROOT / "crates/qx-adapter/src/ccxt/restore.rs").read_text(
         encoding="utf-8"
@@ -14948,7 +14950,13 @@ def event_log_store_shared_rules_check() -> None:
 def adapter_order_lifecycle_shared_rule_check() -> None:
     """Binance and CCXT delegate protocol-neutral lifecycle rules to one trait."""
     shared = _text_or_empty(ROOT / "crates/qx-adapter/src/order_lifecycle.rs")
-    binance = _text_or_empty(ROOT / "crates/qx-adapter/src/binance.rs")
+    binance = "\n".join(
+        _text_or_empty(ROOT / path)
+        for path in (
+            "crates/qx-adapter/src/binance.rs",
+            "crates/qx-adapter/src/binance/orders.rs",
+        )
+    )
     binance_tests = _text_or_empty(ROOT / "crates/qx-adapter/src/binance/tests.rs")
     binance_lifecycle_tests = _text_or_empty(
         ROOT / "crates/qx-adapter/src/binance/tests/lifecycle_cancel.rs"
@@ -22258,6 +22266,10 @@ def io_budget_and_venue_cache_check() -> None:
     cache_growths = []
     for rel, sites, derived in VENUE_CACHE_SITES:
         body = production_text((ROOT / rel).read_text(encoding="utf-8"))
+        if rel == "crates/qx-adapter/src/binance.rs":
+            body += production_text(
+                (ROOT / "crates/qx-adapter/src/binance/orders.rs").read_text(encoding="utf-8")
+            )
         if rel == CCXT_PUMP_FILE:
             body += production_text(
                 (ROOT / "crates/qx-adapter/src/ccxt/restore.rs").read_text(encoding="utf-8")
@@ -26741,6 +26753,38 @@ def binance_spot_market_data_boundary_check() -> None:
         f"module declared={'mod market_data;' in facade}；moved owners="
         f"{sum(marker in market_data for marker in moved)}/{len(moved)}；"
         f"facade duplicates={('impl BinanceSpotMarketData' in facade or 'fn parse_spot_market_rules(' in facade)}",
+    )
+
+
+def binance_spot_order_protocol_boundary_check() -> None:
+    """Order writes, OCO request shapes, and response mapping have one owner."""
+    facade = production_text(_text_or_empty(ROOT / "crates/qx-adapter/src/binance.rs"))
+    orders = production_text(_text_or_empty(ROOT / "crates/qx-adapter/src/binance/orders.rs"))
+    moved = (
+        "pub(super) fn validate_order_group_impl(",
+        "pub(super) fn submit_order_group_impl(",
+        "pub(super) fn submit_order_impl(",
+        "pub(super) fn cancel_order_impl(",
+        "struct BinanceOrderWire",
+        "struct BinanceOrderListWire",
+        "fn binance_oco_order_list_parameters(",
+        "fn binance_oco_order_list_cancel_parameters(",
+    )
+    check(
+        "mod orders;" in facade
+        and "self.validate_order_group_impl(group)" in facade
+        and "self.submit_order_group_impl(group, ts)" in facade
+        and "self.submit_order_impl(order, ts)" in facade
+        and "self.cancel_order_impl(local_id, ts)" in facade
+        and all(marker in orders for marker in moved)
+        and "pub(super) fn submit_order_impl(" not in facade
+        and "pub(super) fn cancel_order_impl(" not in facade
+        and "struct BinanceOrderWire" not in facade
+        and "fn binance_oco_order_list_parameters(" not in facade,
+        "Binance Spot order writes and OCO wire mapping have one orders owner behind Venue delegation",
+        f"module declared={'mod orders;' in facade}；moved owners="
+        f"{sum(marker in orders for marker in moved)}/{len(moved)}；"
+        f"facade submit/cancel delegate={('self.submit_order_impl(order, ts)' in facade and 'self.cancel_order_impl(local_id, ts)' in facade)}",
     )
 
 
@@ -34227,6 +34271,7 @@ def main() -> int:
     binance_user_stream_runner_ownership_check()
     binance_execution_runner_ownership_check()
     binance_spot_market_data_boundary_check()
+    binance_spot_order_protocol_boundary_check()
     binance_spot_symbol_validation_check()
     instrument_id_symbol_validation_check()
     ccxt_user_stream_runner_ownership_check()
