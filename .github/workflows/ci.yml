@@ -268,6 +268,7 @@ jobs:
           python3 -m unittest
           benchmarks.tests.test_source_fingerprint
           benchmarks.tests.test_compare_baseline
+          benchmarks.tests.test_select_compatible_baseline
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -325,13 +326,18 @@ jobs:
           python3 benchmarks/run_crypto_paper_e2e.py \
             --binary target/release/qx-cli \
             --out benchmarks/results/crypto-paper-e2e.json --repeats 7
-      - name: Find the latest successful main benchmark artifact
+      - name: Find the latest successful benchmark on matching hardware
         id: previous
         env:
           GH_TOKEN: ${{ github.token }}
           BASELINE_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
-          for branch in main "$BASELINE_BRANCH"; do
+          mkdir -p benchmarks/results/previous
+          branches=(main)
+          if [[ "$BASELINE_BRANCH" != "main" ]]; then
+            branches+=("$BASELINE_BRANCH")
+          fi
+          for branch in "${branches[@]}"; do
             run_ids=$(gh run list --branch "$branch" --workflow ci.yml --limit 20 \
               --json databaseId,conclusion \
               --jq '.[] | select(.conclusion == "success") | .databaseId')
@@ -339,21 +345,26 @@ jobs:
               artifact_id=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" \
                 --jq '[.artifacts[] | select(.name == "performance-baseline" and .expired == false)][0].id // empty')
               if [[ -n "$artifact_id" ]]; then
-                echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
-                echo "Selected retained performance baseline from $branch run $run_id."
-                exit 0
+                candidate_dir="$RUNNER_TEMP/performance-baseline-$run_id"
+                mkdir -p "$candidate_dir"
+                if ! gh run download "$run_id" --name performance-baseline --dir "$candidate_dir"; then
+                  echo "Could not download baseline artifact from $branch run $run_id; trying an older run."
+                  continue
+                fi
+                if python3 benchmarks/select_compatible_baseline.py \
+                    --current-dir benchmarks/results \
+                    --baseline-dir "$candidate_dir"; then
+                  cp -a "$candidate_dir/." benchmarks/results/previous/
+                  echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+                  echo "Selected matching-hardware performance baseline from $branch run $run_id."
+                  exit 0
+                fi
+                echo "Baseline artifact from $branch run $run_id is not comparable; trying an older run."
               fi
             done
           done
           echo "run_id=" >> "$GITHUB_OUTPUT"
-          echo "No successful main run has a retained performance-baseline artifact; this run will seed one."
-      - name: Download the previous benchmark artifact
-        if: steps.previous.outputs.run_id != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh run download "${{ steps.previous.outputs.run_id }}" \
-            --name performance-baseline --dir benchmarks/results/previous
+          echo "No matching-hardware benchmark baseline is retained; this run will seed one."
       - name: Block registered regressions above ledger thresholds
         run: |
           if [[ -f benchmarks/results/previous/end-to-end.json ]]; then
