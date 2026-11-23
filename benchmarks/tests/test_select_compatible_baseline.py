@@ -86,6 +86,36 @@ class SelectCompatibleBaselineTests(unittest.TestCase):
         self.assertFalse(compatible)
         self.assertIn("missing or invalid baseline hardware", reason)
 
+    def test_rejects_unsupported_report_schema_even_when_sources_are_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.make_reports(root / "current")
+            self.make_reports(root / "baseline")
+            report_path = root / "baseline" / REPORTS[0]
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            report["schema_version"] = 99
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+
+            compatible, reason = is_compatible(root / "current", root / "baseline")
+
+        self.assertFalse(compatible)
+        self.assertIn("missing or invalid report", reason)
+
+    def test_rejects_malformed_report_rows_before_selecting_same_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.make_reports(root / "current")
+            self.make_reports(root / "baseline")
+            report_path = root / "baseline" / REPORTS[0]
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            report["rows"] = [None]
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+
+            compatible, reason = is_compatible(root / "current", root / "baseline")
+
+        self.assertFalse(compatible)
+        self.assertIn("missing or invalid report", reason)
+
     def test_rejects_when_no_reports_are_shared(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

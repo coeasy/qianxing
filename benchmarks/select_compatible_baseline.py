@@ -23,7 +23,17 @@ def read_report(path: Path) -> dict | None:
         report = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    return report if isinstance(report, dict) else None
+    if not isinstance(report, dict) or report.get("schema_version") != 1:
+        return None
+    if not any(
+        isinstance(report.get(key), list) for key in ("rows", "records", "workloads")
+    ):
+        return None
+    try:
+        series(report)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+    return report
 
 
 def is_compatible(current_dir: Path, baseline_dir: Path) -> tuple[bool, str]:
