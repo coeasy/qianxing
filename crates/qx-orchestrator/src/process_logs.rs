@@ -1,11 +1,14 @@
 //! Bounded stdout/stderr sinks for supervised workers.
 
 use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::thread::{self, JoinHandle};
 
 pub(crate) const MAX_PROCESS_LOG_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_FAILURE_LOG_BYTES: usize = 64 * 1024;
+const FAILURE_LOG_HEADER: &[u8] =
+    b"failed strategy replacement; retained process output tail follows\n";
 
 pub(crate) fn prepare(path: &Path) -> io::Result<File> {
     let rotated = rotated_path(path);
@@ -15,6 +18,44 @@ pub(crate) fn prepare(path: &Path) -> io::Result<File> {
         Err(error) => return Err(error),
     }
     File::create(path)
+}
+
+/// Preserve the most recent bounded tail before another worker generation truncates `source`.
+/// Empty and missing logs are omitted; each destination is a single replaceable snapshot per worker.
+pub(crate) fn preserve_failure_tail(source: &Path, destination: &Path) -> io::Result<bool> {
+    let mut input = match File::open(source) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            remove_failure_snapshot(destination)?;
+            return Ok(false);
+        }
+        Err(error) => return Err(error),
+    };
+    let length = input.metadata()?.len();
+    if length == 0 {
+        remove_failure_snapshot(destination)?;
+        return Ok(false);
+    }
+
+    let payload_limit = MAX_FAILURE_LOG_BYTES.saturating_sub(FAILURE_LOG_HEADER.len());
+    let retained = length.min(payload_limit as u64);
+    input.seek(SeekFrom::End(-(retained as i64)))?;
+    let mut tail = Vec::with_capacity(retained as usize);
+    input.take(retained).read_to_end(&mut tail)?;
+
+    let mut output = File::create(destination)?;
+    output.write_all(FAILURE_LOG_HEADER)?;
+    output.write_all(&tail)?;
+    output.flush()?;
+    Ok(true)
+}
+
+fn remove_failure_snapshot(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 pub(crate) fn pump<R>(
@@ -153,5 +194,37 @@ mod tests {
         assert_eq!(fs::read(&path).unwrap(), b"");
         assert!(!rotated_path(&path).exists());
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn failed_worker_tail_is_bounded_and_keeps_the_latest_bytes() {
+        let source = test_path("failed-source");
+        let destination = test_path("failed-destination");
+        let mut payload = vec![b'x'; MAX_FAILURE_LOG_BYTES * 2];
+        payload.extend_from_slice(b"failure-tail-marker");
+        fs::write(&source, payload).unwrap();
+
+        assert!(preserve_failure_tail(&source, &destination).unwrap());
+
+        let preserved = fs::read(&destination).unwrap();
+        assert!(preserved.len() <= MAX_FAILURE_LOG_BYTES);
+        assert!(preserved.starts_with(FAILURE_LOG_HEADER));
+        assert!(preserved.ends_with(b"failure-tail-marker"));
+        let _ = fs::remove_file(source);
+        let _ = fs::remove_file(destination);
+    }
+
+    #[test]
+    fn missing_or_empty_worker_logs_do_not_create_failure_snapshots() {
+        let source = test_path("empty-source");
+        let destination = test_path("empty-destination");
+        fs::write(&destination, b"stale failure").unwrap();
+        assert!(!preserve_failure_tail(&source, &destination).unwrap());
+        assert!(!destination.exists());
+        fs::write(&destination, b"stale failure").unwrap();
+        fs::write(&source, []).unwrap();
+        assert!(!preserve_failure_tail(&source, &destination).unwrap());
+        assert!(!destination.exists());
+        let _ = fs::remove_file(source);
     }
 }

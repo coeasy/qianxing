@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+FAILURE_LOG_HEADER = b"failed strategy replacement; retained process output tail follows\n"
+
 
 def require(condition: bool, message: str) -> None:
     if not condition:
@@ -20,7 +22,8 @@ def main() -> int:
     parser.add_argument("--storage-backend", choices=("files", "sqlite", "postgres"))
     args = parser.parse_args()
     evidence: dict[str, Any] = json.loads(args.evidence.read_text(encoding="utf-8"))
-    require(evidence.get("schema_version") == 1, "unsupported evidence schema")
+    schema_version = evidence.get("schema_version")
+    require(schema_version in (1, 2), "unsupported evidence schema")
     require(evidence.get("kind") == "qianxing_strategy_deployment_lifecycle_acceptance", "wrong evidence kind")
     require(evidence.get("outcome") == "passed", "lifecycle acceptance did not pass")
     backend = args.storage_backend or evidence.get("storage_backend", "files")
@@ -60,6 +63,22 @@ def main() -> int:
     require(final.get("state") == "stopped" and final.get("desired_running") is False, "final worker is not stopped")
     require(final.get("desired_revision") == 4, "final stopped revision is not 4")
     require(evidence.get("restored_revision") == 2, "previous revision 2 was not restored")
+    if schema_version >= 2:
+        diagnostics = evidence.get("replacement_failure_diagnostics")
+        require(isinstance(diagnostics, dict), "failed replacement diagnostics are missing")
+        stderr_name = diagnostics.get("stderr_file")
+        stderr_size = diagnostics.get("stderr_bytes")
+        stderr_digest = diagnostics.get("stderr_sha256")
+        require(
+            isinstance(stderr_name, str)
+            and stderr_name.endswith(".failed.err.log")
+            and type(stderr_size) is int
+            and len(FAILURE_LOG_HEADER) < stderr_size <= 64 * 1024
+            and isinstance(stderr_digest, str)
+            and len(stderr_digest) == 64
+            and all(character in "0123456789abcdef" for character in stderr_digest),
+            "failed replacement diagnostic evidence is malformed or outside its size bound",
+        )
     if evidence.get("supervisor_restarted"):
         restart = evidence.get("restart_projection")
         require(
