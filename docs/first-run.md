@@ -69,7 +69,7 @@ qx-cli quickstart my-okx --profile ccxt --days 30 --timeframe 1h --html  # 真�
 `--profile` 支持 `builtin`（默认）、`ashare` 与 `ccxt`。A 股首跑使用仓库附带的 6 根样例 Bar 和冻结规格，
 完成一笔本地回测；不会连接外部行情源或发送订单。`ccxt` 首跑默认从 OKX 获取最近 30 天 BTC/USDT 永续 1h 公共 K 线，
 使用市场公开默认费率并冻结成本文件，生成可复核的回测报告；它不读取密钥、不启用执行 worker，也不提交订单。
-支持 `okx`、`binance` 和 `bitget` 公共行情，可用 `--exchange`、`--instrument`、`--days`、`--timeframe` 调整，窗口上限为 365 天且最多获取 100000 根 Bar。
+支持 `okx`、`binance` 和 `bitget` 公共行情；指定 `--exchange` 后会自动选择该交易所的 BTC/USDT 永续标的，需要其他标的时再传 `--instrument`；`--days`、`--timeframe` 可调整窗口，上限为 365 天且最多获取 100000 根 Bar。
 策略默认 `ema_cross`，也可用 `--strategy` 选择单标的内置策略；用 `qx-cli builtin-strategies` 查看完整清单。
 此真实行情 quickstart 需要安装 `qianxing[ccxt]` 对应的 CCXT 依赖并可访问所选交易所的公共行情 API。单独的 CCXT sandbox/实盘下单仍需凭据、权限和逐交易所外部验收。
 若只安装了 Rust CLI，可在同一 Python 环境补装行情 worker：`python -m pip install "qianxing[ccxt]"`；运行时用 `QX_PYTHON` 指向该环境的解释器。

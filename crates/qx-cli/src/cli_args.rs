@@ -77,7 +77,7 @@ pub(crate) enum Command {
         /// 复现窗口的 UTC Unix 毫秒时间上限；同一值可让多所 quickstart 对齐结束 K 线。
         #[arg(long)]
         as_of_ms: Option<u64>,
-        /// CCXT 永续合约标的（必须含结算币和交易所后缀），默认 BTC/USDT:USDT.OKX。
+        /// CCXT 永续合约标的（必须含结算币和交易所后缀）；省略时按 --exchange 选择 BTC/USDT 永续合约，缺省 OKX。
         #[arg(long)]
         instrument: Option<String>,
         /// 公共行情交易所：okx、binance 或 bitget。
