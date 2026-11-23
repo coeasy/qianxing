@@ -213,9 +213,7 @@ fn decode_hex(value: &str) -> Result<Vec<u8>, String> {
     }
     value
         .as_bytes()
-        .as_chunks::<2>()
-        .0
-        .iter()
+        .chunks_exact(2)
         .map(|pair| {
             let text = std::str::from_utf8(pair)
                 .map_err(|_| "dataset role catalog key/signature must be hexadecimal".to_owned())?;
