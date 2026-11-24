@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 #[derive(Clone, Default)]
 pub(super) struct RuntimeOrderFactIndex {
     fee_events_by_order: BTreeMap<u64, Vec<usize>>,
+    venue_order_ids: BTreeMap<u64, String>,
     order_risk_decisions: BTreeMap<u64, usize>,
     execution_capability_decisions: BTreeMap<u64, usize>,
 }
@@ -17,6 +18,18 @@ pub(super) struct RuntimeOrderFactIndex {
 impl RuntimeOrderFactIndex {
     pub(super) fn remember(&mut self, event: &Event, event_index: usize) {
         match &event.kind {
+            EventKind::Accepted {
+                client_order_id,
+                venue_order_id: Some(venue_order_id),
+            }
+            | EventKind::OrderStatusReconciled {
+                client_order_id,
+                venue_order_id: Some(venue_order_id),
+                ..
+            } => {
+                self.venue_order_ids
+                    .insert(*client_order_id, venue_order_id.clone());
+            }
             EventKind::Filled { fill } => {
                 self.fee_events_by_order
                     .entry(fill.order_id)
@@ -48,6 +61,12 @@ impl RuntimeOrderFactIndex {
             .get(&order_id)
             .map(Vec::as_slice)
             .unwrap_or(&[])
+    }
+
+    pub(super) fn venue_order_id(&self, client_order_id: u64) -> Option<&str> {
+        self.venue_order_ids
+            .get(&client_order_id)
+            .map(String::as_str)
     }
 
     pub(super) fn order_risk_decision_index(&self, client_order_id: u64) -> Option<usize> {
@@ -186,5 +205,53 @@ mod tests {
         assert_eq!(index.fee_event_indices(7), &[0, 2]);
         assert_eq!(index.fee_event_indices(9), &[1]);
         assert!(index.fee_event_indices(10).is_empty());
+    }
+
+    #[test]
+    fn venue_order_id_index_keeps_latest_known_identity() {
+        let mut index = RuntimeOrderFactIndex::default();
+        index.remember(
+            &event(
+                0,
+                EventKind::Accepted {
+                    client_order_id: 7,
+                    venue_order_id: Some("venue-first".into()),
+                },
+            ),
+            0,
+        );
+        index.remember(
+            &event(
+                1,
+                EventKind::OrderStatusReconciled {
+                    client_order_id: 7,
+                    account_id: "account-a".into(),
+                    venue_id: "BINANCE".into(),
+                    status: qx_core::OrderStatus::Accepted,
+                    venue_order_id: None,
+                    filled_raw: 0,
+                    filled_exact: None,
+                },
+            ),
+            1,
+        );
+        index.remember(
+            &event(
+                2,
+                EventKind::OrderStatusReconciled {
+                    client_order_id: 7,
+                    account_id: "account-a".into(),
+                    venue_id: "BINANCE".into(),
+                    status: qx_core::OrderStatus::Accepted,
+                    venue_order_id: Some("venue-latest".into()),
+                    filled_raw: 0,
+                    filled_exact: None,
+                },
+            ),
+            2,
+        );
+
+        assert_eq!(index.venue_order_id(7), Some("venue-latest"));
+        assert_eq!(index.venue_order_id(8), None);
     }
 }
