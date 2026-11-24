@@ -15,7 +15,8 @@ pub(super) struct RuntimeMarketFactIndex {
 impl RuntimeMarketFactIndex {
     pub(super) fn remember(&mut self, event: &Event, event_index: usize) {
         if let EventKind::MarketOrderBook { instrument, .. } = &event.kind {
-            self.latest_order_books.insert(instrument.clone(), event_index);
+            self.latest_order_books
+                .insert(instrument.clone(), event_index);
         }
     }
 

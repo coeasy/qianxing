@@ -7,6 +7,8 @@ use qx_core::{Event, EventKind, InstrumentId};
 use qx_guanxing::QuoteTick;
 use std::collections::BTreeMap;
 
+const PAPER_EXECUTION_MARKET_PREFIX: &str = "paper-execution:market:";
+
 #[derive(Clone, Default)]
 pub(super) struct RuntimeQuoteIndex {
     latest: BTreeMap<InstrumentId, QuoteTick>,
@@ -38,7 +40,10 @@ impl RuntimeQuoteIndex {
         // Paper execution records the exact market quote used by a simulated fill. It is useful
         // audit evidence and remains visible through `latest_quote`, but it is not a new venue
         // observation and must not extend the source quote's freshness window.
-        if !event.correlation_id.starts_with("paper-execution:market:") {
+        if !event
+            .correlation_id
+            .starts_with(PAPER_EXECUTION_MARKET_PREFIX)
+        {
             self.latest_received
                 .insert(instrument.clone(), (quote, event.receive_time));
         }
