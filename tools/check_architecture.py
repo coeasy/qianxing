@@ -15843,6 +15843,9 @@ def performance_baseline_check() -> None:
     cli_bench_source = criterion_bench.read_text(encoding="utf-8") if criterion_bench.is_file() else ""
     scheduler_source = scheduler_criterion_bench.read_text(encoding="utf-8") if scheduler_criterion_bench.is_file() else ""
     bench_driver_source = (ROOT / "benchmarks/run_rust_bench.py").read_text(encoding="utf-8")
+    runtime_criterion_bench = ROOT / "crates/qx-runtime/benches/criterion_performance.rs"
+    runtime_manifest = (ROOT / "crates/qx-runtime/Cargo.toml").read_text(encoding="utf-8")
+    runtime_criterion_source = runtime_criterion_bench.read_text(encoding="utf-8") if runtime_criterion_bench.is_file() else ""
     zhenlu_criterion_bench = ROOT / "crates/qx-zhenlu/benches/criterion_performance.rs"
     zhenlu_manifest = (ROOT / "crates/qx-zhenlu/Cargo.toml").read_text(encoding="utf-8")
     zhenlu_source = zhenlu_criterion_bench.read_text(encoding="utf-8") if zhenlu_criterion_bench.is_file() else ""
@@ -15859,7 +15862,7 @@ def performance_baseline_check() -> None:
             for name in ("clone_and_scan_4097_runs", "indexed_active_ids")
         )
         and "bench_scheduler_active_run_selection" not in cli_bench_source
-        and 'for package in ("qx-core", "qx-scheduler", "qx-xingban", "qx-zhenlu", "qx-cli")' in bench_driver_source,
+        and 'for package in ("qx-core", "qx-runtime", "qx-scheduler", "qx-xingban", "qx-zhenlu", "qx-cli")' in bench_driver_source,
         "Scheduler 活跃运行索引基准归 qx-scheduler，证据驱动器实跑该 crate target",
         "Scheduler 基准仍挂在 CLI、未注册服务 crate target 或未进入证据驱动器",
     )
@@ -15893,7 +15896,7 @@ def performance_baseline_check() -> None:
                 "fn bench_portfolio_margin_snapshot(",
             )
         )
-        and 'for package in ("qx-core", "qx-scheduler", "qx-xingban", "qx-zhenlu", "qx-cli")' in bench_driver_source,
+        and 'for package in ("qx-core", "qx-runtime", "qx-scheduler", "qx-xingban", "qx-zhenlu", "qx-cli")' in bench_driver_source,
         "撮合、A 股与组合核算 Criterion 基准归 qx-xingban，证据驱动器实跑其 crate target",
         "领域基准仍挂在 CLI、未注册 qx-xingban target 或未进入证据驱动器",
     )
@@ -15923,9 +15926,21 @@ def performance_baseline_check() -> None:
                 "fn bench_ledger_cash_balances_snapshot(",
             )
         )
-        and 'for package in ("qx-core", "qx-scheduler", "qx-xingban", "qx-zhenlu", "qx-cli")' in (ROOT / "benchmarks/run_rust_bench.py").read_text(encoding="utf-8"),
+        and 'for package in ("qx-core", "qx-runtime", "qx-scheduler", "qx-xingban", "qx-zhenlu", "qx-cli")' in (ROOT / "benchmarks/run_rust_bench.py").read_text(encoding="utf-8"),
         "EventLog/Ledger、Scheduler、撮合与 Paper Venue Criterion 归各自 crate，证据生成器运行所有 crate 与 CLI",
         "Criterion 基准 owner 未按 crate 归属、漏注册 crate target 或证据生成未运行全部组",
+    )
+    check(
+        runtime_criterion_bench.is_file()
+        and 'name = "criterion_performance"' in runtime_manifest
+        and 'criterion = "0.8.2"' in runtime_manifest
+        and "latest_account_balance_snapshot_cursor" in runtime_criterion_source
+        and "legacy_reverse_scan" in runtime_criterion_source
+        and "qx_runtime_balance_snapshot_cursor" in bench_driver_source
+        and '"qx-runtime": ("qx_runtime_balance_snapshot_cursor",)' in bench_driver_source
+        and '"qx-runtime"' in bench_driver_source,
+        "余额快照游标查找与旧式反向扫描基准归 qx-runtime 并进入 PR 性能证据驱动器",
+        "恢复风控游标缺少直接对照基准、Criterion 注册或 PR 性能证据接线",
     )
     check(
         zhenlu_criterion_bench.is_file()
