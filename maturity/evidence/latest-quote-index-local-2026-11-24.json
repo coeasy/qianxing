@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "local_diagnostic",
+  "generated_at_utc": "2026-11-24T05:29:20Z",
+  "source_commit": "6611d8404f05318349a836eb6f26852494948ebd",
+  "source_worktree_dirty": true,
+  "measurement_source_fingerprint_schema": 5,
+  "measurement_source_fingerprint": "26e321efa72e38881233cd419de08676a619bfc5818979785de5a3983abc0f9a",
+  "command": [
+    "cargo",
+    "bench",
+    "--locked",
+    "--offline",
+    "-p",
+    "qx-runtime",
+    "--bench",
+    "criterion_performance",
+    "--",
+    "qx_runtime_latest_quote_lookup",
+    "--noplot"
+  ],
+  "criterion_version": "0.8.2",
+  "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "hardware": {
+    "os": "Windows 11 Pro 10.0.22631",
+    "arch": "x86_64",
+    "processor": "AMD Ryzen 7 8700G with Radeon 780M Graphics"
+  },
+  "workload": {
+    "api": "latest_quote_with_depth_and_receive_time",
+    "target_instrument": "BTCUSDT.BINANCE",
+    "history_events": [1000, 8000, 64000],
+    "target_quote_position": "first event; all remaining events are quotes for another instrument",
+    "comparison": "per-instrument latest quote index versus the previous EventLog reverse scan",
+    "outputs_match": true
+  },
+  "results": [
+    {
+      "history_events": 1000,
+      "indexed_median_ns": 13.476466035375147,
+      "indexed_median_ci95_ns": [13.126650248078485, 17.408666626010515],
+      "reverse_scan_median_ns": 2212.6886826006544,
+      "reverse_scan_median_ci95_ns": [2152.7813344714755, 3228.9949080001898]
+    },
+    {
+      "history_events": 8000,
+      "indexed_median_ns": 14.946548615208197,
+      "indexed_median_ci95_ns": [14.65744056879395, 18.87557919580278],
+      "reverse_scan_median_ns": 23304.72014925373,
+      "reverse_scan_median_ci95_ns": [22613.152985074626, 28019.46828358209]
+    },
+    {
+      "history_events": 64000,
+      "indexed_median_ns": 16.071792609392272,
+      "indexed_median_ci95_ns": [14.8952682686764, 16.964828216173025],
+      "reverse_scan_median_ns": 717674.6031746031,
+      "reverse_scan_median_ci95_ns": [698344.5436507936, 891900.8928571428]
+    }
+  ],
+  "limits": [
+    "Single local Windows workstation; compare only on the same hardware and toolchain.",
+    "Read-only microbenchmark with a deliberately sparse target quote; it does not measure full Paper order submission or end-to-end throughput.",
+    "The source tree contained the candidate changes and was dirty; this is not hosted CI or a release artifact."
+  ]
+}

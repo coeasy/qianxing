@@ -33,9 +33,9 @@ class CriterionEstimatePathTests(unittest.TestCase):
 class CriterionPlanTests(unittest.TestCase):
     def test_pr_profile_runs_representative_hot_paths_with_full_sample_settings(self) -> None:
         required, commands = criterion_plan("cargo", "pr")
-        self.assertEqual(len(required), 18)
+        self.assertEqual(len(required), 24)
         self.assertLess(len(required), len(CRITERION_REQUIRED))
-        self.assertEqual(len(commands), 5)
+        self.assertEqual(len(commands), 6)
         self.assertEqual(
             {command[3] for command in commands}, {"qx-core", "qx-runtime", "qx-zhenlu"}
         )

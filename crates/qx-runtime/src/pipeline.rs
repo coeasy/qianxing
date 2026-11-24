@@ -28,9 +28,11 @@ mod backend_switch;
 mod commit;
 mod event_identity;
 mod fact_context;
+mod quote_index;
 
 use event_identity::RuntimeEventIdentityIndex;
 use fact_context::{enrich_runtime_event_context, runtime_event_metadata};
+use quote_index::RuntimeQuoteIndex;
 
 pub use qx_control::order_from_submit_command;
 use qx_core::{
@@ -489,6 +491,7 @@ pub struct LiveEventPipeline {
     funding_rates: BTreeMap<InstrumentId, FundingRateSnapshot>,
     pending_amendments: BTreeMap<u64, (String, Order)>,
     event_identities: RuntimeEventIdentityIndex,
+    quote_index: RuntimeQuoteIndex,
     // 下面这一格**只增不减的成交幂等台账**共用同一个上界：进程一生 ingest 过的成交数。
     // user stream、reconcile 与 Outbox 补投影三条路径都会把同一笔 fill 重投，`fill_key` 挡
     // 住第二次 `oms.apply_fill`。淘汰任何一条已见键就等于允许同一笔成交被记两次账，这是本
@@ -742,6 +745,7 @@ impl LiveEventPipeline {
             funding_rates: BTreeMap::new(),
             pending_amendments: BTreeMap::new(),
             event_identities: RuntimeEventIdentityIndex::default(),
+            quote_index: RuntimeQuoteIndex::default(),
             seen_fills: BTreeSet::new(),
             store,
             log_name,
@@ -998,28 +1002,7 @@ impl LiveEventPipeline {
 
     /// 返回 EventLog 中最近一次完整 L1 报价及买卖盘数量。
     pub fn latest_quote_with_depth(&self, instrument: &InstrumentId) -> Option<QuoteTick> {
-        self.log.events().iter().rev().find_map(|event| {
-            if let EventKind::MarketQuote {
-                instrument: event_instrument,
-                bid,
-                ask,
-                bid_qty,
-                ask_qty,
-                bid_qty_exact,
-                ask_qty_exact,
-                bid_exact,
-                ask_exact,
-            } = &event.kind
-            {
-                (event_instrument == instrument).then_some(
-                    QuoteTick::new(event.ts, *bid, *bid_qty, *ask, *ask_qty, event.source_seq)
-                        .with_optional_exact_prices(*bid_exact, *ask_exact)
-                        .with_optional_exact_sizes(*bid_qty_exact, *ask_qty_exact),
-                )
-            } else {
-                None
-            }
-        })
+        self.quote_index.latest_quote(instrument)
     }
 
     /// 返回最近一次完整 L1 报价与本地接收时间，供实时执行入口检查行情新鲜度。
@@ -1027,35 +1010,7 @@ impl LiveEventPipeline {
         &self,
         instrument: &InstrumentId,
     ) -> Option<(QuoteTick, u64)> {
-        self.log.events().iter().rev().find_map(|event| {
-            // Paper execution persists the quote used by a fill as an execution fact. That echo
-            // proves what price was applied, but it is not a new market-data observation and
-            // must never refresh the quote's receive-time freshness window.
-            if event.correlation_id.starts_with("paper-execution:market:") {
-                return None;
-            }
-            if let EventKind::MarketQuote {
-                instrument: event_instrument,
-                bid,
-                ask,
-                bid_qty,
-                ask_qty,
-                bid_qty_exact,
-                ask_qty_exact,
-                bid_exact,
-                ask_exact,
-            } = &event.kind
-            {
-                (event_instrument == instrument).then_some((
-                    QuoteTick::new(event.ts, *bid, *bid_qty, *ask, *ask_qty, event.source_seq)
-                        .with_optional_exact_prices(*bid_exact, *ask_exact)
-                        .with_optional_exact_sizes(*bid_qty_exact, *ask_qty_exact),
-                    event.receive_time,
-                ))
-            } else {
-                None
-            }
-        })
+        self.quote_index.latest_received_quote(instrument)
     }
 
     pub fn metrics(&self) -> PipelineMetricsSnapshot {
@@ -1282,6 +1237,7 @@ impl LiveEventPipeline {
     /// 的尾部——两条路径必须落在同一份归约上，否则"重启后状态"与"跑着的时候状态"会分叉。
     /// 账簿不在这里动：现金与持仓由 `LedgerApplied` 事实单独驱动（见调用点）。
     fn apply_index_event(&mut self, event: &Event, event_index: usize) -> QxResult<()> {
+        self.quote_index.remember(event);
         match &event.kind {
             EventKind::OrderSubmitted { order } => {
                 self.oms.insert_replayed(order.clone()).map_err(|error| {
@@ -1509,6 +1465,7 @@ impl LiveEventPipeline {
             .with_metadata(fact.metadata);
         self.log.append_checked(event.clone())?;
         self.event_identities.remember(&event);
+        self.quote_index.remember(&event);
         self.last_engine_ts = self.last_engine_ts.max(effective_ts);
         Ok(event)
     }
@@ -1829,6 +1786,7 @@ impl LiveEventPipeline {
             funding_rates: BTreeMap::new(),
             pending_amendments: BTreeMap::new(),
             event_identities: RuntimeEventIdentityIndex::default(),
+            quote_index: RuntimeQuoteIndex::default(),
             seen_fills: BTreeSet::new(),
             store: self.store.clone(),
             log_name: self.log_name.clone(),
@@ -3899,6 +3857,125 @@ mod tests {
         assert_eq!(reconcile.metadata.context.signal_id, "1");
         assert_eq!(reconcile.metadata.context.intent_id, "7");
         let _ = std::fs::remove_dir_all(reconcile_root);
+    }
+
+    #[test]
+    fn latest_quote_index_tracks_ingest_tail_refresh_and_restart() {
+        let root = temp_root("latest-quote-index");
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let quote = |ts: u64, source_seq: u64, bid: i64, correlation: &str| {
+            RuntimeEventEnvelope::market_quote(
+                instrument.clone(),
+                QuoteTick::new(
+                    ts,
+                    Price::from_i64(bid),
+                    Quantity::from_i64(2),
+                    Price::from_i64(bid + 1),
+                    Quantity::from_i64(3),
+                    source_seq,
+                ),
+                ts + 10,
+                source_seq,
+                correlation,
+            )
+        };
+
+        let mut writer = LiveEventPipeline::open(&root, "main", "USDT").unwrap();
+        writer.ingest(quote(100, 1, 100, "market:btc-1")).unwrap();
+        let mut reader = LiveEventPipeline::open(&root, "main", "USDT").unwrap();
+
+        writer
+            .ingest(quote(200, 2, 200, "paper-execution:market:run-1"))
+            .unwrap();
+        reader.refresh().unwrap();
+
+        let latest = reader.latest_quote_with_depth(&instrument).unwrap();
+        assert_eq!(latest.ts, 200);
+        assert_eq!(latest.bid, Price::from_i64(200));
+        let (source_quote, source_receive_time) = reader
+            .latest_quote_with_depth_and_receive_time(&instrument)
+            .unwrap();
+        assert_eq!(source_quote.ts, 100);
+        assert_eq!(source_quote.bid, Price::from_i64(100));
+        assert_eq!(source_receive_time, 110);
+
+        writer.ingest(quote(300, 3, 300, "market:btc-2")).unwrap();
+        reader.refresh().unwrap();
+        let (latest_source_quote, latest_receive_time) = reader
+            .latest_quote_with_depth_and_receive_time(&instrument)
+            .unwrap();
+        assert_eq!(latest_source_quote.ts, 300);
+        assert_eq!(latest_source_quote.bid, Price::from_i64(300));
+        assert_eq!(latest_receive_time, 310);
+
+        drop(reader);
+        drop(writer);
+        let reopened = LiveEventPipeline::open(&root, "main", "USDT").unwrap();
+        assert_eq!(
+            reopened.latest_quote_with_depth(&instrument).unwrap().bid,
+            Price::from_i64(300)
+        );
+        let (restored_source_quote, restored_receive_time) = reopened
+            .latest_quote_with_depth_and_receive_time(&instrument)
+            .unwrap();
+        assert_eq!(restored_source_quote.bid, Price::from_i64(300));
+        assert_eq!(restored_receive_time, 310);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(feature = "sqlite")]
+    #[test]
+    fn sqlite_latest_quote_index_updates_on_cursor_incremental_refresh() {
+        let root = temp_root("sqlite-latest-quote-index");
+        let database = root.join("events.sqlite");
+        let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let quote = |ts: u64, source_seq: u64, bid: i64| {
+            RuntimeEventEnvelope::market_quote(
+                instrument.clone(),
+                QuoteTick::new(
+                    ts,
+                    Price::from_i64(bid),
+                    Quantity::from_i64(2),
+                    Price::from_i64(bid + 1),
+                    Quantity::from_i64(3),
+                    source_seq,
+                ),
+                ts + 10,
+                source_seq,
+                format!("market:btc-{source_seq}"),
+            )
+        };
+
+        let mut writer = LiveEventPipeline::open_sqlite(&database, "main", "USDT").unwrap();
+        writer.ingest(quote(100, 1, 100)).unwrap();
+        let mut reader = LiveEventPipeline::open_sqlite(&database, "main", "USDT").unwrap();
+        assert_eq!(reader.metrics.tail_appends.load(Ordering::Relaxed), 0);
+
+        writer.ingest(quote(200, 2, 200)).unwrap();
+        reader.refresh().unwrap();
+        assert_eq!(reader.metrics.tail_appends.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            reader.latest_quote_with_depth(&instrument).unwrap().bid,
+            Price::from_i64(200)
+        );
+        let (source_quote, receive_time) = reader
+            .latest_quote_with_depth_and_receive_time(&instrument)
+            .unwrap();
+        assert_eq!(source_quote.bid, Price::from_i64(200));
+        assert_eq!(receive_time, 210);
+
+        drop(reader);
+        drop(writer);
+        let reopened = LiveEventPipeline::open_sqlite(&database, "main", "USDT").unwrap();
+        assert_eq!(
+            reopened
+                .latest_quote_with_depth_and_receive_time(&instrument)
+                .unwrap()
+                .0
+                .bid,
+            Price::from_i64(200)
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
