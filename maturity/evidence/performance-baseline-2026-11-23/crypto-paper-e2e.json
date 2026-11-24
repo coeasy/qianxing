@@ -1,0 +1,144 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "crypto_paper_worker_acceptance_e2e",
+  "generated_at_utc": "2026-11-23T12:39:18.148390+00:00",
+  "hardware": {
+    "os": "Linux",
+    "arch": "x86_64",
+    "processor": "AMD EPYC 9V74 80-Core Processor",
+    "logical_cpu_count": 4,
+    "physical_core_count": 2,
+    "total_ram_bytes": 16759422976,
+    "processor_name": "AMD EPYC 9V74 80-Core Processor"
+  },
+  "measurement_source_fingerprint": "97f321057ef149bc9b3a81a4739902bb18a5d24c74f245ea8670a79bbba155d3",
+  "measurement_source_fingerprint_schema": 5,
+  "binary": "qx-cli",
+  "binary_sha256": "97a72ead2b8d53e40144be7b889172db8bb23b7d2e8d7c7ff3fa2087d3246d3c",
+  "scenario": "tools/paper_acceptance.py: scheduler -> strategy -> Paper execution -> Ledger/EventLog/audit, same-root idempotent rerun, and independent-root parity",
+  "profile_coverage_claim": false,
+  "measurement_method": {
+    "process_tree": "run_measured samples the Python acceptance driver and descendants every 10 ms when psutil is available",
+    "memory": "main-process OS peak RSS plus sampled aggregate process-tree RSS; tree samples may miss short spikes",
+    "scope": "each sample creates two isolated roots, runs the Paper chain, verifies an idempotent rerun, checks audit termination and compares independent fact surfaces"
+  },
+  "records": [
+    {
+      "benchmark": "end_to_end",
+      "operations": "crypto-paper-worker-acceptance-v1",
+      "samples": 7,
+      "median_ms": 710.28,
+      "p95_ms": 720.377,
+      "raw_ms": [
+        710.483,
+        710.355,
+        710.029,
+        709.778,
+        710.182,
+        710.28,
+        720.377
+      ],
+      "verified_main_chain_counts_per_independent_root": {
+        "orders_submitted": 1,
+        "fills": 1,
+        "ledger_entries": 4
+      },
+      "peak_rss_bytes_p95": 18649088.0,
+      "process_tree_peak_rss_bytes_p95": null,
+      "peak_process_count_p95": 1.0,
+      "tree_cpu_seconds_p95": null,
+      "tree_io_read_bytes_p95": null,
+      "tree_io_write_bytes_p95": null,
+      "raw_samples": [
+        {
+          "elapsed_ms": 710.4826340000727,
+          "orders_submitted": 1,
+          "fills": 1,
+          "ledger_entries": 4,
+          "peak_rss_bytes": 18636800,
+          "process_tree_peak_rss_bytes": null,
+          "peak_process_count": 1,
+          "tree_cpu_seconds": null,
+          "tree_io_read_bytes": null,
+          "tree_io_write_bytes": null
+        },
+        {
+          "elapsed_ms": 710.3550040000073,
+          "orders_submitted": 1,
+          "fills": 1,
+          "ledger_entries": 4,
+          "peak_rss_bytes": 18636800,
+          "process_tree_peak_rss_bytes": null,
+          "peak_process_count": 1,
+          "tree_cpu_seconds": null,
+          "tree_io_read_bytes": null,
+          "tree_io_write_bytes": null
+        },
+        {
+          "elapsed_ms": 710.0290420000874,
+          "orders_submitted": 1,
+          "fills": 1,
+          "ledger_entries": 4,
+          "peak_rss_bytes": 18636800,
+          "process_tree_peak_rss_bytes": null,
+          "peak_process_count": 1,
+          "tree_cpu_seconds": null,
+          "tree_io_read_bytes": null,
+          "tree_io_write_bytes": null
+        },
+        {
+          "elapsed_ms": 709.7777110000152,
+          "orders_submitted": 1,
+          "fills": 1,
+          "ledger_entries": 4,
+          "peak_rss_bytes": 18628608,
+          "process_tree_peak_rss_bytes": null,
+          "peak_process_count": 1,
+          "tree_cpu_seconds": null,
+          "tree_io_read_bytes": null,
+          "tree_io_write_bytes": null
+        },
+        {
+          "elapsed_ms": 710.1820990000078,
+          "orders_submitted": 1,
+          "fills": 1,
+          "ledger_entries": 4,
+          "peak_rss_bytes": 18587648,
+          "process_tree_peak_rss_bytes": null,
+          "peak_process_count": 1,
+          "tree_cpu_seconds": null,
+          "tree_io_read_bytes": null,
+          "tree_io_write_bytes": null
+        },
+        {
+          "elapsed_ms": 710.279614000001,
+          "orders_submitted": 1,
+          "fills": 1,
+          "ledger_entries": 4,
+          "peak_rss_bytes": 18571264,
+          "process_tree_peak_rss_bytes": null,
+          "peak_process_count": 1,
+          "tree_cpu_seconds": null,
+          "tree_io_read_bytes": null,
+          "tree_io_write_bytes": null
+        },
+        {
+          "elapsed_ms": 720.3768619999664,
+          "orders_submitted": 1,
+          "fills": 1,
+          "ledger_entries": 4,
+          "peak_rss_bytes": 18649088,
+          "process_tree_peak_rss_bytes": null,
+          "peak_process_count": 1,
+          "tree_cpu_seconds": null,
+          "tree_io_read_bytes": null,
+          "tree_io_write_bytes": null
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "The worker acceptance fixture uses one Paper order and does not model funding provider retrieval, eight-hour funding cadence, or an externally deployed database.",
+    "Maker/taker, precision, weighted rate-limit, partial-fill and funding-ledger performance is measured separately by qx_zhenlu_crypto_paper_lifecycle_v2; this E2E row is not a complete crypto-paper profile claim."
+  ]
+}

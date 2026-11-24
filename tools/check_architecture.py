@@ -15986,7 +15986,7 @@ def performance_baseline_check() -> None:
     )
     workflow = ROOT / ".github/workflows/ci.yml"
     workflow_source = workflow.read_text(encoding="utf-8") if workflow.is_file() else ""
-    performance_job = workflow_source.split("  performance-trend:", 1)[-1].split("\n  python-wheel:", 1)[0]
+    performance_job = workflow_source.split("  performance-trend:", 1)[-1].split("\n  python-wheel-build:", 1)[0]
     check(
         "performance-trend:" in workflow_source
         and "name: Blocking registered performance regressions" in workflow_source
@@ -15996,9 +15996,14 @@ def performance_baseline_check() -> None:
         and "benchmarks/run_crypto_paper_e2e.py" in workflow_source
         and "benchmarks/compare_baseline.py" in workflow_source
         and "benchmarks/results/crypto-paper-e2e.json" in workflow_source
-        and "name: performance-baseline" in workflow_source,
-        "CI 运行 Rust 与真实 Paper worker 基准、阻断已登记回归并保留新基线 artifact",
-        "缺少 performance-trend job、趋势比较或基线 artifact",
+        and "name: performance-baseline" in workflow_source
+        and "name: Upload performance diagnostics after failure" in performance_job
+        and "if: failure()" in performance_job
+        and "name: performance-diagnostics-${{ github.run_attempt }}" in performance_job
+        and "benchmarks/results/previous/*.json" in performance_job
+        and "benchmarks/results/diagnostics/ci-context.json" in performance_job,
+        "CI 运行 Rust 与真实 Paper worker 基准、阻断已登记回归并保留成功基线及失败样本",
+        "缺少 performance-trend job、趋势比较、成功基线或失败诊断 artifact",
     )
     profile_driver = ROOT / "benchmarks/run_profile_backtest.py"
     profile_evidence_path = ROOT / "maturity/evidence/profile-market-backtest.json"
@@ -25320,32 +25325,37 @@ def cli_behavior_parity_check() -> None:
 
 
 def cli_guide_acceptance_check() -> None:
-    """WP-5.4: require the documented researcher route to produce and read back a report."""
+    """WP-5.4: require shared human/JSON role guides and a readable first report."""
     guide_path = ROOT / "crates/qx-cli/src/guide.rs"
     test_path = ROOT / "crates/qx-cli/tests/guide.rs"
+    cargo_manifest_path = ROOT / "crates/qx-cli/Cargo.toml"
     quickstart = (ROOT / "crates/qx-cli/src/quickstart.rs").read_text(encoding="utf-8")
     guide = guide_path.read_text(encoding="utf-8") if guide_path.is_file() else ""
     test = test_path.read_text(encoding="utf-8") if test_path.is_file() else ""
+    cargo_manifest = (
+        cargo_manifest_path.read_text(encoding="utf-8") if cargo_manifest_path.is_file() else ""
+    )
+    cli_args = _read_text(ROOT / "crates/qx-cli/src/cli_args.rs")
     check(
-        all(
-            function in guide
-            for function in (
-                "fn print_researcher()",
-                "fn print_strategy_author()",
-                "fn print_operator()",
-                "fn print_integrator()",
-            )
-        )
+        "fn audience_guide(" in guide
+        and "fn all_audience_guides()" in guide
+        and "fn print_audience(" in guide
+        and "fn print_json(" in guide
+        and "schema_version: 1" in guide
+        and "Self::Guide(args) => args.json" in cli_args
         and "qx-cli quickstart ./qianxing-demo" in guide
         and "plan schema-registry maturity/schema-registry.json --json" in guide
         and "fn researcher_guide_command_produces_a_report_that_can_be_read_back()" in test
+        and "fn guide_json_lists_four_machine_readable_five_step_paths()" in test
+        and "fn guide_json_can_select_one_audience()" in test
+        and 'name = "guide"\npath = "tests/guide.rs"' in cargo_manifest
         and "run the command printed by the researcher guide" in test
         and ".summary.json" in test
         and '"--json"' in test
         and "contains_result_hash" in test
         and "use super::*;" not in production_text(quickstart),
-        "WP-5.4 研究者指南按原样命令实际生成摘要并以 JSON 复读同一 result_hash",
-        "缺少四角色入口、真实指南 quickstart→摘要→复读用例未覆盖产物与指纹，"
+        "WP-5.4 四角色指南共用定义支持文本与版本化 JSON，研究者路径实际生成摘要并复读同一 result_hash",
+        "缺少四角色共享指南、可选角色 JSON，或 guide 集成用例未注册/未覆盖产物与指纹，"
         "或 quickstart 生产模块重新隐式依赖 crate 根导入",
     )
 
@@ -29121,7 +29131,7 @@ def _fn_body_line_count(text: str, start: int) -> int:
 
 
 def qx_sdk_facade_check() -> None:
-    """方案 §6.1 的第三方 Rust 门面与真实代码对账。十颗，恒发十条、不早退。"""
+    """方案 §6.1 的第三方 Rust 门面与真实代码对账。十一颗，恒发十一条、不早退。"""
     manifest = ROOT / SDK_FACADE_DIR / "Cargo.toml"
     manifest_text = _text_or_empty(manifest)
     members = _text_or_empty(ROOT / "Cargo.toml")
@@ -29286,6 +29296,45 @@ def qx_sdk_facade_check() -> None:
         "门面的每一条能力缺口都在 `maturity/capability-matrix.yaml` 的 `rust_sdk` 行如实登记"
         "（没有生产端的门面能力不许只写在散文里）",
         f"rust_sdk 行={'在' if rust_sdk is not None else '缺'}；未登记 {missing_gaps or '无'}",
+    )
+
+    # ⑪ 用户可运行的 registry quickstart 必须锁定公开 SDK，且在常驻 CI 中真的执行。
+    quickstart_manifest = _text_or_empty(ROOT / "examples/rust-sdk-quickstart/Cargo.toml")
+    quickstart_lock = _text_or_empty(ROOT / "examples/rust-sdk-quickstart/Cargo.lock")
+    ci_workflow = _text_or_empty(ROOT / ".github/workflows/ci.yml")
+    quickstart_version = re.search(
+        r'^qx-sdk = "(\d+\.\d+\.\d+)"\s*$', quickstart_manifest, re.MULTILINE
+    )
+    sdk_lock_entry = next(
+        (
+            block
+            for block in quickstart_lock.split("[[package]]")
+            if re.search(r'^name = "qx-sdk"\s*$', block, re.MULTILINE)
+        ),
+        "",
+    )
+    registry_lock = (
+        'source = "registry+https://github.com/rust-lang/crates.io-index"' in sdk_lock_entry
+    )
+    registry_quickstart = (
+        quickstart_version is not None
+        and re.search(
+            rf'^version = "{re.escape(quickstart_version.group(1))}"\s*$',
+            sdk_lock_entry,
+            re.MULTILINE,
+        )
+        is not None
+        and registry_lock
+        and "rust-sdk-published-quickstart" in ci_workflow
+        and "working-directory: examples/rust-sdk-quickstart" in ci_workflow
+        and "cargo run --locked --release" in ci_workflow
+    )
+    check(
+        registry_quickstart,
+        "独立 Rust 快速入门锁定已发布的 crates.io SDK，并由 CI 从该清单实际构建运行",
+        f"版本={quickstart_version.group(1) if quickstart_version else '缺'}；"
+        f"registry lock={registry_lock}；"
+        f"CI job={'rust-sdk-published-quickstart' in ci_workflow}",
     )
 
 

@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "hosted_performance_baseline_bundle",
+  "generated_at_utc": "2026-11-23T12:39:23Z",
+  "source": {
+    "repository": "coeasy/qianxing",
+    "commit": "9fa5dab42ef150c0281b3553641ea92d5f19b60b",
+    "pull_request": 22,
+    "workflow": "CI",
+    "workflow_run_id": 45173899359,
+    "workflow_run_url": "https://github.com/coeasy/qianxing/actions/runs/45173899359",
+    "measurement_source_fingerprint": "97f321057ef149bc9b3a81a4739902bb18a5d24c74f245ea8670a79bbba155d3",
+    "measurement_source_fingerprint_schema": 5
+  },
+  "artifact": {
+    "id": 14818667769,
+    "name": "performance-baseline",
+    "sha256": "448ff477d7f05b52c2a2911a883b03526f75f587d09fd51989088ef3bf5fdc5e",
+    "files": [
+      "ashare-rules-on.json",
+      "crypto-paper-e2e.json",
+      "end-to-end.json",
+      "linux-resource-bounded-real-data.json",
+      "rust-micro.json"
+    ]
+  },
+  "environment": {
+    "os": "Linux",
+    "arch": "x86_64",
+    "processor": "AMD EPYC 9V74",
+    "logical_cpu_count": 4,
+    "physical_core_count": 2,
+    "total_ram_bytes": 16759422976
+  },
+  "scope": {
+    "profile_coverage_claim": false,
+    "profile_target_status_updated": false,
+    "limitations": [
+      "Single GitHub-hosted Linux runner; results are not a same-hardware comparison with the local Windows target.",
+      "Synthetic backtest inputs are execution-throughput evidence, not market-data-quality evidence.",
+      "The bundle does not establish competitor parity, production readiness, or live-trading safety.",
+      "Performance results are recorded as a baseline; profile readiness targets remain unchanged."
+    ]
+  }
+}
