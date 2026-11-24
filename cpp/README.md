@@ -21,7 +21,51 @@
 
 `include/qianxing_ring.hpp` 提供 C++17 的跨平台文件映射和 QXRB 读写实现；Ring 仍要求严格单生产者/单消费者，策略进程只处理 QXSF 帧，不得直接访问凭证、Venue 或 Ledger。
 
-本地构建示例：`cmake -S cpp -B build/cpp -DQX_BUILD_JSONL_EXAMPLE=ON && cmake --build build/cpp --config Release`。CI 会在 Ubuntu 安装 `nlohmann-json3-dev` 后编译 C ABI 动态库和独立 Worker；Windows/macOS 的编译器矩阵仍需接入发布环境后验收。
+本地构建示例：`cmake -S cpp -B build/cpp -DQX_BUILD_JSONL_EXAMPLE=ON && cmake --build build/cpp --config Release`。GitHub Actions 的 C++ SDK job 会在 Ubuntu、Windows 和 macOS 构建 C ABI 动态库、独立 Worker 与 SDK 合同程序，并安装导出的 CMake 包后在独立消费工程中执行 `find_package`、链接和运行。JSONL 示例在 Linux 使用系统 `nlohmann-json3-dev`；Windows/macOS 由 CMake 获取同版本 header-only 依赖。
+
+## 将已安装包接入自己的 CMake 工程
+
+从仓库根目录构建并安装头文件与 CMake package：
+
+```bash
+cmake -S cpp -B build/cpp -DCMAKE_BUILD_TYPE=Release
+cmake --build build/cpp --config Release
+cmake --install build/cpp --prefix "$PWD/build/cpp-sdk-install"
+```
+
+在下游工程中查找并链接导出目标：
+
+```cmake
+cmake_minimum_required(VERSION 3.20)
+project(my_qianxing_app LANGUAGES CXX)
+
+find_package(QianxingStrategySDK CONFIG REQUIRED)
+add_executable(my_qianxing_app main.cpp)
+target_link_libraries(my_qianxing_app PRIVATE Qianxing::StrategySDK)
+```
+
+配置下游工程时，将 `SDK_PREFIX` 替换为上一步安装目录的绝对路径：
+
+```bash
+cmake -S path/to/consumer -B path/to/consumer/build -DCMAKE_PREFIX_PATH=SDK_PREFIX
+cmake --build path/to/consumer/build --config Release
+```
+
+一个最小头文件消费程序如下：
+
+```cpp
+#include <qianxing_app.hpp>
+#include <qianxing_strategy.h>
+
+#include <iostream>
+
+int main() {
+    std::cout << "Backtest preflight route: " << qianxing::routes::kBacktestPreflight << '\n';
+    return QX_STRATEGY_API_VERSION == 1U ? 0 : 1;
+}
+```
+
+这一步只验证已安装 SDK 的头文件和 CMake 导出目标。要通过 `AppClient` 访问服务，应用还需传入实现 `AppTransport` 的 HTTP 客户端，并负责 TLS、鉴权、超时和连接复用；SDK 不会伪造网络响应或隐式连接服务。CI 的独立消费工程还会检查 `AppClient` 的版本化请求路由。
 
 C ABI v2 的 `qx_order_intent` 与旧 `qx_strategy_vtable` 布局保持稳定。订单状态 callback 可继续导出 `qx_strategy_on_order_status_v1` 接收版本化 JSON；新插件可导出 `qx_strategy_on_order_status_v2` 接收 typed `qx_strategy_order_status_update_v2`。成交策略回调可选导出 `qx_strategy_on_fill_update_v2` 接收 `StrategyFillUpdateV2` JSON，其中包含 schema v2、成交 `ts` 和 EventLog `event_seq`，用于识别重复成交投递。账户与持仓回调可选导出 `qx_strategy_on_account_update_v1`，接收 `StrategyAccountUpdateV1` 的完整余额或持仓快照及 EventLog `event_seq`；快照只读，不直接修改 Rust ledger。Rust 动态宿主分别探测这些符号；缺少 fill V2 时将更新投影到旧 vtable fill callback，缺少订单状态或账户回调时保留旧插件行为。更新中的字符串和 exact amount 指针由宿主持有，只在 callback 返回前有效；数量、价格以带 scale 的 128-bit coefficient 表达。需要显式下发衍生品订单政策的插件可额外导出 `qx_strategy_get_order_policy_v1`；字段格式和默认行为见 [`c-strategy-order-policy-v1.json`](../schemas/c-strategy-order-policy-v1.json)。不导出可选符号的旧插件继续使用原有默认行为。
 
