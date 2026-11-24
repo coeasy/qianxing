@@ -79,7 +79,7 @@ impl CcxtProcessClient {
         let child = command
             .spawn()
             .map_err(|error| format!("启动 CCXT Worker 失败: {python} 无法执行: {error}"))?;
-        Self::from_child_with_timeouts(
+        Self::from_child(
             child,
             rpc_timeout_ms,
             historical_data_timeout_ms,
@@ -88,12 +88,7 @@ impl CcxtProcessClient {
         )
     }
 
-    #[cfg(test)]
-    fn from_child(child: Child, timeout_ms: u64, worker_program: &str) -> Result<Self, String> {
-        Self::from_child_with_timeouts(child, timeout_ms, timeout_ms, timeout_ms, worker_program)
-    }
-
-    fn from_child_with_timeouts(
+    fn from_child(
         mut child: Child,
         rpc_timeout_ms: u64,
         historical_data_timeout_ms: u64,

@@ -385,8 +385,9 @@ fn ccxt_process_client_cancels_a_child_waiting_for_an_rpc_response() {
         .stderr(Stdio::null())
         .spawn()
         .expect("Python is required by the workspace test environment");
-    let mut client = CcxtProcessClient::from_child(child, 10_000, "ccxt-cancel-fixture")
-        .expect("piped child attaches to the bounded RPC bridge");
+    let mut client =
+        CcxtProcessClient::from_child(child, 10_000, 10_000, 10_000, "ccxt-cancel-fixture")
+            .expect("piped child attaches to the bounded RPC bridge");
     let started = Instant::now();
     let outcome = client
         .call_cancellable(json!({"op": "wait"}), || {
@@ -419,8 +420,9 @@ fn ccxt_process_client_reports_abnormal_worker_exit_status_on_eof() {
         .stderr(Stdio::null())
         .spawn()
         .expect("Python is required by the workspace test environment");
-    let mut client = CcxtProcessClient::from_child(child, 10_000, "ccxt-exit-fixture")
-        .expect("piped child attaches to the bounded RPC bridge");
+    let mut client =
+        CcxtProcessClient::from_child(child, 10_000, 10_000, 10_000, "ccxt-exit-fixture")
+            .expect("piped child attaches to the bounded RPC bridge");
 
     let error = client
         .call(json!({"op": "crash"}))
