@@ -28,6 +28,9 @@ CRITERION_REQUIRED = {
     *(f"qx_runtime_balance_snapshot_cursor/{mode}/{size}"
       for mode in ("indexed", "legacy_reverse_scan")
       for size in (1_000, 8_000, 64_000)),
+    *(f"qx_runtime_latest_quote_lookup/{mode}/{size}"
+      for mode in ("indexed", "legacy_reverse_scan")
+      for size in (1_000, 8_000, 64_000)),
     *(f"qx_zhenlu_crypto_paper_lifecycle_v2/{size}" for size in (1, 16, 256)),
     *(f"qx_core_event_log_digest/{size}" for size in (1_000, 8_000, 64_000)),
     *(f"qx_core_event_log_validate/{mode}/{size}" for mode in ("cached", "duplicate_tree_baseline") for size in (1_000, 8_000, 64_000)),
@@ -78,7 +81,10 @@ PR_CRITERION_FILTERS = {
         "qx_core_ledger_entry_lookup/indexed",
         "qx_core_event_log_prefix_digest/cached_after_append",
     ),
-    "qx-runtime": ("qx_runtime_balance_snapshot_cursor",),
+    "qx-runtime": (
+        "qx_runtime_balance_snapshot_cursor",
+        "qx_runtime_latest_quote_lookup",
+    ),
     "qx-zhenlu": ("qx_zhenlu_crypto_paper_lifecycle_v2",),
 }
 MARGINAL_KNEE_THRESHOLD_PCT = 20.0

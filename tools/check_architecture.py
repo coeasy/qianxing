@@ -15846,6 +15846,8 @@ def performance_baseline_check() -> None:
     runtime_criterion_bench = ROOT / "crates/qx-runtime/benches/criterion_performance.rs"
     runtime_manifest = (ROOT / "crates/qx-runtime/Cargo.toml").read_text(encoding="utf-8")
     runtime_criterion_source = runtime_criterion_bench.read_text(encoding="utf-8") if runtime_criterion_bench.is_file() else ""
+    runtime_pipeline_source = (ROOT / "crates/qx-runtime/src/pipeline.rs").read_text(encoding="utf-8")
+    runtime_quote_index_source = (ROOT / "crates/qx-runtime/src/pipeline/quote_index.rs").read_text(encoding="utf-8") if (ROOT / "crates/qx-runtime/src/pipeline/quote_index.rs").is_file() else ""
     zhenlu_criterion_bench = ROOT / "crates/qx-zhenlu/benches/criterion_performance.rs"
     zhenlu_manifest = (ROOT / "crates/qx-zhenlu/Cargo.toml").read_text(encoding="utf-8")
     zhenlu_source = zhenlu_criterion_bench.read_text(encoding="utf-8") if zhenlu_criterion_bench.is_file() else ""
@@ -15937,10 +15939,17 @@ def performance_baseline_check() -> None:
         and "latest_account_balance_snapshot_cursor" in runtime_criterion_source
         and "legacy_reverse_scan" in runtime_criterion_source
         and "qx_runtime_balance_snapshot_cursor" in bench_driver_source
-        and '"qx-runtime": ("qx_runtime_balance_snapshot_cursor",)' in bench_driver_source
+        and '"qx_runtime_latest_quote_lookup"' in bench_driver_source
+        and '"qx-runtime": (' in bench_driver_source
+        and "qx_runtime_latest_quote_lookup" in runtime_criterion_source
+        and "latest_quote_with_depth_and_receive_time" in runtime_pipeline_source
+        and "self.quote_index.remember(event)" in runtime_pipeline_source
+        and "self.quote_index.latest_received_quote(instrument)" in runtime_pipeline_source
+        and "paper-execution:market:" in runtime_quote_index_source
+        and '"qx_runtime_latest_quote_lookup/{mode}/{size}"' in bench_driver_source
         and '"qx-runtime"' in bench_driver_source,
-        "余额快照游标查找与旧式反向扫描基准归 qx-runtime 并进入 PR 性能证据驱动器",
-        "恢复风控游标缺少直接对照基准、Criterion 注册或 PR 性能证据接线",
+        "余额快照与最新行情索引均有扫描对照、恢复/增量更新路径和 PR 性能证据",
+        "恢复风控或最新行情索引缺少直接对照基准、重建维护或 PR 性能证据接线",
     )
     check(
         zhenlu_criterion_bench.is_file()
