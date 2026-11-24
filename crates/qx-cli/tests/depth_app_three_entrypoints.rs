@@ -18,6 +18,9 @@ fn scratch(label: &str) -> PathBuf {
         "qx-app-depth-contract/{label}-{}",
         std::process::id()
     ));
+    if root.exists() {
+        std::fs::remove_dir_all(&root).expect("reset test directory");
+    }
     std::fs::create_dir_all(&root).expect("create test directory");
     root
 }
