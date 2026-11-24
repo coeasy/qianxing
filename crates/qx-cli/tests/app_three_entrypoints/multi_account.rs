@@ -1075,10 +1075,11 @@ fn all_failed_multi_account_package_relocates_and_verifies_without_claiming_reco
         .iter()
         .all(|input| { input["missing"] == true && input["sha256"].is_null() }));
 
-    let relocated = root.with_file_name(format!(
-        "multi-account-all-failed-package-{}",
-        std::process::id()
-    ));
+    let scratch_name = root
+        .file_name()
+        .expect("all-failed multi-account scratch root has a final path component")
+        .to_string_lossy();
+    let relocated = root.with_file_name(format!("{scratch_name}-package"));
     std::fs::rename(&package_dir, &relocated).expect("relocate all-failed evidence package");
     std::fs::remove_dir_all(&root).expect("remove all-failed source workspace");
     let verified = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
