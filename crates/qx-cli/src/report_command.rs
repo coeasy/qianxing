@@ -39,7 +39,21 @@ pub(crate) struct ReportOptions<'a> {
 }
 
 pub(crate) fn run_report(path: &Path, as_json: bool, html: bool) -> Result<(), String> {
-    run_report_with_output(path, as_json, html, false, None, &[])
+    run_report_with_benchmark(
+        path,
+        ReportOptions {
+            as_json,
+            html,
+            evidence: false,
+            output: None,
+            against: &[],
+            benchmark_bars: None,
+            benchmark_calendar: None,
+            benchmark_csv: None,
+            strategy_diagnostics: None,
+            xlsx: None,
+        },
+    )
 }
 
 pub(crate) fn run_report_with_output(
@@ -50,6 +64,9 @@ pub(crate) fn run_report_with_output(
     output: Option<&Path>,
     against: &[PathBuf],
 ) -> Result<(), String> {
+    if !evidence && output.is_none() && against.is_empty() {
+        return run_report(path, as_json, html);
+    }
     run_report_with_benchmark(
         path,
         ReportOptions {

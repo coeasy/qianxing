@@ -209,15 +209,19 @@ fn readme_recommended_flow_runs_line_by_line() {
             assert_eq!(
                 code,
                 Some(0),
-                "profile={profile} README command failed: {line}\n{output}"
+                "profile={profile} README command failed: exit={code:?} {line}\n{output}"
             );
         }
 
         let backtest_prefix = format!("{program} backtest ");
+        let normalized_runtime = runtime.replace('\\', "/");
         let bound_backtest = commands.iter().any(|line| {
             line.strip_prefix(backtest_prefix.as_str())
                 .is_some_and(|arguments| {
-                    arguments.split_whitespace().next() == Some(runtime.as_str())
+                    arguments
+                        .split_whitespace()
+                        .next()
+                        .is_some_and(|path| path.replace('\\', "/") == normalized_runtime)
                 })
         });
         let tail = *commands
@@ -235,7 +239,10 @@ fn readme_recommended_flow_runs_line_by_line() {
                 "backtest projects should finish by reading the summary: {tail}"
             );
         } else {
-            assert!(tail.starts_with(&format!("{program} backtest")), "{tail}");
+            assert!(
+                tail.starts_with(&format!("{program} backtest")),
+                "profile={profile} tail={tail} bound_backtest={bound_backtest} runtime={runtime} commands={commands:?}"
+            );
         }
         let _ = std::fs::remove_dir_all(root);
     }

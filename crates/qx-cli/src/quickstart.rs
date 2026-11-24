@@ -1,9 +1,10 @@
 //! `quickstart` —— 把《工业化易用性收口指南》§1 的首跑链条收成一条命令（易用性 P2 第一格）。
 //!
-//! `init --strategy macd` → `doctor` → `backtest` → `report` → `status` 这五条此前只写在 README
+//! `init --strategy macd` → `doctor` → `backtest` → `report --evidence` →
+//! `evidence verify-run` → `status` 这六步此前只写在 README
 //! 里靠人逐条敲：单条命令的报错一直有出口，但"整条链条走到第几步、失败那步的原文是什么、
-//! 跑完接着敲什么"没有（U4 的成功侧）。本模块直调 crate 根上那五个入口的同一批函数，所以
-//! 产物、退出码与 `result_hash` 都与手工逐条敲同源 —— 另起子进程只会多付五次启动，
+//! 跑完接着敲什么"没有（U4 的成功侧）。本模块直调六步 CLI 入口对应的同一批处理函数，所以
+//! 产物、退出码与 `result_hash` 都与手工逐条敲同源 —— 另起子进程只会多付多次启动，
 //! 不会多证明任何东西。
 //!
 //! 落点口径：`init` 把 `storage.data_dir` 钉成项目目录内的绝对路径，因此整条链条只写使用者
@@ -12,9 +13,9 @@
 use std::path::{Path, PathBuf};
 
 use crate::{
-    cli_args, run_ccxt_builtin_backtest, run_doctor, run_init_with_ccxt_selection,
-    run_init_with_profile, run_report, run_status, run_unified_backtest,
-    write_ccxt_quickstart_project_manifest, CcxtBuiltinBacktestInput,
+    cli_args, resolve_backtest_summary_path, run_ccxt_builtin_backtest, run_doctor,
+    run_init_with_ccxt_selection, run_init_with_profile, run_report_with_output, run_status,
+    run_unified_backtest, write_ccxt_quickstart_project_manifest, CcxtBuiltinBacktestInput,
 };
 
 /// 不带参数时的项目目录名。默认值不取 `.`：那会把整份产物摊进使用者的当前目录，
@@ -51,6 +52,17 @@ fn command_line(arguments: &[&str]) -> String {
     line
 }
 
+fn quickstart_evidence_bundle_path(summary_path: &Path) -> Result<PathBuf, String> {
+    let file_name = summary_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("回测摘要文件名无效: {}", summary_path.display()))?;
+    let stem = file_name
+        .strip_suffix(".summary.json")
+        .ok_or_else(|| format!("回测摘要文件名无效: {}", summary_path.display()))?;
+    Ok(summary_path.with_file_name(format!("{stem}.evidence.json")))
+}
+
 /// 一步的落点：成功印一行「[完成]」；失败印「[止步]」+ 那一步的命令原文 + 重跑整条的写法，
 /// 再以退出码 2 fail closed。止步的那一步必须能单独重跑，这是本入口唯一的错误面。
 fn require(label: &str, command: &str, retry: &str, outcome: Result<(), String>) {
@@ -71,9 +83,10 @@ fn require(label: &str, command: &str, retry: &str, outcome: Result<(), String>)
 /// 数项目目录里的文件份数，最多打开 `budget` 个目录：返回（份数，是否在预算处截断）。
 ///
 /// 预算是为了让收尾陈述能在符号链接目录环上终止：`is_dir()` 跟随符号链接，一个指回祖先的
-/// 链接就能让这里永不返回——五步产品全部跑完之后卡在「共 N 份文件」这一行上。同一份预算
+/// 链接就能让这里永不返回——首跑全部跑完之后卡在「共 N 份文件」这一行上。同一份预算
 /// 也给一次误指向大目录树的首跑兜底。
-/// 当前首跑口径是 10 份（`init`）+ 6 份（首跑回测与数据集清单）= 16 份。读不动的目录只少计一份，不让一次
+/// 当前 builtin 首跑口径是 11 份（`init`）+ 6 份（首跑回测与数据集清单）+ 1 份 EvidenceBundle = 18 份；
+/// A 股模板的 init 少一份，对应总计 17 份。读不动的目录只少计一份，不让一次
 /// 已经成功的首跑改口——这格计数是收尾陈述，不是判据，所以截断如实印出来而不是报错。
 pub(crate) fn project_file_count(dir: &Path, budget: usize) -> (usize, bool) {
     let mut stack = vec![dir.to_path_buf()];
@@ -241,7 +254,7 @@ pub(crate) fn run(
     }
     let retry = command_line(&retry_arguments);
     println!(
-        "quickstart 使用 {profile_name} profile，依次执行 5 步（建项目 → 静态检查 → 回测 → 读回摘要 → 安全状态），只写 {}：",
+        "quickstart 使用 {profile_name} profile，依次执行 6 步（建项目 → 静态检查 → 回测 → 报告与证据包 → 离线证据校验 → 安全状态），只写 {}：",
         absolute.display()
     );
     if let Some(strategy) = strategy_name.or(ccxt_strategy.as_deref()) {
@@ -355,20 +368,40 @@ pub(crate) fn run(
             run_unified_backtest(Some(&runtime), None, None),
         );
     }
-    let report_command = if html {
-        command_line(&["report", &runtime_text, "--html"])
-    } else {
-        command_line(&["report", &runtime_text])
-    };
+    let mut report_arguments = vec!["report", runtime_text.as_str()];
+    if html {
+        report_arguments.push("--html");
+    }
+    report_arguments.push("--evidence");
+    let report_command = command_line(&report_arguments);
     require(
-        if html {
-            "复核摘要并生成 HTML 报告"
-        } else {
-            "读回摘要"
-        },
+        "复核摘要并生成 EvidenceBundle",
         &report_command,
         &retry,
-        run_report(&runtime, false, html),
+        run_report_with_output(&runtime, false, html, true, None, &[]),
+    );
+    let evidence_path = resolve_backtest_summary_path(&runtime)
+        .and_then(|summary| quickstart_evidence_bundle_path(&summary));
+    let evidence_path = match evidence_path {
+        Ok(path) => path,
+        Err(error) => {
+            eprintln!("[止步] 定位首跑 EvidenceBundle 失败：{error}");
+            eprintln!("  这一步的原文命令：{report_command}");
+            let from_scratch = if retry.ends_with(" --force") {
+                retry.clone()
+            } else {
+                format!("{retry} --force")
+            };
+            eprintln!("  可直接重试上方单步命令；确认覆盖项目文件后从头重跑：{from_scratch}");
+            std::process::exit(2);
+        }
+    };
+    let evidence_path_text = evidence_path.to_string_lossy().into_owned();
+    require(
+        "离线核验证据包",
+        &command_line(&["evidence", "verify-run", &evidence_path_text]),
+        &retry,
+        crate::run_evidence_verify::verify_run_bundle(&evidence_path, false),
     );
     require(
         "看安全状态",
@@ -385,11 +418,12 @@ pub(crate) fn run(
     } else {
         format!("项目里共 {files} 份文件")
     };
-    println!("你刚做完了 5 步：建项目 → 静态检查 → 回测 → 读回摘要 → 安全状态，{counted}。");
+    println!("你刚做完了 6 步：建项目 → 静态检查 → 回测 → 报告与证据包 → 离线证据校验 → 安全状态，{counted}。");
     println!(
         "回测产物在 {} 下（summary / equity.csv / fills.csv / run.json / record.json 与数据集清单）。",
         absolute.join("data").display()
     );
+    println!("EvidenceBundle 已离线核验：{}", evidence_path.display());
     if html {
         println!("已生成离线 HTML 回测报告和 SVG 图表；请使用上方 [Report] 行显示的确切路径打开报告。报告数据仍绑定本次回测的输入和结果摘要。");
     } else {

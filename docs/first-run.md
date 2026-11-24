@@ -57,16 +57,18 @@ chmod +x qx-cli
 
 ```bash
 cargo install --git https://github.com/coeasy/qianxing --tag v0.4.1 --locked qx-cli
-qx-cli quickstart my-qx                          # 建 macd 项目 → 静态检查 → 回测 → 读回摘要 → 安全状态
+qx-cli quickstart my-qx                          # 建项目 → 静态检查 → 回测 → 生成/核验证据包 → 安全状态
 qx-cli quickstart my-rsi --strategy rsi           # 同一条链路直接运行 RSI 内置策略
-qx-cli quickstart my-ashare --profile ashare     # 建 A 股样例项目 → 静态检查 → 回测 → 读回摘要 → 安全状态
-qx-cli quickstart my-okx --profile ccxt --days 30 --timeframe 1h --html  # 真实公开行情 → 成本冻结 → 回测 → HTML 报告
+qx-cli quickstart my-ashare --profile ashare     # A 股样例 → 静态检查 → 回测 → 生成/核验证据包 → 安全状态
+qx-cli quickstart my-okx --profile ccxt --days 30 --timeframe 1h --html  # 真实公开行情 → 回测 → HTML/SVG 与证据包
 ```
 
 已在仓库内开发时可用 `cargo install --path crates/qx-cli --locked`；该方式需要完整源码和 Rust 工具链。Release 二进制没有
 仓库相对路径依赖，可从任意工作目录运行。
 
-`quickstart` 内部执行的就是下面这五条；它只写 `my-qx/` 这一个目录，产物落项目内 `data/`。
+`quickstart` 内部执行六步：`init → doctor → backtest → report --evidence → evidence verify-run → status`；
+它只写 `my-qx/` 这一个目录，产物落项目内 `data/`。EvidenceBundle 校验报告引用的产物摘要、RunManifest 身份和输入数据指纹；
+默认不重跑策略，因此公共 CCXT 首跑不会为了验包再下载一遍行情。
 任一步失败就停下，只回显**那一步**的命令原文，以退出码 2 结束：
 
 内置策略的 Bar 回测会在运行前复用 qx-app 只读预检，显示标的、数据根数和内容指纹；预检阻断时会列出失败项，
@@ -86,16 +88,21 @@ cd my-qx
 qx-cli init qianxing.runtime.json --strategy macd   # 配置 + 样例 BarFrame + README.qianxing.md
 qx-cli doctor qianxing.runtime.json                 # 静态检查：不联网、不启动 worker、不下单
 qx-cli backtest qianxing.runtime.json               # 跑一轮 MACD 回测，产物落 data_dir 指向的 runs/
-qx-cli report qianxing.runtime.json                 # 读回最新一份摘要
+qx-cli report qianxing.runtime.json --evidence      # 读回摘要并生成 EvidenceBundle
+# 用 report 输出的 [Report] evidence= 后完整路径执行离线校验
+qx-cli evidence verify-run /path/printed/by/report.evidence.json
 qx-cli status qianxing.runtime.json                 # 本地配置/worker/回测结果的安全状态；不连交易所
 ```
+
+`evidence verify-run` 的路径直接复制上一条输出的 `[Report] evidence=` 值；它检查 bundle、报告产物和行情输入的一致性，
+不声称独立重跑策略。需要复算结果时，另行显式传 `--recompute`。
 
 要可视化结果就在回测后加 `--html`：`qx-cli report qianxing.runtime.json --html` 写一份可离线打开的
 HTML 和三张独立 SVG，`-o reports/latest.html` 改输出前缀。
 
-`quickstart` 与逐条敲那五条的相等关系不是文档承诺：同一条输入下两者的 `result_hash` 必须逐字符相同，
+`quickstart` 与逐条执行的回测链相等不是文档承诺：同一条输入下两者的 `result_hash` 必须逐字符相同，
 由 `crates/qx-cli/tests/quickstart_first_run.rs` 钉成用例。落盘份数同样由用例逐个计数
-（`init --strategy macd` 落 11 份（含 Grafana 面板）、首轮回测再写 6 份，共 17 份，见 `crates/qx-cli/tests/init_onboarding_process.rs`）。`--html` 会额外生成一份 HTML 和三张 SVG；在 Windows v0.4.1 Release CLI 上实跑，普通模式为 17 份、HTML 模式为 21 份，且回测 `result_hash` 相同。
+（`init --strategy macd` 落 11 份（含 Grafana 面板）、首轮回测再写 6 份、EvidenceBundle 1 份，共 18 份，见 `crates/qx-cli/tests/init_onboarding_process.rs` 与 `crates/qx-cli/tests/quickstart_first_run.rs`）。`--html` 额外生成一份 HTML 和三张 SVG，共 22 份；v0.4.1 已发布 CLI 仍保持原先 17/21 份行为，证据包自动生成随 v0.4.2 候选生效。
 
 ---
 
