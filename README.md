@@ -104,7 +104,7 @@ python -m pip install "qianxing[ccxt]==0.4.2"
 qianxing quickstart ./qianxing-okx --profile ccxt --exchange okx --days 30 --timeframe 1h
 ```
 
-该候选的 Python wheel → 公开行情 → 回测 → HTML 报告路径已通过 [OKX/Bitget 公共行情验收 #124](https://github.com/coeasy/qianxing/actions/runs/45407201135)；只读公共行情、不读取账户密钥、不提交订单。完整参数、Python 策略与分步数据工作流见[首跑指南](docs/first-run.md)。
+v0.4.2 候选的 Python wheel → 真实公共行情 → 回测 → HTML 报告链路已通过 [CI #850（30/30）](https://github.com/coeasy/qianxing/actions/runs/45466193593) 和 [OKX/Bitget 公共行情验收 #140](https://github.com/coeasy/qianxing/actions/runs/45466194122)：两家均获取 180 天 15 分钟 K 线（各 17,280 根、零缺失间隔），生成 HTML/SVG 报告；无拒单、无账户凭据、无订单提交。完整参数、Python 策略与分步数据工作流见[首跑指南](docs/first-run.md)。
 
 Rust 应用当前可从 crates.io 使用已发布的 `qx-sdk = "0.4.1"`，其 14 包依赖闭包已通过逐包 checksum 与 Ubuntu、Windows、macOS 独立消费者验收。v0.4.2 候选保持同一 SDK facade，并将在发布后提供新版本；当前 crates.io 状态见 [qx-sdk](https://crates.io/crates/qx-sdk)。独立快速入门仍可直接从 registry 构建运行，源码 Git 消费路径另由独立脚本验收。
 
@@ -322,7 +322,7 @@ Linux 本机补充验收：
 
 历史验收当时的交付边界是本机可重放的研究/回测与 Paper 工作流，以及 Linux/Windows 候选构建和 PostgreSQL/NATS 集成路径。该快照中的 CI、候选预检和逻辑审计链接仅说明对应提交的测试结果；不能再据此说正式发布尚未发生。
 
-**稳定版与发布候选（2026-11-24）：** 当前已发布版本仍为 [`v0.4.1`](https://github.com/coeasy/qianxing/releases/tag/v0.4.1)：PyPI `qianxing==0.4.1`、14 个 crates.io SDK 包及三平台独立消费者验收均已完成。v0.4.2 候选把 Python 公共行情 quickstart 随匹配的 CLI 一起发布到 wheel，使安装 `qianxing[ccxt]` 后可以直接从 Python 入口完成行情下载、回测和 HTML 报告；候选 CI 与 OKX/Bitget 公共行情验收已通过，合并和正式 tag 发布仍未完成。生产/沙盒下单仍不在该候选承诺范围内。
+**稳定版与发布候选（2026-11-25）：** 当前已发布版本仍为 [`v0.4.1`](https://github.com/coeasy/qianxing/releases/tag/v0.4.1)：PyPI `qianxing==0.4.1`、14 个 crates.io SDK 包及三平台独立消费者验收均已完成。v0.4.2 候选把 Python 公共行情 quickstart 随匹配的 CLI 一起发布到 wheel，使安装 `qianxing[ccxt]` 后可以直接从 Python 入口完成行情下载、回测和 HTML 报告；[CI #850](https://github.com/coeasy/qianxing/actions/runs/45466193593) 30/30 全通过，[公共行情验收 #140](https://github.com/coeasy/qianxing/actions/runs/45466194122) 的 OKX/Bitget 任务通过。PR [#40](https://github.com/coeasy/qianxing/pull/40) 已就绪待审，尚未合并、打 tag 或发布。生产/沙盒下单仍不在该候选承诺范围内。
 
 运行时插件目前只支持启动期静态装配，不支持动态加载或热替换。Paper 成交与 Bar、Tick、订单簿回测使用各自的数据档位内核；共享风控与归约规则不表示撮合实现相同。详细能力、限制和各项证据请查阅能力目录与成熟度台账。
 ## 许可
