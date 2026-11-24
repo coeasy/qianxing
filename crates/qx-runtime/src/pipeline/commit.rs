@@ -874,8 +874,14 @@ impl LiveEventPipeline {
                 venue_id,
                 balances,
             } => {
+                let normalized_balances = normalize_balances(balances)?;
                 self.account_balances
-                    .insert((account_id, venue_id), normalize_balances(balances)?);
+                    .insert((account_id.clone(), venue_id.clone()), normalized_balances);
+                let event_index = self.log.events().len().saturating_sub(1);
+                self.account_balance_snapshot_cursors.insert(
+                    account_balance_snapshot_key(&account_id, &venue_id),
+                    (event_index, engine_ts),
+                );
             }
             RuntimeExternalEvent::AccountPositionSnapshot {
                 account_id,
