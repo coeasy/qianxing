@@ -172,6 +172,7 @@
         <option value="atr_trend">ATR 趋势突破</option>
       </select>
       <label for="research-spec">BacktestSpec v1（JSON）</label>
+      <p class="foot">同一个 <code>run_id</code> 对应不可变的回测输入：相同输入可安全重试，修改策略或参数后必须使用新 ID。切换上方策略会自动换 ID；手工修改输入后点“生成新运行 ID”。</p>
       <textarea id="research-spec" rows="14" spellcheck="false">{
   "schema_version": 1,
   "run_id": "console-bar-run",
@@ -190,6 +191,7 @@
   }
 }</textarea>
       <div class="actions">
+        <button id="research-new-run-id" type="button" class="ghost">生成新运行 ID</button>
         <button id="research-validate" type="button">只校验数据</button>
         <button id="research-run" type="button">回测并复核</button>
       </div>
