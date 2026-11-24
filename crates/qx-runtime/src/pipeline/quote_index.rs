@@ -9,8 +9,13 @@ use std::collections::BTreeMap;
 
 #[derive(Clone, Default)]
 pub(super) struct RuntimeQuoteIndex {
-    latest: BTreeMap<InstrumentId, QuoteTick>,
-    latest_received: BTreeMap<InstrumentId, (QuoteTick, u64)>,
+    by_instrument: BTreeMap<InstrumentId, LatestQuoteState>,
+}
+
+#[derive(Clone, Copy)]
+struct LatestQuoteState {
+    latest: QuoteTick,
+    latest_received: Option<(QuoteTick, u64)>,
 }
 
 impl RuntimeQuoteIndex {
@@ -33,26 +38,39 @@ impl RuntimeQuoteIndex {
         let quote = QuoteTick::new(event.ts, *bid, *bid_qty, *ask, *ask_qty, event.source_seq)
             .with_optional_exact_prices(*bid_exact, *ask_exact)
             .with_optional_exact_sizes(*bid_qty_exact, *ask_qty_exact);
-        self.latest.insert(instrument.clone(), quote);
 
         // Paper execution records the exact market quote used by a simulated fill. It is useful
         // audit evidence and remains visible through `latest_quote`, but it is not a new venue
         // observation and must not extend the source quote's freshness window.
-        if !event.correlation_id.starts_with("paper-execution:market:") {
-            self.latest_received
-                .insert(instrument.clone(), (quote, event.receive_time));
+        let received = (!event.correlation_id.starts_with("paper-execution:market:"))
+            .then_some((quote, event.receive_time));
+        if let Some(state) = self.by_instrument.get_mut(instrument) {
+            state.latest = quote;
+            if let Some(received) = received {
+                state.latest_received = Some(received);
+            }
+        } else {
+            self.by_instrument.insert(
+                instrument.clone(),
+                LatestQuoteState {
+                    latest: quote,
+                    latest_received: received,
+                },
+            );
         }
     }
 
     pub(super) fn latest_quote(&self, instrument: &InstrumentId) -> Option<QuoteTick> {
-        self.latest.get(instrument).copied()
+        self.by_instrument.get(instrument).map(|state| state.latest)
     }
 
     pub(super) fn latest_received_quote(
         &self,
         instrument: &InstrumentId,
     ) -> Option<(QuoteTick, u64)> {
-        self.latest_received.get(instrument).copied()
+        self.by_instrument
+            .get(instrument)
+            .and_then(|state| state.latest_received)
     }
 }
 
