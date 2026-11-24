@@ -8,6 +8,8 @@ use qx_guanxing::QuoteTick;
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
+const PAPER_EXECUTION_MARKET_PREFIX: &str = "paper-execution:market:";
+
 #[derive(Clone, Default)]
 pub(super) struct RuntimeQuoteIndex {
     by_instrument: OnceLock<BTreeMap<InstrumentId, LatestQuoteState>>,
@@ -51,8 +53,10 @@ impl RuntimeQuoteIndex {
         // Paper execution records the exact market quote used by a simulated fill. It is useful
         // audit evidence and remains visible through `latest_quote`, but it is not a new venue
         // observation and must not extend the source quote's freshness window.
-        let received = (!event.correlation_id.starts_with("paper-execution:market:"))
-            .then_some((quote, event.receive_time));
+        let received = (!event
+            .correlation_id
+            .starts_with(PAPER_EXECUTION_MARKET_PREFIX))
+        .then_some((quote, event.receive_time));
         if let Some(state) = by_instrument.get_mut(instrument) {
             state.latest = quote;
             if let Some(received) = received {

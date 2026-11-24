@@ -18141,9 +18141,11 @@ def pipeline_order_fact_index_check() -> None:
 def pipeline_market_fact_index_check() -> None:
     """Keep latest per-instrument market facts indexed through replay and append."""
     index = case_source("crates/qx-runtime/src/pipeline/market_facts.rs")
+    quote_index = case_source("crates/qx-runtime/src/pipeline/quote_index.rs")
     pipeline = case_source(PIPELINE_FILE)
     service = case_source("crates/qx-service/src/ccxt_market_host.rs")
     remember = _rust_fn_body(index, "remember")
+    quote_remember = _rust_fn_body(quote_index, "remember")
     apply_index_event = _rust_fn_body(pipeline, "apply_index_event")
     append = _rust_fn_body(pipeline, "append_at_engine")
     quote_reader = _rust_fn_body(pipeline, "latest_quote_with_depth")
@@ -18157,18 +18159,19 @@ def pipeline_market_fact_index_check() -> None:
         and all(
             token in index
             for token in (
-                "latest_quotes",
-                "latest_observed_quotes",
                 "latest_order_books",
-                "EventKind::MarketQuote",
                 "EventKind::MarketOrderBook",
-                "PAPER_EXECUTION_MARKET_PREFIX",
-                "quote_and_book_indexes_are_instrument_scoped_and_ignore_execution_echo_for_freshness",
+                "order_book_index_is_instrument_scoped_and_keeps_the_latest_fact",
             )
         )
-        and "latest_observed_quotes" in remember,
-        "市场事实索引区分最新报价、真实观测报价和最新盘口，并排除 Paper 回声污染 freshness",
-        "market_facts.rs 缺少按标的投影、Paper freshness 语义或回归用例",
+        and "latest_order_books" in remember
+        and "RuntimeQuoteIndex" in quote_index
+        and "latest_received" in quote_index
+        and "PAPER_EXECUTION_MARKET_PREFIX" in quote_index
+        and quote_remember is not None
+        and "latest_received" in quote_remember,
+        "报价值与 freshness 由 quote index 维护，盘口位置索引按标的更新",
+        "行情索引缺少按标的报价/盘口投影或 Paper freshness 语义",
     )
     check(
         "market_facts: RuntimeMarketFactIndex" in pipeline
@@ -18177,17 +18180,20 @@ def pipeline_market_fact_index_check() -> None:
         and append is not None
         and "self.market_facts" in append
         and ".remember(&event," in append
-        and all(
-            body is not None
-            and "self.market_facts" in body
-            and ".get(event_index)" in body
-            and "events().iter()" not in body
-            for body in (quote_reader, freshness_reader, book_reader)
-        )
-        and "quote_tick_from_market_event" in quote_reader
-        and "event.receive_time" in freshness_reader,
-        "报价 freshness 与最新盘口查询通过 EventLog 位置索引，追加/重放共同维护索引",
-        "最新行情查询仍扫描全日志，或增量追加/重放没有维护同一索引",
+        and "self.quote_index.remember(event)" in apply_index_event
+        and "self.quote_index.remember(&event)" in append
+        and quote_reader is not None
+        and "self.quote_index.latest_quote(instrument)" in quote_reader
+        and "events().iter()" not in quote_reader
+        and freshness_reader is not None
+        and "self.quote_index.latest_received_quote(instrument)" in freshness_reader
+        and "events().iter()" not in freshness_reader
+        and book_reader is not None
+        and "self.market_facts" in book_reader
+        and ".get(event_index)" in book_reader
+        and "events().iter()" not in book_reader,
+        "报价 freshness 与最新盘口查询使用各自的索引，追加/重放共同维护索引",
+        "最新行情/盘口查询仍扫描全日志，或增量追加/重放没有维护对应索引",
     )
     check(
         book_poll is not None
