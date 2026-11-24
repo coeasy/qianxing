@@ -1848,6 +1848,7 @@ dependencies = [
 name = "qx-runtime"
 version = "0.4.1"
 dependencies = [
+ "criterion",
  "libc",
  "qx-control",
  "qx-core",
