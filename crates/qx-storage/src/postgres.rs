@@ -1478,6 +1478,11 @@ fn decode_event_json(value: &str) -> Result<Event, StorageError> {
         .map_err(|error| StorageError::Io(format!("PostgreSQL 事件 JSON 非法: {error}")))
 }
 
+fn encode_event_json(event: &Event) -> Result<String, StorageError> {
+    serde_json::to_string(event)
+        .map_err(|error| StorageError::Io(format!("PostgreSQL 事件序列化失败: {error}")))
+}
+
 fn write_event_log_index(
     transaction: &mut Transaction<'_>,
     name: &str,
@@ -1573,13 +1578,15 @@ fn insert_event_log_entries(
         return Ok(());
     }
     let start_position = event_log_position(start_position)?;
-    let encoded_events = serde_json::to_string(events)
-        .map_err(|error| StorageError::Io(format!("PostgreSQL 事件批次序列化失败: {error}")))?;
+    let encoded_events = events
+        .iter()
+        .map(encode_event_json)
+        .collect::<Result<Vec<_>, _>>()?;
     transaction
         .execute(
             "INSERT INTO qx_event_log_entries(name, position, event_json)
-             SELECT $1, $3::bigint + entries.ordinality - 1, entries.value::text
-             FROM jsonb_array_elements($2::jsonb) WITH ORDINALITY AS entries(value, ordinality)",
+             SELECT $1, $3::bigint + entries.ordinality - 1, entries.event_json
+             FROM unnest($2::text[]) WITH ORDINALITY AS entries(event_json, ordinality)",
             &[&name, &encoded_events, &start_position],
         )
         .map_err(pg_error)?;
