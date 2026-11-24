@@ -19,6 +19,10 @@
 两支的**首跑承诺相同**：零配置建一个能跑的项目 → 跑一轮 → 出一份可复核的报告。差别只在数据默认值：
 A 支自带一份样例 BarFrame，B 支要么用内置合成样例，要么装一个 extra 换真实源。
 
+CLI 还提供按角色分流的五步指南：`qx-cli guide researcher`、`qx-cli guide strategy-author`、
+`qx-cli guide operator` 和 `qx-cli guide integrator`。脚本可运行 `qx-cli guide --json` 读取版本化步骤，
+也可在 `--json` 后指定一个角色筛选结果。
+
 ---
 
 ## A. 只装 CLI（不需要 Python）【已实现】
