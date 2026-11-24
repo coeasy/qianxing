@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "kind": "qianxing_acceptance_evidence",
+  "work_package": "H",
+  "acceptance_id": "H-WHEEL-QUICKSTART-WINDOWS-01",
+  "accepted_at": "2026-11-24",
+  "result": "passed",
+  "source": {
+    "commit": "fbe2e02622a5413d8881c0b4d0f6eb1d2de98d2d",
+    "cli_build_identity": "fbe2e02-dirty",
+    "test_runner": "tools/python_wheel_smoke.py"
+  },
+  "artifact": {
+    "filename": "qianxing-0.4.1-cp310-abi3-win_amd64.whl",
+    "sha256": "da4f600f8e0bce0c366a63f709c6a758c7b25364cb2e3a1005cd18ff2bc5e66a",
+    "built_locally": true
+  },
+  "consumer": {
+    "platform": "windows-x86_64-msvc",
+    "python": "3.13.13",
+    "rustc": "1.98.1",
+    "maturin": "1.15.0",
+    "fresh_virtual_environment": true,
+    "install": "pip install --no-index --no-deps",
+    "working_directory_outside_source_tree": true,
+    "entry_point": "qianxing"
+  },
+  "quickstart": {
+    "command": "qianxing quickstart <temporary-project> --rows 80 --format html",
+    "exit_code": 0,
+    "elapsed_seconds": 1.985,
+    "source": "sample",
+    "is_sample": true,
+    "rows": 80,
+    "preflight": "ready",
+    "project_run_id": "d08d597553624dcfa7d76712aa2d6dae",
+    "artifacts_verified": true,
+    "report_status": "succeeded",
+    "renderer_origin": "bundled",
+    "renderer_status": "ready",
+    "html_inside_project": true,
+    "html_bytes": 66876,
+    "html_sha256": "041f52615e48ff44a12caf7ece5ae8b69105bca88a6bdd44ffea008e5cd494c9"
+  },
+  "wheel_smoke": {
+    "result": "passed",
+    "built_in_strategies": 17,
+    "classic_strategy_selection": "13/13",
+    "parameter_grid": "4/4",
+    "ashare_fills": 1,
+    "multi_account_successes": 2,
+    "run_handle_status": "succeeded",
+    "run_handle_verified": true
+  },
+  "limitations": [
+    "Local Windows evidence only; hosted Linux, macOS, and Windows consumer jobs must run before treating the CI change as accepted.",
+    "The wheel and bundled CLI were built locally from a dirty checkout and are not a published PyPI artifact.",
+    "This sample quickstart does not validate public market data, strategy profitability, exchange credentials, or order execution."
+  ]
+}
