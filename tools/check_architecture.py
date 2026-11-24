@@ -17971,6 +17971,97 @@ def pipeline_cursor_refresh_check() -> None:
     )
 
 
+def pipeline_order_fact_index_check() -> None:
+    """Keep order-scoped recovery facts indexed on append, tail refresh, and replay."""
+    index = case_source("crates/qx-runtime/src/pipeline/order_facts.rs")
+    pipeline = case_source(PIPELINE_FILE)
+    commit = case_source("crates/qx-runtime/src/pipeline/commit.rs")
+    remember = _rust_fn_body(index, "remember")
+    apply_index_event = _rust_fn_body(pipeline, "apply_index_event")
+    rebuild = _rust_fn_body(pipeline, "rebuild_runtime_indexes")
+    append = _rust_fn_body(pipeline, "append_at_engine")
+    tail = _rust_fn_body(pipeline, "apply_tail")
+    fee_lookup = _rust_fn_body(pipeline, "fee_events_for_order")
+    fee_readers = [
+        _rust_fn_body(pipeline, name)
+        for name in (
+            "fee_baseline_for_order",
+            "exact_fee_baseline_for_order",
+            "fee_trade_ids_for_order",
+        )
+    ]
+    risk_commit = _rust_fn_body(commit, "record_order_risk_decision_commit")
+    capability_commit = _rust_fn_body(commit, "record_execution_capability_decision_commit")
+    capability_reader = _rust_fn_body(pipeline, "execution_capability_decision")
+
+    check(
+        "struct RuntimeOrderFactIndex" in index
+        and remember is not None
+        and all(
+            token in index
+            for token in (
+                "fee_events_by_order",
+                "order_risk_decisions",
+                "execution_capability_decisions",
+                "EventKind::Filled",
+                "EventKind::FeeAdjustment",
+                "EventKind::OrderRiskDecision",
+                "EventKind::ExecutionCapabilityDecision",
+                ".or_insert(event_index)",
+            )
+        )
+        and "push(event_index)" in remember
+        and "order_decision_indexes_keep_the_first_durable_fact" in index
+        and "fee_event_index_is_scoped_by_order_and_preserves_log_order" in index,
+        "订单事实索引覆盖手续费与不可变决策，并保留事件顺序和最早决策",
+        "order_facts.rs 缺少订单作用域索引、首次决策语义或回归用例",
+    )
+    check(
+        "order_facts: RuntimeOrderFactIndex" in pipeline
+        and apply_index_event is not None
+        and "self.order_facts.remember(event, event_index)" in apply_index_event
+        and rebuild is not None
+        and "self.apply_index_event(event, event_index)?" in rebuild
+        and append is not None
+        and "self.order_facts" in append
+        and ".remember(&event," in append
+        and tail is not None
+        and "self.apply_index_event(event, tail_start + offset)?" in tail,
+        "本地追加、共享日志尾刷和重启重放维护同一订单事实索引",
+        "订单事实索引没有覆盖追加、增量刷新和完整重放三条路径",
+    )
+    check(
+        fee_lookup is not None
+        and "fee_event_indices(order_id)" in fee_lookup
+        and ".get(event_index)" in fee_lookup
+        and "events().iter()" not in fee_lookup
+        and all(body is not None and "fee_events_for_order(order_id)?" in body for body in fee_readers)
+        and all("log.events().iter()" not in body for body in fee_readers if body is not None),
+        "手续费基线和成交 ID 恢复只遍历该订单的索引事件",
+        "手续费恢复仍扫描全量 EventLog，或索引位置读取没有 fail-closed 边界",
+    )
+    check(
+        risk_commit is not None
+        and capability_commit is not None
+        and "order_risk_decision_index(decision.client_order_id)" in risk_commit
+        and "execution_capability_decision_index(decision.client_order_id)" in capability_commit
+        and risk_commit.count(".get(event_index)") == 1
+        and capability_commit.count(".get(event_index)") == 1
+        and "log.events().iter()" not in risk_commit
+        and "log.events().iter()" not in capability_commit,
+        "风控与执行能力决策幂等查重使用订单索引并校验原始 EventLog 事实",
+        "决策查重仍全日志扫描，或没有按索引位置核对已持久化事实",
+    )
+    check(
+        capability_reader is not None
+        and "execution_capability_decision_index(client_order_id)" in capability_reader
+        and ".get(event_index)" in capability_reader
+        and "events().iter()" not in capability_reader,
+        "执行能力决策公开读取通过订单索引定位 durable EventLog 事实",
+        "执行能力决策读 API 仍扫描全日志或没有核对索引位置",
+    )
+
+
 def valuation_single_source_check() -> None:
     """P1-6 / WP-19：三把权益/保证金尺子收敛成单一 `ValuationContext`/`ValuationResult`。
 
@@ -34284,6 +34375,7 @@ def main() -> int:
     dev_dependency_cycle_check()
     event_log_append_batch_check()
     pipeline_cursor_refresh_check()
+    pipeline_order_fact_index_check()
     valuation_single_source_check()
     orderbook_strategy_margin_check()
     paper_account_admission_serialization_check()
