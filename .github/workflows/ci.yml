@@ -597,6 +597,13 @@ jobs:
           )
           assert native.frame_digest(payload) == frame.digest(), "wheel native diverges from pure Python digest"
           PY
+      - name: Run installed qianxing command through a verified offline quickstart
+        if: matrix.python == '3.12'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}"
+          python "${GITHUB_WORKSPACE}/tools/python_wheel_smoke.py" "${GITHUB_WORKSPACE}"
       - name: Expose the installed native module to source contract tests
         shell: bash
         run: |

@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "kind": "qianxing_acceptance_evidence",
+  "work_package": "H",
+  "acceptance_id": "H-PYPI-0.4.1-QUICKSTART-WINDOWS-01",
+  "accepted_at": "2026-11-24",
+  "result": "passed",
+  "source": {
+    "release_tag": "v0.4.1",
+    "release_commit": "3c66009b5ef432597fcb5ddf2d61a7e88bd408af",
+    "installer": "PyPI release metadata and wheel digest",
+    "pypi_json": "https://pypi.org/pypi/qianxing/0.4.1/json"
+  },
+  "artifact": {
+    "filename": "qianxing-0.4.1-cp310-abi3-win_amd64.whl",
+    "sha256": "883b3c6e7849e1818fd93e931bf152ff5e16e58c141740a60b7c91615ac909a4",
+    "bytes": 23526585,
+    "digest_matches_pypi_metadata": true
+  },
+  "consumer": {
+    "platform": "windows-x86_64-msvc",
+    "python_implementation": "CPython",
+    "python_version": "3.13.13",
+    "fresh_virtual_environment": true,
+    "install": "pip install --no-deps <sha256-verified-pypi-wheel>",
+    "working_directory_outside_source_tree": true,
+    "entry_point": "qianxing"
+  },
+  "quickstart": {
+    "command": "qianxing quickstart <temporary-project> --format html,xlsx,json --report-output <report.html>",
+    "exit_code": 0,
+    "project_run_id": "34e09830fad5497991be99ef61c0b9f4",
+    "preflight": "ready",
+    "source": "sample",
+    "is_sample": true,
+    "rows": 600,
+    "fills": 1,
+    "result_hash": "fd0e832e910dcdcc",
+    "artifacts_verified": true,
+    "report_status": "succeeded",
+    "renderer_origin": "bundled",
+    "renderer_status": "ready",
+    "renderer_version_compatibility": "matched",
+    "renderer_schema_compatibility": "matched",
+    "reports": {
+      "html": {
+        "bytes": 198519,
+        "sha256": "96448bd59a7970c59812a678015759d3c57a37907824c055b672abbcf34c87df"
+      },
+      "json": {
+        "bytes": 9135,
+        "sha256": "7f3be7b8c1e4f51d4d9e39e8e9759a7d3e3418b8f2d0d4e357bb37516f2e6e48"
+      },
+      "xlsx": {
+        "bytes": 140744,
+        "sha256": "f3cc5fc9c428c3c2798c1d1481a507a11ba27a709552c174b141ef56113b8c7d"
+      }
+    }
+  },
+  "limitations": [
+    "This verifies the published Windows CPython 3.13 wheel only; Linux and macOS published-wheel consumers are not covered by this local run.",
+    "The quickstart uses explicitly labelled synthetic sample bars; it does not validate public market-data connectivity, strategy profitability, exchange credentials, or order execution."
+  ]
+}
