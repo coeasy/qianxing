@@ -108,7 +108,7 @@ qx-cli quickstart ./qianxing-okx --profile ccxt --exchange okx --days 30 --timef
 第一条使用明确标注的离线样例数据；第二条使用当前 v0.4.1 Rust CLI 支持的 OKX、Binance 和 Bitget 公开永续行情。
 Python `qianxing quickstart --profile ccxt` 入口已合入源码主分支，并通过 [OKX/Bitget 公共行情验收](https://github.com/coeasy/qianxing/actions/runs/45007539531)；它晚于 `v0.4.1` tag，因此尚未进入 PyPI `qianxing==0.4.1` wheel。当前 PyPI 用户仍可用上面的 `qx-cli` 命令；Python 便捷入口需随新的 wheel 版本发布。完整参数、Python 策略与分步数据工作流见[首跑指南](docs/first-run.md)。
 
-要把回测引擎集成到 Rust 应用，在 `Cargo.toml` 添加 `qx-sdk = "0.4.1"`。该 SDK 及其 13 个依赖 crate 已发布并通过逐包 checksum 与独立消费者验收；详见 [crates.io 上的 qx-sdk 0.4.1](https://crates.io/crates/qx-sdk/0.4.1)。[独立 Rust SDK 快速入门](examples/rust-sdk-quickstart/README.md)保留固定到 `v0.4.0` 的可复现历史 Git 示例。
+要把回测引擎集成到 Rust 应用，在 `Cargo.toml` 添加 `qx-sdk = "0.4.1"`。该 SDK 及其 13 个依赖 crate 已发布并通过逐包 checksum 与独立消费者验收；详见 [crates.io 上的 qx-sdk 0.4.1](https://crates.io/crates/qx-sdk/0.4.1)。[独立 Rust SDK 快速入门](examples/rust-sdk-quickstart/README.md)直接从 crates.io 安装并运行已发布版本；源码 Git 消费路径另由独立脚本验收。
 
 下面这段是可复制的常用链路示例，写法是在**源码仓库里**直接用 cargo 跑；已经按[安装指南](docs/installation.md)装好的人会
 得到同名 binary，把 `cargo run -p qx-cli -- ` 换成 `qx-cli ` 即可，参数与行为完全一致（同一份 clap 命令表）。

@@ -4,6 +4,9 @@ use clap::{Args, ValueEnum};
 pub(crate) struct GuideArgs {
     #[arg(value_enum)]
     pub(crate) audience: Option<GuideAudience>,
+    /// Emit the role guide as versioned JSON for scripts and integrations.
+    #[arg(long)]
+    pub(crate) json: bool,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
