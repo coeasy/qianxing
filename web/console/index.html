@@ -42,6 +42,23 @@
   </p>
 
   <main class="grid">
+    <section class="card wide" id="card-first-run">
+      <h2>首次回测：准备教学行情</h2>
+      <p class="foot">Bar 研究面板的初始规格读取 <code>sample.json</code>。服务不会自动创建这个文件；请在启动服务前将下面的教学 BarFrame 放入 API 数据根目录。默认目录是服务启动工作目录下的 <code>.qianxing/api-data</code>；设置了 <code>QX_API_DATA_ROOT</code> 时改放到该目录。此文件是合成教学数据，不代表交易所行情或策略收益。</p>
+      <p><a href="https://raw.githubusercontent.com/coeasy/qianxing/v0.4.1/deploy/qianxing.bar-frame.example.json" target="_blank" rel="noreferrer">下载 v0.4.1 教学 BarFrame</a>，保存为数据根目录内的 <code>sample.json</code>。</p>
+      <details>
+        <summary>从仓库根目录准备样例文件</summary>
+        <pre><code># Windows PowerShell
+New-Item -ItemType Directory -Force .qianxing/api-data | Out-Null
+Invoke-WebRequest -Uri https://raw.githubusercontent.com/coeasy/qianxing/v0.4.1/deploy/qianxing.bar-frame.example.json -OutFile .qianxing/api-data/sample.json
+
+# Linux / macOS
+mkdir -p .qianxing/api-data
+curl -L https://raw.githubusercontent.com/coeasy/qianxing/v0.4.1/deploy/qianxing.bar-frame.example.json -o .qianxing/api-data/sample.json</code></pre>
+      </details>
+      <p class="foot">文件准备后，点击右上角“连接”，再到“Bar 研究工作流”先点“只校验数据”，通过后点“回测并复核”。若手工改规格，改完先生成新的运行 ID。</p>
+    </section>
+
     <section class="card" id="card-health">
       <h2>健康 <span class="hint">/health · /ready</span></h2>
       <div class="rows" id="health-rows"><span class="muted">未连接</span></div>
