@@ -25838,7 +25838,7 @@ def cli_ccxt_builtin_parity_check() -> None:
                 '"op": "fetch_ohlcv"',
                 '"start_ms": 1000',
                 '"end_ms": 70000',
-                "result_hash=c3d92708bceb2ecb",
+                "result_hash=ae3ebd2ee27f9304",
                 "immutable normalized CCXT dataset cache",
                 "manifest_fingerprint",
                 "quality_manifest_path",

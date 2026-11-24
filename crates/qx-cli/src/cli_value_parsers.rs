@@ -18,20 +18,6 @@ pub(crate) fn parse_quote_notional(value: &str) -> Result<i128, String> {
     Ok(raw)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::parse_quote_notional;
-
-    #[test]
-    fn quote_notional_parser_preserves_exact_nine_decimal_raw_units() {
-        assert_eq!(parse_quote_notional("1000"), Ok(1_000_000_000_000));
-        assert_eq!(parse_quote_notional("0.000000001"), Ok(1));
-        assert!(parse_quote_notional("0").is_err());
-        assert!(parse_quote_notional("-1").is_err());
-        assert!(parse_quote_notional("0.0000000001").is_err());
-    }
-}
-
 /// Parse basis-point flags in the shared `0..=10000` range.
 pub(crate) fn parse_bps(value: &str) -> Result<i64, String> {
     match value.parse::<i64>() {
@@ -45,5 +31,19 @@ pub(crate) fn parse_relay_limit(value: &str) -> Result<usize, String> {
     match value.parse::<usize>() {
         Ok(parsed) if (1..=10_000).contains(&parsed) => Ok(parsed),
         _ => Err("relay limit 必须在 1..=10000 内".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_quote_notional;
+
+    #[test]
+    fn quote_notional_parser_preserves_exact_nine_decimal_raw_units() {
+        assert_eq!(parse_quote_notional("1000"), Ok(1_000_000_000_000));
+        assert_eq!(parse_quote_notional("0.000000001"), Ok(1));
+        assert!(parse_quote_notional("0").is_err());
+        assert!(parse_quote_notional("-1").is_err());
+        assert!(parse_quote_notional("0.0000000001").is_err());
     }
 }
