@@ -1,6 +1,7 @@
 [package]
 name = "qx-sdk"
 description = "牵星面向第三方的稳定 Rust 门面（方案 §6.1）：单一 qx-app 内核之上的 semver 边界"
+readme = "README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

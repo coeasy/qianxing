@@ -108,6 +108,8 @@ qianxing quickstart ./qianxing-okx --profile ccxt --exchange okx --days 30 --tim
 
 Rust 应用当前可从 crates.io 使用已发布的 `qx-sdk = "0.4.1"`，其 14 包依赖闭包已通过逐包 checksum 与 Ubuntu、Windows、macOS 独立消费者验收。v0.4.2 候选保持同一 SDK facade，并将在发布后提供新版本；当前 crates.io 状态见 [qx-sdk](https://crates.io/crates/qx-sdk)。独立快速入门仍可直接从 registry 构建运行，源码 Git 消费路径另由独立脚本验收。
 
+Rust 集成方可以从 [`qx-sdk` 包级快速接入指南](crates/qx-sdk/README.md)开始：单一依赖、数据输入合同、预检、回测和产物复核。
+
 下面这段是可复制的常用链路示例，写法是在**源码仓库里**直接用 cargo 跑；已经按[安装指南](docs/installation.md)装好的人会
 得到同名 binary，把 `cargo run -p qx-cli -- ` 换成 `qx-cli ` 即可，参数与行为完全一致（同一份 clap 命令表）。
 参数与入口的权威来源是 `cargo run -p qx-cli -- help`——入口清单每加一条就变一次，所以这里不抄份数；
