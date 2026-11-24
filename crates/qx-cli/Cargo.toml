@@ -99,6 +99,10 @@ name = "project_commands"
 path = "tests/project_commands.rs"
 
 [[test]]
+name = "guide"
+path = "tests/guide.rs"
+
+[[test]]
 name = "artifact_quality"
 path = "tests/artifact_quality.rs"
 

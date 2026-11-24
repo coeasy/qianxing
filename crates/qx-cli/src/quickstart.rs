@@ -122,8 +122,8 @@ pub(crate) fn run(
     }
     let days = days.unwrap_or(30);
     let timeframe = timeframe.unwrap_or_else(|| "1h".into());
-    let instrument = instrument.unwrap_or_else(|| "BTC/USDT:USDT.OKX".into());
     let exchange = exchange.unwrap_or_else(|| "okx".into());
+    let instrument = quickstart_ccxt_instrument(instrument, &exchange);
     let root = project.unwrap_or_else(|| PathBuf::from(DEFAULT_PROJECT_DIR));
     let absolute = std::path::absolute(&root).unwrap_or_else(|_| root.clone());
     let runtime = absolute.join(RUNTIME_FILE_NAME);
@@ -481,6 +481,10 @@ fn quickstart_ccxt_window(
     Ok(CcxtQuickstartWindow { start_ms, end_ms })
 }
 
+fn quickstart_ccxt_instrument(instrument: Option<String>, exchange: &str) -> String {
+    instrument.unwrap_or_else(|| format!("BTC/USDT:USDT.{}", exchange.to_ascii_uppercase()))
+}
+
 fn write_public_ccxt_config(
     path: &Path,
     exchange: &str,
@@ -512,8 +516,26 @@ fn write_public_ccxt_config(
 #[cfg(test)]
 mod tests {
     use super::{
-        quickstart_ccxt_window, write_public_ccxt_config, CCXT_QUICKSTART_DEFAULT_QUANTITY,
+        quickstart_ccxt_instrument, quickstart_ccxt_window, write_public_ccxt_config,
+        CCXT_QUICKSTART_DEFAULT_QUANTITY,
     };
+
+    #[test]
+    fn ccxt_quickstart_default_instrument_tracks_the_selected_exchange() {
+        for (exchange, expected) in [
+            ("okx", "BTC/USDT:USDT.OKX"),
+            ("binance", "BTC/USDT:USDT.BINANCE"),
+            ("bitget", "BTC/USDT:USDT.BITGET"),
+            ("BiNaNcE", "BTC/USDT:USDT.BINANCE"),
+        ] {
+            assert_eq!(quickstart_ccxt_instrument(None, exchange), expected);
+        }
+        assert_eq!(
+            quickstart_ccxt_instrument(Some("ETH/USDT:USDT.BINANCE".into()), "binance"),
+            "ETH/USDT:USDT.BINANCE",
+            "an explicitly selected instrument must remain untouched"
+        );
+    }
 
     #[test]
     fn generated_public_ccxt_config_opts_into_environment_proxy_without_credentials() {

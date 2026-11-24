@@ -8,7 +8,7 @@
   },
   "source_sha256": {
     "maturity/capability-matrix.yaml": "5c4a7cf26abac7c7928b23b72ecfa86aeec27bcbf9ad5d299ae0ecc24b69b92e",
-    "maturity/capabilities.yaml": "cd6f9210f62d7621cdd3016ddf0ad9ecdf96b5cb439383f4528b8174ca9cd087",
+    "maturity/capabilities.yaml": "8ca9751dddbcd50c16957848ed677570edf932368b4a792e94708ab7f9b5d492",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
   "product_levels": [
@@ -172,7 +172,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 113,
+      "evidence_path_count": 115,
       "limitation_count": 6
     },
     {
@@ -291,7 +291,7 @@
       ],
       "execution_scope_count": 1,
       "account_query_scope_count": 1,
-      "evidence_path_count": 18,
+      "evidence_path_count": 20,
       "limitation_count": 4
     },
     {
@@ -1269,6 +1269,8 @@
             "crates/qx-adapter/tests/user_stream_retry.rs healthy_sessions_do_not_exhaust_the_reconnect_budget proves the reconnect cap counts consecutive failures, so a stream that keeps delivering events never burns the budget, while connect_failures_still_escalate_backoff_and_stop_at_the_budget keeps the give-up reachable (V12 R4-b)",
             "crates/qx-adapter/src/binance/user_stream.rs BinanceStreamPoll and crates/qx-adapter/src/binance/market_data.rs BinanceQuotePoll split \"this read window had nothing\" from \"the link is down\": an idle user-stream window is counted in idle_windows and costs no reconnect budget, and a quiet book ticker degrades the market worker instead of killing the runtime (V13 R2 #165/#168a)",
             "crates/qx-adapter/src/binance/reconcile.rs owns Binance Spot remote order snapshots, order-group identity recovery, missing myTrades retrieval, and replayable remote reconciliation; public inherent methods remain source-compatible and BinanceSpotVenue remains the only local order/fill state owner; tools/check_architecture.py follows the new implementation owner; cargo test -p qx-adapter --locked --offline passed 115 unit tests, 8 Binance stream retry tests, and 4 user-stream retry tests (2026-11-24)",
+            "crates/qx-adapter/src/binance/orders.rs owns Binance Spot single-order submission, native OCO validation/submission, single/list cancellation, order response wires, and client/list identity mapping; the Venue trait facade delegates without changing the public contract; tools/check_architecture.py pins the single-owner boundary and delegation; cargo test -p qx-adapter --locked --offline passed 115 unit tests, 8 Binance stream retry tests, and 4 user-stream retry tests; qx-service passed 149 tests; qx-cli compiled; clippy passed; architecture fast passed 375 named checks across four shards (2026-11-24)",
+            "crates/qx-adapter/src/binance/account_snapshot.rs owns the public BinanceBalance DTO, account balance reads, outboundAccountPosition projection, and the MAX_POSITION account-wide openOrders observation; legacy type/method paths remain usable; tools/check_architecture.py pins the module owner and event delegate; qx-adapter passed 115 unit, 8 stream retry, and 4 cross-entry retry tests; qx-service passed 149 tests; qx-cli compiled; clippy passed (2026-11-24)",
             "crates/qx-adapter/src/lib.rs WebSocketPoll/FramePoll keep idle legal only at a frame boundary — a read timeout in the middle of a message is still a fault, otherwise two frames would be spliced across windows (V13 R2",
             "crates/qx-adapter/tests/binance_stream_retry.rs 40 silent windows with a 1-reconnect budget still return Ok with reconnects=0, while an idle-only session that ends in a broken link is still given up on, so idle can neither charge nor reset the budget (V13 R2",
             "crates/qx-cli/tests/unit/reexport_zero_reader_surface.rs 门面 `pub use` 那一行不算读者：整棵树里只有「自己的定义行 + 那行再导出」的公共面即判红 —— 架构门禁按名字在源码里找读者，而那行再导出本身就含这个名字，所以这类死面在门禁侧恒绿（#206 的盲区本体，修门禁归协调侧）。本轮据此删掉 `run_binance_user_stream_live` 与 `run_binance_user_stream_testnet` 两条端点预设包装、`DEFAULT_WS_HOST` 与 `TESTNET_WS_HOST` 两份常量、没有一处调用点的中间层委托 `run_binance_user_stream_with_config`（V13 R2",
@@ -2586,6 +2588,8 @@
             "crates/qx-adapter/tests/user_stream_retry.rs healthy_sessions_do_not_exhaust_the_reconnect_budget proves the reconnect cap counts consecutive failures, so a stream that keeps delivering events never burns the budget, while connect_failures_still_escalate_backoff_and_stop_at_the_budget keeps the give-up reachable (V12 R4-b)",
             "crates/qx-adapter/src/binance/user_stream.rs BinanceStreamPoll and crates/qx-adapter/src/binance/market_data.rs BinanceQuotePoll split \"this read window had nothing\" from \"the link is down\": an idle user-stream window is counted in idle_windows and costs no reconnect budget, and a quiet book ticker degrades the market worker instead of killing the runtime (V13 R2 #165/#168a)",
             "crates/qx-adapter/src/binance/reconcile.rs owns Binance Spot remote order snapshots, order-group identity recovery, missing myTrades retrieval, and replayable remote reconciliation; public inherent methods remain source-compatible and BinanceSpotVenue remains the only local order/fill state owner; tools/check_architecture.py follows the new implementation owner; cargo test -p qx-adapter --locked --offline passed 115 unit tests, 8 Binance stream retry tests, and 4 user-stream retry tests (2026-11-24)",
+            "crates/qx-adapter/src/binance/orders.rs owns Binance Spot single-order submission, native OCO validation/submission, single/list cancellation, order response wires, and client/list identity mapping; the Venue trait facade delegates without changing the public contract; tools/check_architecture.py pins the single-owner boundary and delegation; cargo test -p qx-adapter --locked --offline passed 115 unit tests, 8 Binance stream retry tests, and 4 user-stream retry tests; qx-service passed 149 tests; qx-cli compiled; clippy passed; architecture fast passed 375 named checks across four shards (2026-11-24)",
+            "crates/qx-adapter/src/binance/account_snapshot.rs owns the public BinanceBalance DTO, account balance reads, outboundAccountPosition projection, and the MAX_POSITION account-wide openOrders observation; legacy type/method paths remain usable; tools/check_architecture.py pins the module owner and event delegate; qx-adapter passed 115 unit, 8 stream retry, and 4 cross-entry retry tests; qx-service passed 149 tests; qx-cli compiled; clippy passed (2026-11-24)",
             "crates/qx-adapter/src/lib.rs WebSocketPoll/FramePoll keep idle legal only at a frame boundary — a read timeout in the middle of a message is still a fault, otherwise two frames would be spliced across windows (V13 R2",
             "crates/qx-adapter/tests/binance_stream_retry.rs 40 silent windows with a 1-reconnect budget still return Ok with reconnects=0, while an idle-only session that ends in a broken link is still given up on, so idle can neither charge nor reset the budget (V13 R2",
             "crates/qx-cli/tests/unit/reexport_zero_reader_surface.rs 门面 `pub use` 那一行不算读者：整棵树里只有「自己的定义行 + 那行再导出」的公共面即判红 —— 架构门禁按名字在源码里找读者，而那行再导出本身就含这个名字，所以这类死面在门禁侧恒绿（#206 的盲区本体，修门禁归协调侧）。本轮据此删掉 `run_binance_user_stream_live` 与 `run_binance_user_stream_testnet` 两条端点预设包装、`DEFAULT_WS_HOST` 与 `TESTNET_WS_HOST` 两份常量、没有一处调用点的中间层委托 `run_binance_user_stream_with_config`（V13 R2",

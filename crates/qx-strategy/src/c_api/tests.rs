@@ -6,9 +6,10 @@ use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static DESTROYED: AtomicUsize = AtomicUsize::new(0);
-static LAST_ORDER_STATUS_EVENT_SEQ: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-static LAST_TYPED_ORDER_STATUS_OK: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    static LAST_ORDER_STATUS_EVENT_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static LAST_TYPED_ORDER_STATUS_OK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 static LAST_FILL_EVENT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static LAST_FILL_SCHEMA_VERSION: AtomicUsize = AtomicUsize::new(0);
 static LAST_ACCOUNT_UPDATE_EVENT_SEQ: std::sync::atomic::AtomicU64 =
@@ -531,7 +532,7 @@ unsafe extern "C" fn fake_order_status(
         }
         return 4;
     };
-    LAST_ORDER_STATUS_EVENT_SEQ.store(event_seq, Ordering::SeqCst);
+    LAST_ORDER_STATUS_EVENT_SEQ.with(|value| value.set(event_seq));
     0
 }
 
@@ -681,8 +682,8 @@ unsafe extern "C" fn fake_order_status_v2(
         && !update.reason.is_null()
         && update.reason_len == 0
         && exact_matches;
-    LAST_ORDER_STATUS_EVENT_SEQ.store(update.event_seq, Ordering::SeqCst);
-    LAST_TYPED_ORDER_STATUS_OK.store(usize::from(valid), Ordering::SeqCst);
+    LAST_ORDER_STATUS_EVENT_SEQ.with(|value| value.set(update.event_seq));
+    LAST_TYPED_ORDER_STATUS_OK.with(|value| value.set(usize::from(valid)));
     if valid {
         0
     } else {
@@ -920,12 +921,12 @@ fn c_abi_order_status_uses_optional_versioned_export_without_changing_vtable() {
     .unwrap();
     let mut strategy = unsafe { CAbiStrategy::from_vtable(&FAKE_VTABLE, "{}") }.unwrap();
     strategy.on_order_status = Some(fake_order_status);
-    LAST_ORDER_STATUS_EVENT_SEQ.store(0, Ordering::SeqCst);
+    LAST_ORDER_STATUS_EVENT_SEQ.with(|value| value.set(0));
 
     let decision = Strategy::on_strategy_order_status(&mut strategy, &context, &update).unwrap();
 
     assert!(decision.is_none());
-    assert_eq!(LAST_ORDER_STATUS_EVENT_SEQ.load(Ordering::SeqCst), 23);
+    assert_eq!(LAST_ORDER_STATUS_EVENT_SEQ.with(std::cell::Cell::get), 23);
 }
 
 #[test]
@@ -964,14 +965,14 @@ fn c_abi_order_status_prefers_typed_v2_and_preserves_exact_decimal_values() {
     let mut strategy = unsafe { CAbiStrategy::from_vtable(&FAKE_VTABLE, "{}") }.unwrap();
     strategy.on_order_status = Some(fake_order_status);
     strategy.on_order_status_v2 = Some(fake_order_status_v2);
-    LAST_ORDER_STATUS_EVENT_SEQ.store(0, Ordering::SeqCst);
-    LAST_TYPED_ORDER_STATUS_OK.store(0, Ordering::SeqCst);
+    LAST_ORDER_STATUS_EVENT_SEQ.with(|value| value.set(0));
+    LAST_TYPED_ORDER_STATUS_OK.with(|value| value.set(0));
 
     let decision = Strategy::on_strategy_order_status(&mut strategy, &context, &update).unwrap();
 
     assert!(decision.is_none());
-    assert_eq!(LAST_ORDER_STATUS_EVENT_SEQ.load(Ordering::SeqCst), 23);
-    assert_eq!(LAST_TYPED_ORDER_STATUS_OK.load(Ordering::SeqCst), 1);
+    assert_eq!(LAST_ORDER_STATUS_EVENT_SEQ.with(std::cell::Cell::get), 23);
+    assert_eq!(LAST_TYPED_ORDER_STATUS_OK.with(std::cell::Cell::get), 1);
 }
 
 #[test]

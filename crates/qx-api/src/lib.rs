@@ -3148,6 +3148,7 @@ mod tests {
         Priority, EXECUTION_CAPABILITY_DECISION_SCHEMA_VERSION,
     };
     use qx_protocol::AccountSnapshot;
+    use rustls::pki_types::pem::PemObject;
     use rustls::server::{ClientHello, ResolvesServerCert};
     use rustls::sign::CertifiedKey;
     use std::collections::BTreeMap;
@@ -4290,6 +4291,189 @@ mod tests {
         client.shutdown(Shutdown::Write).unwrap();
         let result = worker.join().unwrap();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn tls_handshake_deadline_driver_completes_a_verified_application_exchange() {
+        let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../contract-tests/tests/fixtures/mtls");
+        let server_certificates = load_certificate_chain_from_pem(fixtures.join("server.pem"))
+            .expect("load TLS server certificate fixture");
+        let server_key =
+            rustls::pki_types::PrivateKeyDer::from_pem_file(fixtures.join("server-key.pem"))
+                .expect("load TLS server key fixture");
+        let server_config = Arc::new(
+            ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(server_certificates, server_key)
+                .expect("valid TLS server fixture"),
+        );
+        let mut roots = rustls::RootCertStore::empty();
+        for certificate in load_certificate_chain_from_pem(fixtures.join("ca.pem"))
+            .expect("load TLS root certificate fixture")
+        {
+            roots.add(certificate).expect("add TLS test root");
+        }
+        let client_config = Arc::new(
+            rustls::ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth(),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").expect("loopback TLS listener");
+        let address = listener.local_addr().expect("TLS listener address");
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept TLS client");
+            let mut secured = tls_stream(stream, server_config).expect("complete TLS handshake");
+            let mut request = [0; 4];
+            secured
+                .read_exact(&mut request)
+                .expect("read encrypted application request");
+            assert_eq!(&request, b"ping");
+            secured
+                .write_all(b"pong")
+                .expect("write encrypted application response");
+        });
+
+        let socket = TcpStream::connect(address).expect("connect TLS client");
+        socket
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .expect("set TLS client read timeout");
+        socket
+            .set_write_timeout(Some(Duration::from_secs(3)))
+            .expect("set TLS client write timeout");
+        let server_name = "localhost".try_into().expect("valid TLS server name");
+        let connection = rustls::ClientConnection::new(client_config, server_name)
+            .expect("create TLS client connection");
+        let mut client = rustls::StreamOwned::new(connection, socket);
+        while client.conn.is_handshaking() {
+            client
+                .conn
+                .complete_io(&mut client.sock)
+                .expect("client side TLS handshake");
+        }
+        client
+            .write_all(b"ping")
+            .expect("write encrypted application request");
+        client.flush().expect("flush encrypted application request");
+        let mut response = [0; 4];
+        client
+            .read_exact(&mut response)
+            .expect("read encrypted application response");
+        assert_eq!(&response, b"pong");
+        server.join().expect("TLS server worker completes");
+    }
+
+    #[test]
+    fn tls_handshake_deadline_bounds_a_peer_stalled_mid_record() {
+        let config = Arc::new(
+            ServerConfig::builder()
+                .with_no_client_auth()
+                .with_cert_resolver(Arc::new(NoCertificateResolver)),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let worker = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            // If TLS I/O blocks, this per-read timeout is deliberately much longer than the
+            // absolute deadline supplied below. A slow peer must not extend that deadline by
+            // sending bytes just before this socket timeout.
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            stream
+                .set_write_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let started = Instant::now();
+            let result = crate::transport::tls_stream_until(
+                stream,
+                config,
+                started + Duration::from_millis(200),
+            )
+            .map(|_| ())
+            .map_err(|error| (error.kind(), error.to_string()));
+            let _ = sender.send((result, started.elapsed()));
+        });
+
+        let mut client = TcpStream::connect(address).unwrap();
+        // TLS handshake record header declares 32 payload bytes, but the peer only sends one.
+        client.write_all(b"\x16\x03\x03\x00\x20\x01").unwrap();
+        let outcome = receiver.recv_timeout(Duration::from_secs(1));
+        let _ = client.shutdown(Shutdown::Both);
+        worker.join().unwrap();
+
+        let (result, elapsed) = outcome.expect("absolute TLS deadline must return promptly");
+        let (kind, message) = result.expect_err("incomplete ClientHello must not finish TLS");
+        assert_eq!(kind, std::io::ErrorKind::TimedOut, "{message}");
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "TLS handshake ran past its 200 ms deadline: {elapsed:?}"
+        );
+        assert!(message.contains("deadline exceeded"), "{message}");
+    }
+
+    #[test]
+    fn tls_handshake_deadline_is_checked_between_successful_partial_reads() {
+        struct DribbleRecord {
+            bytes: Vec<u8>,
+            position: usize,
+        }
+
+        impl std::io::Read for DribbleRecord {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                std::thread::sleep(Duration::from_millis(30));
+                if self.position == self.bytes.len() {
+                    return Err(std::io::ErrorKind::WouldBlock.into());
+                }
+                buffer[0] = self.bytes[self.position];
+                self.position += 1;
+                Ok(1)
+            }
+        }
+
+        impl std::io::Write for DribbleRecord {
+            fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+                Ok(buffer.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let config = Arc::new(
+            ServerConfig::builder()
+                .with_no_client_auth()
+                .with_cert_resolver(Arc::new(NoCertificateResolver)),
+        );
+        let mut connection = rustls::ServerConnection::new(config).unwrap();
+        // An incomplete record makes rustls request more bytes. The reader returns one byte
+        // successfully each time, so an internal complete_io loop would stay inside the read
+        // phase until it consumed the whole record instead of returning to the deadline check.
+        let mut stream = DribbleRecord {
+            bytes: [b"\x16\x03\x03\x00\x20\x01".as_slice(), &[0; 31]].concat(),
+            position: 0,
+        };
+        let started = Instant::now();
+        let result = crate::transport::drive_tls_handshake(
+            &mut connection,
+            &mut stream,
+            started + Duration::from_millis(250),
+        );
+        let error = result.expect_err("continuous successful reads must still observe deadline");
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut, "{error}");
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "TLS handshake exceeded its 250 ms deadline: {:?}",
+            started.elapsed()
+        );
+        assert!(
+            stream.position > 1 && stream.position < stream.bytes.len(),
+            "read {} of {} bytes before the deadline after {:?}",
+            stream.position,
+            stream.bytes.len(),
+            started.elapsed()
+        );
     }
 
     #[test]

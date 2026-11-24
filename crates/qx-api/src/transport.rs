@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+const TLS_HANDSHAKE_POLL_INTERVAL: Duration = Duration::from_millis(1);
 
 pub(crate) fn configure_connection(stream: &TcpStream) -> std::io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_millis(100)))?;
@@ -22,6 +23,14 @@ pub(crate) fn tls_stream(
     stream: TcpStream,
     config: Arc<ServerConfig>,
 ) -> std::io::Result<StreamOwned<ServerConnection, TcpStream>> {
+    tls_stream_until(stream, config, Instant::now() + TLS_HANDSHAKE_TIMEOUT)
+}
+
+pub(crate) fn tls_stream_until(
+    stream: TcpStream,
+    config: Arc<ServerConfig>,
+    deadline: Instant,
+) -> std::io::Result<StreamOwned<ServerConnection, TcpStream>> {
     let connection = ServerConnection::new(config).map_err(|error| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -29,33 +38,99 @@ pub(crate) fn tls_stream(
         )
     })?;
     let mut secured = StreamOwned::new(connection, stream);
-    let deadline = Instant::now() + TLS_HANDSHAKE_TIMEOUT;
-    while secured.conn.is_handshaking() {
+    secured.sock.set_nonblocking(true)?;
+    drive_tls_handshake(&mut secured.conn, &mut secured.sock, deadline)?;
+    secured.sock.set_nonblocking(false)?;
+    Ok(secured)
+}
+
+pub(super) fn drive_tls_handshake<S: Read + Write>(
+    connection: &mut ServerConnection,
+    stream: &mut S,
+    deadline: Instant,
+) -> std::io::Result<()> {
+    // Drive rustls one socket read/write at a time. `complete_io` loops internally while the
+    // handshake is in progress, so even with a nonblocking socket a peer that continuously
+    // supplies partial records can keep that call from returning to this deadline check.
+    loop {
         if Instant::now() >= deadline {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "TLS handshake deadline exceeded",
-            ));
+            return Err(tls_handshake_deadline_error());
         }
-        match secured.conn.complete_io(&mut secured.sock) {
-            Ok(_) => {}
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) && Instant::now() < deadline =>
-            {
-                std::thread::sleep(Duration::from_millis(1));
+
+        let mut progressed = false;
+        if connection.wants_write() {
+            match connection.write_tls(stream) {
+                Ok(0) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::WriteZero,
+                        "TLS handshake socket closed while writing",
+                    ));
+                }
+                Ok(_) => {
+                    stream.flush().map_err(tls_handshake_io_error)?;
+                    progressed = true;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error) => return Err(tls_handshake_io_error(error)),
             }
-            Err(error) => {
-                return Err(std::io::Error::new(
-                    error.kind(),
-                    format!("TLS handshake failed: {error}"),
-                ));
+        }
+
+        if connection.wants_read() {
+            match connection.read_tls(stream) {
+                Ok(0) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "TLS handshake peer closed the connection",
+                    ));
+                }
+                Ok(_) => {
+                    if let Err(error) = connection.process_new_packets() {
+                        // Match rustls' complete_io behavior: send an alert if possible, without
+                        // allowing this best-effort write to replace the protocol error.
+                        let _ = connection.write_tls(stream);
+                        let _ = stream.flush();
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("TLS handshake failed: {error}"),
+                        ));
+                    }
+                    progressed = true;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error) => return Err(tls_handshake_io_error(error)),
             }
+        }
+
+        if !connection.is_handshaking() && !connection.wants_write() {
+            break;
+        }
+        if !progressed {
+            sleep_until_tls_progress(deadline)?;
         }
     }
-    Ok(secured)
+    Ok(())
+}
+
+fn tls_handshake_io_error(error: std::io::Error) -> std::io::Error {
+    std::io::Error::new(error.kind(), format!("TLS handshake failed: {error}"))
+}
+
+fn sleep_until_tls_progress(deadline: Instant) -> std::io::Result<()> {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Err(tls_handshake_deadline_error());
+    }
+    std::thread::sleep(TLS_HANDSHAKE_POLL_INTERVAL.min(remaining));
+    Ok(())
+}
+
+fn tls_handshake_deadline_error() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::TimedOut,
+        "TLS handshake deadline exceeded",
+    )
 }
 
 pub(crate) fn write_ws_text<S: Write>(stream: &mut S, text: &str) -> std::io::Result<()> {
