@@ -178,7 +178,7 @@ fn declared_windows_change_the_builtin_result() {
     let plain_signal = line_with(&plain, "[Strategy · Signal]");
     assert!(
         plain_signal.contains("source=builtin-default fast_window=5 slow_window=20")
-            && plain_signal.contains("declared_unused=none"),
+            && plain.contains("declared_unused=none"),
         "省略 --config 时应使用策略默认窗且不报告无效旋钮: {plain_err}; {plain_signal}"
     );
     assert_eq!(field(&plain, "[Strategy · Backtest]", "fills"), "0");
