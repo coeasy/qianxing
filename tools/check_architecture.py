@@ -15978,7 +15978,7 @@ def performance_baseline_check() -> None:
     )
     workflow = ROOT / ".github/workflows/ci.yml"
     workflow_source = workflow.read_text(encoding="utf-8") if workflow.is_file() else ""
-    performance_job = workflow_source.split("  performance-trend:", 1)[-1].split("\n  python-wheel:", 1)[0]
+    performance_job = workflow_source.split("  performance-trend:", 1)[-1].split("\n  python-wheel-build:", 1)[0]
     check(
         "performance-trend:" in workflow_source
         and "name: Blocking registered performance regressions" in workflow_source
@@ -15988,9 +15988,14 @@ def performance_baseline_check() -> None:
         and "benchmarks/run_crypto_paper_e2e.py" in workflow_source
         and "benchmarks/compare_baseline.py" in workflow_source
         and "benchmarks/results/crypto-paper-e2e.json" in workflow_source
-        and "name: performance-baseline" in workflow_source,
-        "CI 运行 Rust 与真实 Paper worker 基准、阻断已登记回归并保留新基线 artifact",
-        "缺少 performance-trend job、趋势比较或基线 artifact",
+        and "name: performance-baseline" in workflow_source
+        and "name: Upload performance diagnostics after failure" in performance_job
+        and "if: failure()" in performance_job
+        and "name: performance-diagnostics-${{ github.run_attempt }}" in performance_job
+        and "benchmarks/results/previous/*.json" in performance_job
+        and "benchmarks/results/diagnostics/ci-context.json" in performance_job,
+        "CI 运行 Rust 与真实 Paper worker 基准、阻断已登记回归并保留成功基线及失败样本",
+        "缺少 performance-trend job、趋势比较、成功基线或失败诊断 artifact",
     )
     profile_driver = ROOT / "benchmarks/run_profile_backtest.py"
     profile_evidence_path = ROOT / "maturity/evidence/profile-market-backtest.json"
