@@ -47,8 +47,6 @@
     "builtin_quantity": 100000000000,
     "builtin_fast_window": 2,
     "builtin_slow_window": 3,
-    "builtin_period": 14,
-    "builtin_threshold_bps": 0,
     "ashare_rules_path": "qianxing.ashare.rules.json",
     "ashare_actions_path": "qianxing.ashare.actions.example.json",
     "ashare_calendar_path": "qianxing.ashare.calendar.example.json",

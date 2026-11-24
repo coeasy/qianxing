@@ -51,8 +51,7 @@ fn builtin_strategy_worker_path_reads_bar_snapshot() {
 #[test]
 fn builtin_worker_reads_the_declared_signal_parameters() {
     // 交易链路（paper/live）与四条回测链共用同一份声明式信号口径（V11 Q64）。
-    // 注意不能拿 `qianxing.runtime.builtin-strategy.example.json` 里的那四项做基线：
-    // 它写的正好是 5/20/14/100，与写死默认一模一样，换了也证明不了什么 —— 逐项自己给值。
+    // 示例模板会省略 MACD 不读取的信号旋钮；逐项显式给值，证明所有覆盖都能进入装配。
     let runtime = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
