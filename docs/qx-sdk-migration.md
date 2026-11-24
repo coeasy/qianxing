@@ -7,7 +7,7 @@
 本文是迁移指南。
 
 初次体验可运行[独立快速入门工程](../examples/rust-sdk-quickstart/README.md)，
-它自带教学数据并固定到 `v0.4.0` 提交，用于复现历史 Git 安装路径；当前正式版本请使用下方 crates.io 依赖。
+它自带教学数据并从 crates.io 安装当前正式版 `qx-sdk 0.4.1`。源码 Git 消费路径由后文的独立消费者脚本单独验证。
 需要连接运行中的 API，可参考源码工作区内的[可选 HTTP 适配器](../crates/qx-sdk-http/README.md)；
 该适配器尚未发布，必须使用包含它的源码版本。
 
@@ -26,7 +26,7 @@
 
 ### 1. 依赖
 
-v0.4.1 crates.io 发布和独立消费者验收完成后，普通用户可使用 registry 依赖：
+v0.4.1 crates.io 发布和独立消费者验收已完成，普通用户可使用 registry 依赖：
 
 ```toml
 [dependencies]
@@ -42,7 +42,7 @@ qx-sdk = "0.4.1"
 qx-sdk = { git = "https://github.com/coeasy/qianxing.git", rev = "e7fec623ffbb1b55acec3b4ce414f26b1a3ac961", package = "qx-sdk" }
 ```
 
-该 Git 来源示例固定到已发布的 `v0.4.0` 标签指向的提交，用于可复现的历史消费路径。需要测试当前源码时应固定完整提交哈希并提交 `Cargo.lock`。验证独立消费者可运行：
+需要复现 `v0.4.0` 源码或测试尚未发布的源码时，可固定完整提交哈希并提交 `Cargo.lock`。验证当前 Git 消费路径可运行：
 
 ```powershell
 python tools/check_rust_sdk_git_consumer.py

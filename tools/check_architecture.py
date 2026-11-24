@@ -15843,6 +15843,9 @@ def performance_baseline_check() -> None:
     cli_bench_source = criterion_bench.read_text(encoding="utf-8") if criterion_bench.is_file() else ""
     scheduler_source = scheduler_criterion_bench.read_text(encoding="utf-8") if scheduler_criterion_bench.is_file() else ""
     bench_driver_source = (ROOT / "benchmarks/run_rust_bench.py").read_text(encoding="utf-8")
+    runtime_criterion_bench = ROOT / "crates/qx-runtime/benches/criterion_performance.rs"
+    runtime_manifest = (ROOT / "crates/qx-runtime/Cargo.toml").read_text(encoding="utf-8")
+    runtime_criterion_source = runtime_criterion_bench.read_text(encoding="utf-8") if runtime_criterion_bench.is_file() else ""
     zhenlu_criterion_bench = ROOT / "crates/qx-zhenlu/benches/criterion_performance.rs"
     zhenlu_manifest = (ROOT / "crates/qx-zhenlu/Cargo.toml").read_text(encoding="utf-8")
     zhenlu_source = zhenlu_criterion_bench.read_text(encoding="utf-8") if zhenlu_criterion_bench.is_file() else ""
@@ -15859,7 +15862,7 @@ def performance_baseline_check() -> None:
             for name in ("clone_and_scan_4097_runs", "indexed_active_ids")
         )
         and "bench_scheduler_active_run_selection" not in cli_bench_source
-        and 'for package in ("qx-core", "qx-scheduler", "qx-xingban", "qx-zhenlu", "qx-cli")' in bench_driver_source,
+        and 'for package in ("qx-core", "qx-runtime", "qx-scheduler", "qx-xingban", "qx-zhenlu", "qx-cli")' in bench_driver_source,
         "Scheduler 活跃运行索引基准归 qx-scheduler，证据驱动器实跑该 crate target",
         "Scheduler 基准仍挂在 CLI、未注册服务 crate target 或未进入证据驱动器",
     )
@@ -15893,7 +15896,7 @@ def performance_baseline_check() -> None:
                 "fn bench_portfolio_margin_snapshot(",
             )
         )
-        and 'for package in ("qx-core", "qx-scheduler", "qx-xingban", "qx-zhenlu", "qx-cli")' in bench_driver_source,
+        and 'for package in ("qx-core", "qx-runtime", "qx-scheduler", "qx-xingban", "qx-zhenlu", "qx-cli")' in bench_driver_source,
         "撮合、A 股与组合核算 Criterion 基准归 qx-xingban，证据驱动器实跑其 crate target",
         "领域基准仍挂在 CLI、未注册 qx-xingban target 或未进入证据驱动器",
     )
@@ -15923,9 +15926,21 @@ def performance_baseline_check() -> None:
                 "fn bench_ledger_cash_balances_snapshot(",
             )
         )
-        and 'for package in ("qx-core", "qx-scheduler", "qx-xingban", "qx-zhenlu", "qx-cli")' in (ROOT / "benchmarks/run_rust_bench.py").read_text(encoding="utf-8"),
+        and 'for package in ("qx-core", "qx-runtime", "qx-scheduler", "qx-xingban", "qx-zhenlu", "qx-cli")' in (ROOT / "benchmarks/run_rust_bench.py").read_text(encoding="utf-8"),
         "EventLog/Ledger、Scheduler、撮合与 Paper Venue Criterion 归各自 crate，证据生成器运行所有 crate 与 CLI",
         "Criterion 基准 owner 未按 crate 归属、漏注册 crate target 或证据生成未运行全部组",
+    )
+    check(
+        runtime_criterion_bench.is_file()
+        and 'name = "criterion_performance"' in runtime_manifest
+        and 'criterion = "0.8.2"' in runtime_manifest
+        and "latest_account_balance_snapshot_cursor" in runtime_criterion_source
+        and "legacy_reverse_scan" in runtime_criterion_source
+        and "qx_runtime_balance_snapshot_cursor" in bench_driver_source
+        and '"qx-runtime": ("qx_runtime_balance_snapshot_cursor",)' in bench_driver_source
+        and '"qx-runtime"' in bench_driver_source,
+        "余额快照游标查找与旧式反向扫描基准归 qx-runtime 并进入 PR 性能证据驱动器",
+        "恢复风控游标缺少直接对照基准、Criterion 注册或 PR 性能证据接线",
     )
     check(
         zhenlu_criterion_bench.is_file()
@@ -15986,7 +16001,7 @@ def performance_baseline_check() -> None:
     )
     workflow = ROOT / ".github/workflows/ci.yml"
     workflow_source = workflow.read_text(encoding="utf-8") if workflow.is_file() else ""
-    performance_job = workflow_source.split("  performance-trend:", 1)[-1].split("\n  python-wheel:", 1)[0]
+    performance_job = workflow_source.split("  performance-trend:", 1)[-1].split("\n  python-wheel-build:", 1)[0]
     check(
         "performance-trend:" in workflow_source
         and "name: Blocking registered performance regressions" in workflow_source
@@ -15996,9 +16011,14 @@ def performance_baseline_check() -> None:
         and "benchmarks/run_crypto_paper_e2e.py" in workflow_source
         and "benchmarks/compare_baseline.py" in workflow_source
         and "benchmarks/results/crypto-paper-e2e.json" in workflow_source
-        and "name: performance-baseline" in workflow_source,
-        "CI 运行 Rust 与真实 Paper worker 基准、阻断已登记回归并保留新基线 artifact",
-        "缺少 performance-trend job、趋势比较或基线 artifact",
+        and "name: performance-baseline" in workflow_source
+        and "name: Upload performance diagnostics after failure" in performance_job
+        and "if: failure()" in performance_job
+        and "name: performance-diagnostics-${{ github.run_attempt }}" in performance_job
+        and "benchmarks/results/previous/*.json" in performance_job
+        and "benchmarks/results/diagnostics/ci-context.json" in performance_job,
+        "CI 运行 Rust 与真实 Paper worker 基准、阻断已登记回归并保留成功基线及失败样本",
+        "缺少 performance-trend job、趋势比较、成功基线或失败诊断 artifact",
     )
     profile_driver = ROOT / "benchmarks/run_profile_backtest.py"
     profile_evidence_path = ROOT / "maturity/evidence/profile-market-backtest.json"
@@ -17893,7 +17913,9 @@ def pipeline_cursor_refresh_check() -> None:
     check(
         apply_tail is not None
         and "self.log.append_batch(tail)?" in apply_tail
-        and "apply_index_event(event)?" in apply_tail
+        and "let tail_start = self.log.events().len();" in apply_tail
+        and "tail.iter().enumerate()" in apply_tail
+        and "self.apply_index_event(event, tail_start + offset)?" in apply_tail
         and "rebuild_runtime_indexes(" not in apply_tail,
         "apply_tail 用 append_batch 接日志 + 逐条增量应用索引，不做整份重建",
         "apply_tail 不在盘，或没走 append_batch / 仍在整份重建索引",
@@ -18194,6 +18216,7 @@ def spread_recovery_service_ownership_check() -> None:
     recovery_body = _rust_fn_body(service, "recover_spread_groups_for_venue_until") or ""
     paper_wrapper = _rust_fn_body(service, "recover_paper_spread_groups_for_account") or ""
     paper_body = _rust_fn_body(service, "recover_paper_spread_groups_inner") or ""
+    validator_body = _rust_fn_body(service, "recovery_order_validator") or ""
     check(
         bool(recovery_wrapper)
         and bool(recovery_body)
@@ -18203,6 +18226,8 @@ def spread_recovery_service_ownership_check() -> None:
         and "pub fn spread_recovery_poll_delay" in service
         and "pub struct RecoveryGuard" in service
         and "pub fn recovery_order_validator" in service
+        and "RecoveryRiskSnapshot::capture(pipeline, worker)" in validator_body
+        and "risk_pipeline: pipeline.clone()" not in validator_body
         and "recover_spread_groups_for_venue_until(context, venue, || false)" in recovery_wrapper
         and "if should_stop()" in recovery_body
         and "venue_recovery_checks_shutdown_between_durable_groups" in service
@@ -18222,7 +18247,9 @@ def spread_recovery_service_ownership_check() -> None:
         and "recover_paper_spread_groups_inner(" in paper_wrapper
         and ".try_on_quote(&instrument, quote)" in paper_body,
         "多腿恢复扫描、退避、补偿风控和 Paper 行情驱动归 qx-service，CLI 只重导出",
-        f"venue恢复={bool(recovery_body)}，Paper恢复={bool(paper_body)}，CLI重导出={'pub(crate) use qx_service::spread_recovery_host' in cli}",
+        f"venue恢复={bool(recovery_body)}，Paper恢复={bool(paper_body)}，"
+        f"恢复风险窄快照={'RecoveryRiskSnapshot::capture(pipeline, worker)' in validator_body}，"
+        f"CLI重导出={'pub(crate) use qx_service::spread_recovery_host' in cli}",
     )
 
 
@@ -18289,6 +18316,7 @@ def paper_execution_service_ownership_check() -> None:
 def live_balance_order_reservation_check() -> None:
     """Live admission reserves local orders created after the latest exchange balance fact."""
     service_risk = case_source("crates/qx-service/src/risk_host.rs")
+    runtime_pipeline = case_source("crates/qx-runtime/src/pipeline.rs")
     runtime = service_risk
     binance = case_source("crates/qx-service/src/binance_execution_host.rs")
     ccxt_submit = case_source("crates/qx-service/src/ccxt_execution_host.rs")
@@ -18299,7 +18327,7 @@ def live_balance_order_reservation_check() -> None:
     ) or ""
     helper = _rust_fn_body(service_risk, "live_post_snapshot_order_reserve_exact") or ""
     pending_helper = _rust_fn_body(service_risk, "pending_order_reserve_exact") or ""
-    post_snapshot_ids = _rust_fn_body(service_risk, "live_post_snapshot_order_ids") or ""
+    post_snapshot_ids = _rust_fn_body(service_risk, "post_balance_facts") or ""
     spec_resolver = _rust_fn_body(service_risk, "live_order_market_spec") or ""
     disjoint_spot_bucket = re.search(
         r"if !currency\.eq_ignore_ascii_case\(funding_currency\)\s*\{\s*"
@@ -18323,7 +18351,11 @@ def live_balance_order_reservation_check() -> None:
         and "pub fn worker_risk_context(" in service_risk
         and "live_post_snapshot_order_reserve_exact(" in service_risk
         and "live_post_snapshot_order_ids(" in helper
-        and "event.seq > balance_seq" in post_snapshot_ids
+        and "latest_account_balance_snapshot_cursor" in post_snapshot_ids
+        and ".get(tail_start..).unwrap_or_default()" in post_snapshot_ids
+        and "event.seq > balance_seq" not in post_snapshot_ids
+        and "account_balance_snapshot_cursors" in runtime_pipeline
+        and "pub fn latest_account_balance_snapshot_cursor(" in runtime_pipeline
         and "EventKind::OrderSubmitted { order }" in post_snapshot_ids
         and "EventKind::Filled { fill }" in post_snapshot_ids
         and "live_order_market_spec(" in helper
@@ -18332,8 +18364,11 @@ def live_balance_order_reservation_check() -> None:
         and "pub fn require_fresh_live_balance_snapshot(" in service_risk
         and "VenueFamily::parse_option(venue_id) == Some(qx_core::VenueFamily::Paper)" in service_risk
         and "LIVE_BALANCE_SNAPSHOT_MAX_AGE_MS: u64 = qx_runtime::LIVE_RECONCILE_MAX_AGE_MS" in service_risk
-        and ".checked_sub(snapshot.ts)" in service_risk
-        and "require_fresh_live_balance_snapshot(" in case_source("crates/qx-service/src/spread_recovery_host.rs")
+        and ".checked_sub(snapshot_ts)" in service_risk
+        and (
+            "require_fresh_live_balance_snapshot_view("
+            in case_source("crates/qx-service/src/spread_recovery_host.rs")
+        )
         and "spec.quote_currency.trim().to_ascii_uppercase()" in service_risk
         and "spec.base_currency.trim().to_ascii_uppercase()" in service_risk
         and "exact_spot_sell_available_inventory(" in service_risk
@@ -18365,7 +18400,7 @@ def live_balance_order_reservation_check() -> None:
                 "live_order_admission_rejects_missing_future_and_expired_balance_snapshots",
             )
         ),
-        "Live Binance/CCXT 提交按账户锁、60 秒内余额快照和风险准入；现货 quote/base 资金桶、base 可卖量上限、在途预留及衍生品异币种 fail-closed 均有行为合同",
+        "Live Binance/CCXT 提交按账户锁、60 秒内余额快照和风险准入；恢复快照游标只扫描余额快照之后的事实；现货 quote/base 资金桶、base 可卖量上限、在途预留及衍生品异币种 fail-closed 均有行为合同",
         f"准入顺序={steps}，Live 预留实现={bool(helper)}，市场规格解析={bool(spec_resolver)}，调用入口={len(call_sites)}",
     )
 
@@ -25320,32 +25355,37 @@ def cli_behavior_parity_check() -> None:
 
 
 def cli_guide_acceptance_check() -> None:
-    """WP-5.4: require the documented researcher route to produce and read back a report."""
+    """WP-5.4: require shared human/JSON role guides and a readable first report."""
     guide_path = ROOT / "crates/qx-cli/src/guide.rs"
     test_path = ROOT / "crates/qx-cli/tests/guide.rs"
+    cargo_manifest_path = ROOT / "crates/qx-cli/Cargo.toml"
     quickstart = (ROOT / "crates/qx-cli/src/quickstart.rs").read_text(encoding="utf-8")
     guide = guide_path.read_text(encoding="utf-8") if guide_path.is_file() else ""
     test = test_path.read_text(encoding="utf-8") if test_path.is_file() else ""
+    cargo_manifest = (
+        cargo_manifest_path.read_text(encoding="utf-8") if cargo_manifest_path.is_file() else ""
+    )
+    cli_args = _read_text(ROOT / "crates/qx-cli/src/cli_args.rs")
     check(
-        all(
-            function in guide
-            for function in (
-                "fn print_researcher()",
-                "fn print_strategy_author()",
-                "fn print_operator()",
-                "fn print_integrator()",
-            )
-        )
+        "fn audience_guide(" in guide
+        and "fn all_audience_guides()" in guide
+        and "fn print_audience(" in guide
+        and "fn print_json(" in guide
+        and "schema_version: 1" in guide
+        and "Self::Guide(args) => args.json" in cli_args
         and "qx-cli quickstart ./qianxing-demo" in guide
         and "plan schema-registry maturity/schema-registry.json --json" in guide
         and "fn researcher_guide_command_produces_a_report_that_can_be_read_back()" in test
+        and "fn guide_json_lists_four_machine_readable_five_step_paths()" in test
+        and "fn guide_json_can_select_one_audience()" in test
+        and 'name = "guide"\npath = "tests/guide.rs"' in cargo_manifest
         and "run the command printed by the researcher guide" in test
         and ".summary.json" in test
         and '"--json"' in test
         and "contains_result_hash" in test
         and "use super::*;" not in production_text(quickstart),
-        "WP-5.4 研究者指南按原样命令实际生成摘要并以 JSON 复读同一 result_hash",
-        "缺少四角色入口、真实指南 quickstart→摘要→复读用例未覆盖产物与指纹，"
+        "WP-5.4 四角色指南共用定义支持文本与版本化 JSON，研究者路径实际生成摘要并复读同一 result_hash",
+        "缺少四角色共享指南、可选角色 JSON，或 guide 集成用例未注册/未覆盖产物与指纹，"
         "或 quickstart 生产模块重新隐式依赖 crate 根导入",
     )
 
@@ -26785,6 +26825,37 @@ def binance_spot_order_protocol_boundary_check() -> None:
         f"module declared={'mod orders;' in facade}；moved owners="
         f"{sum(marker in orders for marker in moved)}/{len(moved)}；"
         f"facade submit/cancel delegate={('self.submit_order_impl(order, ts)' in facade and 'self.cancel_order_impl(local_id, ts)' in facade)}",
+    )
+
+
+def binance_spot_account_snapshot_boundary_check() -> None:
+    """Account balance reads/events and account-wide open-order observations have one owner."""
+    facade = production_text(_text_or_empty(ROOT / "crates/qx-adapter/src/binance.rs"))
+    snapshot = production_text(
+        _text_or_empty(ROOT / "crates/qx-adapter/src/binance/account_snapshot.rs")
+    )
+    moved = (
+        "pub struct BinanceBalance",
+        "pub fn fetch_account_balances(",
+        "pub(super) fn fetch_open_orders_for_max_position(",
+        "pub(super) fn ingest_account_position(",
+        "struct BinanceAccountWire",
+        "struct BinanceBalanceWire",
+    )
+    check(
+        "mod account_snapshot;" in facade
+        and "pub use account_snapshot::BinanceBalance;" in facade
+        and "self.ingest_account_position(&value)?" in facade
+        and all(marker in snapshot for marker in moved)
+        and "pub fn fetch_account_balances(" not in facade
+        and "fn fetch_open_orders_for_max_position(" not in facade
+        and "fn ingest_account_position(" not in facade
+        and "struct BinanceAccountWire" not in facade
+        and "struct BinanceBalanceWire" not in facade,
+        "Binance Spot account balance snapshots, account events, and MAX_POSITION open-order reads have one owner",
+        f"module declared={'mod account_snapshot;' in facade}；moved owners="
+        f"{sum(marker in snapshot for marker in moved)}/{len(moved)}；"
+        f"facade account-event delegation={'self.ingest_account_position(&value)?' in facade}",
     )
 
 
@@ -29090,7 +29161,7 @@ def _fn_body_line_count(text: str, start: int) -> int:
 
 
 def qx_sdk_facade_check() -> None:
-    """方案 §6.1 的第三方 Rust 门面与真实代码对账。十颗，恒发十条、不早退。"""
+    """方案 §6.1 的第三方 Rust 门面与真实代码对账。十一颗，恒发十一条、不早退。"""
     manifest = ROOT / SDK_FACADE_DIR / "Cargo.toml"
     manifest_text = _text_or_empty(manifest)
     members = _text_or_empty(ROOT / "Cargo.toml")
@@ -29255,6 +29326,45 @@ def qx_sdk_facade_check() -> None:
         "门面的每一条能力缺口都在 `maturity/capability-matrix.yaml` 的 `rust_sdk` 行如实登记"
         "（没有生产端的门面能力不许只写在散文里）",
         f"rust_sdk 行={'在' if rust_sdk is not None else '缺'}；未登记 {missing_gaps or '无'}",
+    )
+
+    # ⑪ 用户可运行的 registry quickstart 必须锁定公开 SDK，且在常驻 CI 中真的执行。
+    quickstart_manifest = _text_or_empty(ROOT / "examples/rust-sdk-quickstart/Cargo.toml")
+    quickstart_lock = _text_or_empty(ROOT / "examples/rust-sdk-quickstart/Cargo.lock")
+    ci_workflow = _text_or_empty(ROOT / ".github/workflows/ci.yml")
+    quickstart_version = re.search(
+        r'^qx-sdk = "(\d+\.\d+\.\d+)"\s*$', quickstart_manifest, re.MULTILINE
+    )
+    sdk_lock_entry = next(
+        (
+            block
+            for block in quickstart_lock.split("[[package]]")
+            if re.search(r'^name = "qx-sdk"\s*$', block, re.MULTILINE)
+        ),
+        "",
+    )
+    registry_lock = (
+        'source = "registry+https://github.com/rust-lang/crates.io-index"' in sdk_lock_entry
+    )
+    registry_quickstart = (
+        quickstart_version is not None
+        and re.search(
+            rf'^version = "{re.escape(quickstart_version.group(1))}"\s*$',
+            sdk_lock_entry,
+            re.MULTILINE,
+        )
+        is not None
+        and registry_lock
+        and "rust-sdk-published-quickstart" in ci_workflow
+        and "working-directory: examples/rust-sdk-quickstart" in ci_workflow
+        and "cargo run --locked --release" in ci_workflow
+    )
+    check(
+        registry_quickstart,
+        "独立 Rust 快速入门锁定已发布的 crates.io SDK，并由 CI 从该清单实际构建运行",
+        f"版本={quickstart_version.group(1) if quickstart_version else '缺'}；"
+        f"registry lock={registry_lock}；"
+        f"CI job={'rust-sdk-published-quickstart' in ci_workflow}",
     )
 
 
@@ -34272,6 +34382,7 @@ def main() -> int:
     binance_execution_runner_ownership_check()
     binance_spot_market_data_boundary_check()
     binance_spot_order_protocol_boundary_check()
+    binance_spot_account_snapshot_boundary_check()
     binance_spot_symbol_validation_check()
     instrument_id_symbol_validation_check()
     ccxt_user_stream_runner_ownership_check()

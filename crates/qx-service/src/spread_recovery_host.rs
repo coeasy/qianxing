@@ -408,7 +408,7 @@ pub struct RecoveryGuard<'a> {
     worker: &'a WorkerConfig,
     /// 风控读取的是恢复扫描开始时的不可变快照；本轮补偿产生的事实会在下一轮
     /// 扫描重新加载，避免在同一轮里用半更新状态重复计算风险。
-    risk_pipeline: LiveEventPipeline,
+    risk_pipeline: crate::risk_host::RecoveryRiskSnapshot,
     runtime_config_path: Option<&'a Path>,
 }
 
@@ -419,28 +419,28 @@ pub fn recovery_order_validator<'a>(
 ) -> RecoveryGuard<'a> {
     RecoveryGuard {
         worker,
-        risk_pipeline: pipeline.clone(),
+        risk_pipeline: crate::risk_host::RecoveryRiskSnapshot::capture(pipeline, worker),
         runtime_config_path,
     }
 }
 
 impl HedgeOrderValidator for RecoveryGuard<'_> {
     fn validate(&self, order: &Order) -> Result<(), String> {
-        crate::risk_host::require_no_unresolved_live_order_operations(
+        crate::risk_host::require_no_unresolved_live_order_operations_view(
             &self.worker.id,
             self.worker.account_id.as_deref(),
             self.worker.venue_id.as_deref(),
             &self.risk_pipeline,
             Some(order.client_id),
         )?;
-        crate::risk_host::require_fresh_live_balance_snapshot(
+        crate::risk_host::require_fresh_live_balance_snapshot_view(
             &self.worker.id,
             self.worker.account_id.as_deref(),
             self.worker.venue_id.as_deref(),
             &self.risk_pipeline,
             runtime_timestamp_ms(),
         )?;
-        if let Some((risk, position)) = crate::risk_host::worker_risk_context(
+        if let Some((risk, position)) = crate::risk_host::worker_risk_context_view(
             self.worker,
             order,
             &self.risk_pipeline,
