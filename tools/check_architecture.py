@@ -17891,12 +17891,15 @@ def pipeline_cursor_refresh_check() -> None:
         "PostgreSQL read_since 缺少位置尾读、完整性校验或行为契约",
     )
     postgres_migration_tests = case_source("crates/qx-storage/src/postgres/schema_migrations.rs")
+    postgres_index_write = _rust_fn_body(postgres, "insert_event_log_entries")
     check(
         POSTGRES_LEGACY_BACKFILL_CASE in postgres_migration_tests
         and "read-only fallback must not write an index" in postgres_migration_tests
-        and "next write backfills legacy history" in postgres_migration_tests,
-        "PostgreSQL v4 日志全量回退时无写副作用，并在后续写事务中补齐行索引",
-        "缺少 PostgreSQL 旧日志只读回退或后续写入回填合同",
+        and "next write backfills legacy history" in postgres_migration_tests
+        and postgres_index_write is not None
+        and "unnest($2::text[]) WITH ORDINALITY" in postgres_index_write,
+        "PostgreSQL v4 日志只读回退、后续事务回填索引且批量写入事件行",
+        "缺少 PostgreSQL 旧日志只读回退、批量索引写入或回填合同",
     )
     segmented_storage = case_source("crates/qx-storage/src/segmented_event_log.rs")
     segmented_read_since = _rust_fn_body(segmented_storage, "read_since")
