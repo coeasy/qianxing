@@ -1,5 +1,8 @@
 # 0.4.1 正式发布与当前实现变更（2026-11-22）
 
+### 2026-11-24 后续改进
+
+- PostgreSQL EventLog 增加 schema v5 位置索引与 head 摘要，`LiveEventPipeline` 可以校验前缀、rolling digest 与 `next_seq` 后只读新增尾部；规范 JSON、EventLog 索引与 Outbox 仍在同一写事务内提交。v4 旧日志的无索引读取保持纯只读并回退到规范日志，下一次成功写入时再事务性补齐索引；SQLite 增加空 v5 迁移以保持跨后端版本序列一致。本地 feature 编译、严格 Clippy、迁移与架构检查已通过，PostgreSQL 真实服务合同待托管 CI 验收。
 - 从已合并的 `main`（PR #8，commit `c7f51f8a`）开始准备新的补丁版本；旧 `v0.4.0` 发布与证据保持不可变。
 - Rust workspace 与内部依赖、Python 包及源码版本回退、C++ SDK、成熟度基线和九个目标 profile 统一升至 `0.4.1`；发布范围单独记录在 [`release-scope-0.4.1.md`](../release-scope-0.4.1.md)。
 - 重建 0.4.1 Release CLI 并刷新报告生成、自适应搜索及费用邻域三项过期证据；所有数据绑定当前二进制、源码和驱动摘要，并更新架构门禁。报告九格与两项搜索矩阵均通过复核，仍只描述本机合成负载，不提升完整产品 profile 状态。

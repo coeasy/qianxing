@@ -110,6 +110,9 @@ fn open(path: &Path) -> Result<Connection, StorageError> {
             "4" => transaction
                 .execute_batch(super::schema_migrations::SQLITE_V4_SCHEMA)
                 .map_err(map_sqlite)?,
+            "5" => transaction
+                .execute_batch(super::schema_migrations::SQLITE_V5_SCHEMA)
+                .map_err(map_sqlite)?,
             _ => unreachable!("migration plan only contains known schema versions"),
         }
         transaction
@@ -2645,10 +2648,10 @@ mod tests {
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert_eq!(versions, ["1", "2", "3", "4"]);
+        assert_eq!(versions, ["1", "2", "3", "4", "5"]);
         connection
             .execute(
-                "DELETE FROM qx_schema_migrations WHERE version IN ('2', '3', '4')",
+                "DELETE FROM qx_schema_migrations WHERE version IN ('2', '3', '4', '5')",
                 [],
             )
             .unwrap();
@@ -2725,7 +2728,7 @@ mod tests {
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert_eq!(versions, ["1", "2", "3", "4"]);
+        assert_eq!(versions, ["1", "2", "3", "4", "5"]);
         drop(connection);
         let _ = std::fs::remove_file(v2_path);
 
@@ -2744,7 +2747,7 @@ mod tests {
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert_eq!(versions, ["1", "2", "3", "4"]);
+        assert_eq!(versions, ["1", "2", "3", "4", "5"]);
         drop(connection);
         let _ = std::fs::remove_file(v1_path);
     }

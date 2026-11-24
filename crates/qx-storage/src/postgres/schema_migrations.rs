@@ -1,4 +1,5 @@
 use super::*;
+use qx_core::{EventKind, Priority};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
@@ -51,15 +52,17 @@ fn postgres_schema_migrations_upgrade_v1_atomically_and_fail_closed() {
             .into_iter()
             .map(|row| row.get::<_, String>(0))
             .collect::<Vec<_>>();
-        if versions != ["1", "2", "3", "4"] {
+        if versions != ["1", "2", "3", "4", "5"] {
             return Err(StorageError::Conflict(format!(
                 "PostgreSQL v1 upgrade recorded unexpected versions: {versions:?}"
             )));
         }
         client
             .batch_execute(
-                "DELETE FROM qx_schema_migrations WHERE version = '4';
-                 DROP TABLE qx_deployment_blobs;",
+                "DELETE FROM qx_schema_migrations WHERE version IN ('4', '5');
+                 DROP TABLE qx_deployment_blobs;
+                 DROP TABLE qx_event_log_heads;
+                 DROP TABLE qx_event_log_entries;",
             )
             .map_err(pg_error)?;
         migrate_client(&mut client)?;
@@ -76,7 +79,15 @@ fn postgres_schema_migrations_upgrade_v1_atomically_and_fail_closed() {
             )
             .map_err(pg_error)?
             .get(0);
-        if !blob_table_exists || !version_four_exists {
+        let event_log_index_exists: bool = client
+            .query_one(
+                "SELECT to_regclass('qx_event_log_entries') IS NOT NULL
+                    AND to_regclass('qx_event_log_heads') IS NOT NULL",
+                &[],
+            )
+            .map_err(pg_error)?
+            .get(0);
+        if !blob_table_exists || !version_four_exists || !event_log_index_exists {
             return Err(StorageError::Conflict(
                 "PostgreSQL v3 upgrade did not restore the deployment blob schema".into(),
             ));
@@ -105,11 +116,13 @@ fn postgres_schema_migrations_upgrade_v1_atomically_and_fail_closed() {
 
         client
             .batch_execute(
-                "DELETE FROM qx_schema_migrations WHERE version IN ('2', '3', '4');
+                "DELETE FROM qx_schema_migrations WHERE version IN ('2', '3', '4', '5');
                  DROP INDEX qx_jobs_pending_idx;
                  DROP INDEX qx_control_commands_pending_idx;
                  DROP INDEX qx_outbox_pending_idx;
                  DROP TABLE qx_deployment_blobs;
+                 DROP TABLE qx_event_log_heads;
+                 DROP TABLE qx_event_log_entries;
                  DROP TABLE qx_json_state;
                  DROP TABLE qx_control_commands;",
             )
@@ -156,7 +169,20 @@ fn postgres_schema_migrations_upgrade_v1_atomically_and_fail_closed() {
             )
             .map_err(pg_error)?
             .get(0);
-        if version_two_exists || version_three_exists || version_four_exists || partial_index_exists
+        let version_five_exists: bool = client
+            .query_one(
+                "SELECT EXISTS (
+                     SELECT 1 FROM qx_schema_migrations WHERE version = '5'
+                 )",
+                &[],
+            )
+            .map_err(pg_error)?
+            .get(0);
+        if version_two_exists
+            || version_three_exists
+            || version_four_exists
+            || version_five_exists
+            || partial_index_exists
         {
             return Err(StorageError::Conflict(
                 "failed PostgreSQL migration leaked v2 DDL or marker".into(),
@@ -286,7 +312,7 @@ fn postgres_legacy_schema_adoption_recognizes_v1_v2_and_rejects_drift() {
             .into_iter()
             .map(|row| row.get(0))
             .collect();
-        if upgraded != ["1", "2", "3", "4"] {
+        if upgraded != ["1", "2", "3", "4", "5"] {
             return Err(StorageError::Conflict(format!(
                 "PostgreSQL adopted v1 schema did not upgrade to v2: {upgraded:?}"
             )));
@@ -370,4 +396,111 @@ fn postgres_legacy_schema_adoption_recognizes_v1_v2_and_rejects_drift() {
         ))
         .expect("drop isolated PostgreSQL adoption schemas");
     result.expect("PostgreSQL legacy schema adoption contract");
+}
+
+#[test]
+#[ignore = "requires QX_TEST_POSTGRES_DSN and a running PostgreSQL instance"]
+fn postgres_event_log_read_only_fallback_and_write_backfill_legacy_index() {
+    let dsn = std::env::var("QX_TEST_POSTGRES_DSN")
+        .expect("QX_TEST_POSTGRES_DSN must point at an isolated test database");
+    let storage = PostgresStorage::connect_with_pool_size(&dsn, 1)
+        .expect("connect PostgreSQL for EventLog index backfill contract");
+    let suffix = format!(
+        "{}_{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock must be after unix epoch")
+            .as_nanos()
+    );
+    let schema = format!("qx_event_log_v4_{suffix}");
+    let name = format!("legacy-{suffix}");
+    let mut legacy = EventLog::new();
+    for seq in 0..2 {
+        legacy.append(Event::new(seq, seq + 1, Priority::POST, EventKind::Settle));
+    }
+
+    {
+        let mut client = storage.lock_client().expect("lock isolated connection");
+        client
+            .batch_execute(&format!(
+                "CREATE SCHEMA {schema}; SET search_path TO {schema};"
+            ))
+            .expect("create isolated v4 schema");
+        client
+            .batch_execute(super::super::schema_migrations::CREATE_SCHEMA_MIGRATIONS_SQL)
+            .expect("create schema migration ledger");
+        client
+            .batch_execute(super::super::schema_migrations::POSTGRES_V1_SCHEMA)
+            .expect("create legacy EventLog schema");
+        client
+            .execute(
+                "INSERT INTO qx_schema_migrations(version, applied_ts) VALUES ('1', '0')",
+                &[],
+            )
+            .expect("record legacy schema version");
+        let content = legacy.to_json().expect("serialize legacy EventLog");
+        client
+            .execute(
+                "INSERT INTO qx_event_logs(name, content) VALUES ($1, $2)",
+                &[&name, &content],
+            )
+            .expect("insert legacy EventLog content");
+        migrate_client(&mut client).expect("upgrade legacy schema through v5");
+    }
+
+    let store = PostgresEventLogStore {
+        storage: storage.clone(),
+    };
+    let prefix_tail = legacy.events().last().expect("legacy EventLog has a tail");
+    assert_eq!(
+        store
+            .read_since(
+                &name,
+                Some(prefix_tail.seq),
+                Some((prefix_tail, legacy.len())),
+                legacy.event_digest(),
+                legacy.next_seq(),
+            )
+            .expect("unindexed v4 EventLog should fall back"),
+        None
+    );
+    {
+        let mut client = storage.lock_client().expect("lock isolated connection");
+        let index_exists: bool = client
+            .query_one(
+                "SELECT EXISTS (
+                     SELECT 1 FROM qx_event_log_heads WHERE name = $1
+                 )",
+                &[&name],
+            )
+            .expect("check EventLog index after fallback")
+            .get(0);
+        assert!(!index_exists, "read-only fallback must not write an index");
+    }
+
+    let mut extended = legacy.clone();
+    extended.append(Event::new(2, 3, Priority::POST, EventKind::Settle));
+    store
+        .write(&name, &extended)
+        .expect("next write backfills legacy history and appends atomically");
+    assert_eq!(
+        store
+            .read_since(
+                &name,
+                Some(prefix_tail.seq),
+                Some((prefix_tail, legacy.len())),
+                legacy.event_digest(),
+                legacy.next_seq(),
+            )
+            .expect("read indexed EventLog tail"),
+        Some(vec![extended.events()[2].clone()])
+    );
+
+    let mut client = storage.lock_client().expect("lock isolated connection");
+    client
+        .batch_execute(&format!(
+            "RESET search_path; DROP SCHEMA IF EXISTS {schema} CASCADE;"
+        ))
+        .expect("drop isolated EventLog schema");
 }

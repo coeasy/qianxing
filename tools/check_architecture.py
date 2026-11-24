@@ -14618,6 +14618,8 @@ def storage_schema_bootstrap_check() -> None:
     postgres_v2 = _text_or_empty(ROOT / "crates/qx-storage/migrations/postgres/0002_schema.sql")
     sqlite_v4 = _text_or_empty(ROOT / "crates/qx-storage/migrations/sqlite/0004_schema.sql")
     postgres_v4 = _text_or_empty(ROOT / "crates/qx-storage/migrations/postgres/0004_schema.sql")
+    sqlite_v5 = _text_or_empty(ROOT / "crates/qx-storage/migrations/sqlite/0005_schema.sql")
+    postgres_v5 = _text_or_empty(ROOT / "crates/qx-storage/migrations/postgres/0005_schema.sql")
     migration_runtime = _text_or_empty(
         ROOT / "crates/qx-storage/tests/outbox_backend_semantics/schema_migrations.rs"
     )
@@ -14625,12 +14627,12 @@ def storage_schema_bootstrap_check() -> None:
         ROOT / "crates/qx-storage/src/postgres/schema_migrations.rs"
     )
     check(
-        "CURRENT_SCHEMA_VERSION: u32 = 4" in shared
+        "CURRENT_SCHEMA_VERSION: u32 = 5" in shared
         and '.parse::<u32>().expect("numeric schema version")' not in shared
         and "CREATE TABLE IF NOT EXISTS qx_schema_migrations" in shared
         and "pub(crate) fn validate_schema_versions(versions: &[String])" in shared
         and "pub(crate) fn pending_schema_versions(" in shared
-        and 'const MIGRATION_VERSIONS: [&str; 4] = ["1", "2", "3", "4"]' in shared
+        and 'const MIGRATION_VERSIONS: [&str; 5] = ["1", "2", "3", "4", "5"]' in shared
         and "has_existing_schema_tables" in shared
         and "需先执行显式迁移" in shared
         and "不支持的存储 schema 版本" in shared
@@ -14663,15 +14665,20 @@ def storage_schema_bootstrap_check() -> None:
         and 'include_str!("../migrations/postgres/0001_schema.sql")' in shared
         and 'include_str!("../migrations/sqlite/0004_schema.sql")' in shared
         and 'include_str!("../migrations/postgres/0004_schema.sql")' in shared
+        and 'include_str!("../migrations/sqlite/0005_schema.sql")' in shared
+        and 'include_str!("../migrations/postgres/0005_schema.sql")' in shared
         and "CREATE INDEX IF NOT EXISTS qx_outbox_pending_idx" in sqlite_v2
         and "CREATE INDEX IF NOT EXISTS qx_outbox_pending_idx" in postgres_v2
         and "Reserved to keep the cross-backend schema migration sequence aligned" in sqlite_v4
+        and "Reserved to keep the cross-backend schema migration sequence aligned" in sqlite_v5
         and "CREATE TABLE IF NOT EXISTS qx_deployment_blobs" in postgres_v4
         and "sha256 ~ '^[0-9a-f]{64}$'" in postgres_v4
         and "octet_length(content) BETWEEN 1 AND 268435456" in postgres_v4
+        and "CREATE TABLE IF NOT EXISTS qx_event_log_entries" in postgres_v5
+        and "CREATE TABLE IF NOT EXISTS qx_event_log_heads" in postgres_v5
         and "for version in pending" in sqlite
         and "for version in pending" in postgres
-        and all(f'"{version}" =>' in sqlite and f'"{version}" =>' in postgres for version in ("3", "4"))
+        and all(f'"{version}" =>' in sqlite and f'"{version}" =>' in postgres for version in ("3", "4", "5"))
         and "transaction_with_behavior(TransactionBehavior::Immediate)" in sqlite
         and "transaction.commit().map_err(map_sqlite)?;" in sqlite
         and "let mut transaction = client.transaction().map_err(pg_error)?;" in postgres
@@ -17697,6 +17704,8 @@ POSTGRES_EVENT_LOG_ATOMICITY_CASE = "postgres_event_log_and_outbox_commit_atomic
 INCREMENTAL_APPEND_FN = "append_event_log_in_transaction"
 # P1-2：共享 EventLog 的游标增量刷新（读侧 `read_since` + 归约侧 `refresh_latest`）。
 SQLITE_READ_SINCE_CASE = "sqlite_event_log_read_since_returns_only_the_verified_tail"
+POSTGRES_READ_SINCE_CASE = "postgres_event_log_read_since_returns_only_a_verified_tail"
+POSTGRES_LEGACY_BACKFILL_CASE = "postgres_event_log_read_only_fallback_and_write_backfill_legacy_index"
 PIPELINE_CURSOR_CASE = "sqlite_pipeline_refresh_takes_the_cursor_incremental_path"
 SEGMENTED_PIPELINE_CURSOR_CASE = "segmented_pipeline_refresh_takes_the_verified_cursor_incremental_path"
 # P1-6：估值单点（`ValuationContext` / `ValuationResult`）。
@@ -17852,6 +17861,7 @@ def pipeline_cursor_refresh_check() -> None:
     ⑥ 读侧前缀校验与归约侧增量路径各有一条行为用例在盘。
     """
     sqlite = case_source(SQLITE_BACKEND_FILE)
+    postgres = case_source("crates/qx-storage/src/postgres.rs")
     pipeline = case_source(PIPELINE_FILE)
     read_since = _rust_fn_body(sqlite, "read_since")
     check(
@@ -17867,6 +17877,26 @@ def pipeline_cursor_refresh_check() -> None:
         and "load_event_log(" not in read_since,
         "SQLite 读侧 read_since 按 seq 只取尾部，且不重读整条历史",
         "read_since 不在盘" if read_since is None else "签名不符 / 没按 seq 过滤 / 仍调 load_event_log",
+    )
+    postgres_read_since = _rust_fn_body(postgres, "read_since")
+    check(
+        postgres_read_since is not None
+        and "qx_event_log_entries" in postgres_read_since
+        and "position >= $2 ORDER BY position ASC" in postgres_read_since
+        and "if !has_head" in postgres_read_since
+        and "EventLog::extend_event_digest(expected_event_digest, &tail)" in postgres_read_since
+        and "expected_next_seq" in postgres_read_since
+        and POSTGRES_READ_SINCE_CASE in case_source(POSTGRES_EVENT_LOG_ATOMICITY_TEST),
+        "PostgreSQL 行式尾读保持只读，校验前缀、摘要与 next_seq",
+        "PostgreSQL read_since 缺少位置尾读、完整性校验或行为契约",
+    )
+    postgres_migration_tests = case_source("crates/qx-storage/src/postgres/schema_migrations.rs")
+    check(
+        POSTGRES_LEGACY_BACKFILL_CASE in postgres_migration_tests
+        and "read-only fallback must not write an index" in postgres_migration_tests
+        and "next write backfills legacy history" in postgres_migration_tests,
+        "PostgreSQL v4 日志全量回退时无写副作用，并在后续写事务中补齐行索引",
+        "缺少 PostgreSQL 旧日志只读回退或后续写入回填合同",
     )
     segmented_storage = case_source("crates/qx-storage/src/segmented_event_log.rs")
     segmented_read_since = _rust_fn_body(segmented_storage, "read_since")
@@ -17897,6 +17927,11 @@ def pipeline_cursor_refresh_check() -> None:
         is not None
         and re.search(
             r"Self::Sqlite\(store\) => store\s*\.read_since\(name, after_seq, expected_prefix\)",
+            pipeline,
+        )
+        is not None
+        and re.search(
+            r"Self::Postgres\(store\) => store\s*\.read_since\(",
             pipeline,
         )
         is not None
