@@ -15,6 +15,8 @@
 use std::path::Path;
 
 use qx_runtime::RuntimeConfig;
+use qx_strategy::builtin_signal::{BuiltinSignalKnob, MACD_WINDOWS};
+use qx_strategy::{BuiltinStrategy, BuiltinStrategyKind};
 
 use crate::cli_args;
 
@@ -95,10 +97,12 @@ pub(crate) fn init_readme(
     profile: &str,
     backtest_step: Option<&str>,
     final_step: Option<&str>,
+    config: &RuntimeConfig,
 ) -> String {
     let program = cli_args::PROGRAM_NAME;
     let runtime = output.display().to_string();
-    let strategy_line = strategy
+    let selected_strategy = strategy.or(config.strategy.builtin_strategy.as_deref());
+    let strategy_line = selected_strategy
         .map(|name| format!("已绑定内置策略：`{name}`。"))
         .unwrap_or_else(|| {
             format!(
@@ -125,8 +129,102 @@ pub(crate) fn init_readme(
     } else {
         ""
     };
+    let strategy_assumptions = selected_strategy
+        .and_then(|name| builtin_strategy_assumptions(name, config))
+        .map(|details| format!("\n\n## 回测策略与假设\n\n{details}"))
+        .unwrap_or_default();
     format!(
-        "# Qianxing 本地项目\n\n运行时配置：`{runtime}`。profile=`{profile}`。{strategy_line}\n\n## 推荐流程\n\n```text\n{}\n```\n\n带有可读本地数据集的项目会额外生成 `qianxing.project.json`，其中引用运行时、数据集版本和可识别的策略，结构遵循仓库的 `project-manifest-v1` schema。回测产物在 `data/qianxing/runs/`，包含摘要、权益曲线、成交明细、RunManifest 和带文件摘要的 RunRecord。\n\n初始化生成的样例文件只用于本地回测和 Paper 验收，不包含交易密钥，也不会自动发送真实订单。CCXT/多交易所 profile 只生成公共配置和凭据引用，必须自行配置环境变量后再做 sandbox 验收。{execution_note}\n",
+        "# Qianxing 本地项目\n\n运行时配置：`{runtime}`。profile=`{profile}`。{strategy_line}\n\n## 推荐流程\n\n```text\n{}\n```\n\n带有可读本地数据集的项目会额外生成 `qianxing.project.json`，其中引用运行时、数据集版本和可识别的策略，结构遵循仓库的 `project-manifest-v1` schema。回测产物在 `data/qianxing/runs/`，包含摘要、权益曲线、成交明细、RunManifest 和带文件摘要的 RunRecord。\n\n初始化生成的样例文件只用于本地回测和 Paper 验收，不包含交易密钥，也不会自动发送真实订单。CCXT/多交易所 profile 只生成公共配置和凭据引用，必须自行配置环境变量后再做 sandbox 验收。{execution_note}{strategy_assumptions}\n",
         flow.join("\n")
     )
+}
+
+fn builtin_strategy_assumptions(name: &str, runtime: &RuntimeConfig) -> Option<String> {
+    let kind = BuiltinStrategyKind::parse(name).ok()?;
+    let instrument = runtime
+        .strategy
+        .instrument
+        .as_deref()
+        .and_then(qx_core::InstrumentId::parse)
+        .or_else(|| qx_core::InstrumentId::parse("BTCUSDT.BINANCE"))?;
+    let config =
+        qx_runtime::builtin_strategy_config_from_runtime(&runtime.strategy, &instrument).ok()?;
+    let warmup = BuiltinStrategy::new(config.clone())
+        .ok()?
+        .minimum_history_bars();
+
+    let parameters = if kind.signal_knobs().is_empty() {
+        format!(
+            "信号参数：MACD 使用内核固定窗口 {}/{}/{}；`builtin_fast_window`、`builtin_slow_window`、`builtin_period`、`builtin_threshold_bps` 均不参与该策略。",
+            MACD_WINDOWS.0, MACD_WINDOWS.1, MACD_WINDOWS.2
+        )
+    } else {
+        let values = kind
+            .signal_knobs()
+            .iter()
+            .map(|knob| match knob {
+                BuiltinSignalKnob::FastWindow => format!("fast_window={}", config.fast_window),
+                BuiltinSignalKnob::SlowWindow => format!("slow_window={}", config.slow_window),
+                BuiltinSignalKnob::Period => format!("period={}", config.period),
+                BuiltinSignalKnob::ThresholdBps => {
+                    format!("threshold_bps={}", config.threshold_bps)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("生效信号参数：{values}。未列出的 `builtin_*` 信号项不参与本策略。")
+    };
+    let data = runtime
+        .strategy
+        .bars_snapshot_path
+        .as_deref()
+        .map(|path| format!("K 线输入：`{path}`。初始化自带的行情文件是历史样例，只用于本地回测/Paper 验收；数据身份见 `qianxing.project.json`。"))
+        .unwrap_or_else(|| "K 线输入：请在运行时配置 `strategy.bars_snapshot_path`。".into());
+    let sizing = if let Some(notional) = runtime.strategy.builtin_target_notional_raw {
+        format!("固定名义金额 sizing：`builtin_target_notional_raw={notional}`（1e-9 定点单位）。")
+    } else if let Some(quantity) = runtime.strategy.builtin_quantity {
+        format!("固定数量 sizing：`builtin_quantity={quantity}`（1e-9 定点裸值）。")
+    } else {
+        "Sizing：未配置固定名义金额或数量目标，使用策略运行时默认仓位，并继续经过风险门检查。"
+            .into()
+    };
+    let fill_model = runtime
+        .strategy
+        .fill_model
+        .as_deref()
+        .unwrap_or("next_bar_open（引擎默认）");
+    let costs = runtime
+        .strategy
+        .cost_rules_path
+        .as_deref()
+        .map(|path| format!("成本来源：运行时配置的成本规则 `strategy.cost_rules_path={path}`。"))
+        .unwrap_or_else(|| {
+            "成本来源：未配置 `strategy.cost_rules_path`，使用引擎默认费用规则；请在 RunManifest/摘要中核对实际费用。".into()
+        });
+    let risk = runtime
+        .strategy
+        .risk_rules
+        .as_ref()
+        .map(|rules| {
+            format!(
+                "风险规则：版本 `{}`，max_qty_raw={:?}，max_notional_raw={:?}，no_short={}。",
+                rules.version, rules.max_qty_raw, rules.max_notional_raw, rules.no_short
+            )
+        })
+        .unwrap_or_else(|| {
+            "风险规则：未配置账户级自定义数量/名义额上限；运行时仍执行默认不变式与 reduce-only 检查。".into()
+        });
+    let short_policy = match runtime.strategy.allow_short {
+        Some(true) => "允许建立空头（仍受账户风控与产品规则约束）".to_string(),
+        Some(false) => "禁止建立空头".to_string(),
+        None => {
+            "未显式设置 allow_short；按产品默认值决定（现货/杠杆禁空，衍生品允许双向）".to_string()
+        }
+    };
+
+    Some(format!(
+        "- 策略：**{}**（`{}`）。\n- 预热：至少 **{warmup} 根 Bar** 后才可能产生首个信号；不足时不会提前交易。\n- {parameters}\n- {data}\n- {sizing}\n- 撮合模型：`{fill_model}`。OHLCV 回测不会重建盘口队列或深度。\n- {costs}\n- {risk}\n- 空头规则：{short_policy}。\n- 回测结果受数据区间、参数、成本规则、撮合模型和风控配置影响；比较策略时先固定这些输入，并以 RunManifest、RunRecord 与成交明细为准。",
+        kind.description(),
+        kind.name(),
+    ))
 }

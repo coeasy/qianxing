@@ -12,6 +12,7 @@ use crate::path_resolution::anchor_init_data_dir;
 use crate::project_manifest::write_init_project_manifest;
 use crate::runtime_wiring::read_runtime_config;
 use qx_runtime::{RuntimeConfig, DEFAULT_EVENT_LOG_SEGMENT_EVENTS};
+use qx_strategy::builtin_signal::BuiltinSignalKnob;
 use qx_strategy::BuiltinStrategyKind;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -231,6 +232,45 @@ pub(crate) fn normalize_init_template_paths(
     }
 }
 
+/// Remove generic signal overrides that the selected builtin strategy never reads.
+/// The strategy core owns the knob table; generated configs should not claim that
+/// MACD (or another fixed-parameter strategy) uses unrelated generic fields.
+fn prune_unused_builtin_signal_overrides(document: &mut serde_json::Value) -> Result<(), String> {
+    fn prune(strategy: &mut serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
+        let Some(name) = strategy
+            .get("builtin_strategy")
+            .and_then(serde_json::Value::as_str)
+        else {
+            return Ok(());
+        };
+        let kind = BuiltinStrategyKind::parse(name)?;
+        for knob in BuiltinSignalKnob::ALL {
+            if !kind.uses_signal_knob(knob) {
+                strategy.remove(knob.config_key());
+            }
+        }
+        Ok(())
+    }
+
+    if let Some(strategy) = document
+        .get_mut("strategy")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        prune(strategy)?;
+    }
+    if let Some(strategies) = document
+        .get_mut("strategies")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for strategy in strategies {
+            if let Some(strategy) = strategy.as_object_mut() {
+                prune(strategy)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn run_init_with_profile(
     output: &Path,
     force: bool,
@@ -416,6 +456,7 @@ fn run_init_with_profile_selection(
             );
         }
     }
+    prune_unused_builtin_signal_overrides(&mut document)?;
     anchor_init_data_dir(&mut document, project_root);
     let payload = serde_json::to_string_pretty(&document)
         .map_err(|error| format!("编码初始化运行时配置失败: {error}"))?;
@@ -445,6 +486,7 @@ fn run_init_with_profile_selection(
                 profile_name,
                 backtest_step.as_deref(),
                 flow_tail.as_deref(),
+                &config,
             ),
         )
         .map_err(|error| format!("写入初始化说明失败 {}: {error}", readme_path.display()))?;
@@ -742,6 +784,7 @@ pub(crate) fn run_strategy_init(
     // 文件所在目录解析，`deploy/qianxing.bar-frame.example.json` 会拼成
     // `<配置目录>/deploy/…`，于是刚生成的配置自己读不到自己的行情夹具。
     let mut copied_assets = BTreeSet::new();
+    prune_unused_builtin_signal_overrides(&mut document)?;
     normalize_init_template_paths(&mut document, &mut copied_assets);
     let project_root = output
         .parent()
@@ -782,6 +825,23 @@ pub(crate) fn run_strategy_init(
             "[ProjectManifest] path={} fingerprint={fingerprint}",
             path.display()
         );
+    }
+    let readme_path = project_root.join("README.qianxing.md");
+    if force || !readme_path.exists() {
+        let backtest_step = init_guidance::init_backtest_step(project_root, output, &config);
+        let flow_tail = init_guidance::init_flow_tail(output, "builtin", &config);
+        std::fs::write(
+            &readme_path,
+            init_guidance::init_readme(
+                output,
+                Some(kind.name()),
+                "builtin",
+                backtest_step.as_deref(),
+                flow_tail.as_deref(),
+                &config,
+            ),
+        )
+        .map_err(|error| format!("写入初始化说明失败 {}: {error}", readme_path.display()))?;
     }
     println!(
         "[Strategy · Init] strategy={} output={} bars={} assets={}",
