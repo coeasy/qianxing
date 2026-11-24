@@ -93,7 +93,7 @@ HTML 和三张独立 SVG，`-o reports/latest.html` 改输出前缀。
 
 `quickstart` 与逐条敲那五条的相等关系不是文档承诺：同一条输入下两者的 `result_hash` 必须逐字符相同，
 由 `crates/qx-cli/tests/quickstart_first_run.rs` 钉成用例。落盘份数同样由用例逐个计数
-（`init --strategy macd` 落 11 份（含 Grafana 面板）、首轮回测再写 6 份，共 17 份，见 `crates/qx-cli/tests/init_onboarding_process.rs`）。
+（`init --strategy macd` 落 11 份（含 Grafana 面板）、首轮回测再写 6 份，共 17 份，见 `crates/qx-cli/tests/init_onboarding_process.rs`）。`--html` 会额外生成一份 HTML 和三张 SVG；在 Windows v0.4.1 Release CLI 上实跑，普通模式为 17 份、HTML 模式为 21 份，且回测 `result_hash` 相同。
 
 ---
 
