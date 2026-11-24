@@ -583,9 +583,18 @@ class ProjectRunTests(unittest.TestCase):
         renderer = {"path": "qx-cli", "origin": "bundled", "status": "ready"}
         report_file = self.root / "report.html"
         report_file.write_text("<html>verified report</html>", encoding="utf-8")
+        evidence_file = self.root / "run.evidence.json"
+        evidence_file.write_text("{}", encoding="utf-8")
         process = types.SimpleNamespace(
             returncode=0,
-            stdout=f"[真实公开行情] exchange=bitget\n[Report] html={report_file}\n",
+            stdout=(
+                f"[真实公开行情] exchange=bitget\n"
+                f"[Report] html={report_file}\n"
+                f"[Report] evidence={evidence_file}\n"
+                '{"ok":true,"operation":"run-evidence-input-and-artifact-verified",'
+                '"input_identity_recomputed":true,"result_recomputed":false,'
+                '"run_id":"test-run","result_hash":"abc123"}\n'
+            ),
             stderr="",
         )
         with patch.object(CcxtExchangeClient, "_load_ccxt"), \
@@ -617,6 +626,53 @@ class ProjectRunTests(unittest.TestCase):
         self.assertFalse(document["data"]["orders_submitted"])
         self.assertEqual(document["report_html_path"], str(report_file))
         self.assertIn(f"[Report] html={report_file}", document["quickstart_output"])
+        self.assertEqual(document["run_evidence"]["bundle_path"], str(evidence_file))
+        self.assertTrue(document["run_evidence"]["integrity_verified"])
+        self.assertTrue(document["run_evidence"]["input_identity_recomputed"])
+        self.assertFalse(document["run_evidence"]["result_recomputed"])
+        self.assertEqual(document["run_evidence"]["run_id"], "test-run")
+
+    def test_ccxt_quickstart_does_not_report_success_without_evidence_bundle(self):
+        from qianxing_ccxt import CcxtExchangeClient
+
+        report_file = self.root / "report.html"
+        report_file.write_text("<html>verified report</html>", encoding="utf-8")
+        process = types.SimpleNamespace(
+            returncode=0,
+            stdout=f"[Report] html={report_file}\n",
+            stderr="",
+        )
+        with patch.object(CcxtExchangeClient, "_load_ccxt"), \
+             patch("qianxing.report_renderer.require_report_renderer", return_value={"path": "qx-cli"}), \
+             patch("subprocess.run", return_value=process), \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                cli.main(["quickstart", str(self.root / "crypto"), "--profile", "ccxt"]),
+                2,
+            )
+        self.assertIn("without reporting its EvidenceBundle path", self.output.getvalue())
+
+    def test_ccxt_quickstart_rejects_bundle_without_successful_verification(self):
+        from qianxing_ccxt import CcxtExchangeClient
+
+        report_file = self.root / "report.html"
+        report_file.write_text("<html>verified report</html>", encoding="utf-8")
+        evidence_file = self.root / "run.evidence.json"
+        evidence_file.write_text("{}", encoding="utf-8")
+        process = types.SimpleNamespace(
+            returncode=0,
+            stdout=f"[Report] html={report_file}\n[Report] evidence={evidence_file}\n",
+            stderr="",
+        )
+        with patch.object(CcxtExchangeClient, "_load_ccxt"), \
+             patch("qianxing.report_renderer.require_report_renderer", return_value={"path": "qx-cli"}), \
+             patch("subprocess.run", return_value=process), \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                cli.main(["quickstart", str(self.root / "crypto"), "--profile", "ccxt"]),
+                2,
+            )
+        self.assertIn("without a successful EvidenceBundle verification", self.output.getvalue())
 
     def test_ccxt_quickstart_checks_extra_before_resolving_renderer_or_running(self):
         from qianxing_ccxt import CcxtExchangeClient

@@ -174,7 +174,9 @@ qianxing quickstart ./bitget-btc --profile ccxt --exchange bitget --days 52 --ti
 
 发布后，省略 `--instrument` 时会按交易所自动选用对应的 `BTC/USDT:USDT.<EXCHANGE>` 永续标的；策略默认 `ema_cross`，可用
 `--strategy` 指定单标的内置策略。该路径调用公共行情 API，不读取账户凭据、不启用执行 worker、不提交订单；结果中的
-`report_html_path` 给出报告文件路径，`quickstart_output` 保留完整 Rust CLI 首跑日志。默认只生成 HTML，因此 `--format` 仅接受 `html`。
+`report_html_path` 给出报告路径，`run_evidence.bundle_path` 给出证据包路径，`quickstart_output` 保留完整 Rust CLI 首跑日志。
+`run_evidence.integrity_verified` 与 `input_identity_recomputed` 表示工件摘要和行情输入身份已离线核验；
+`result_recomputed` 明确说明没有额外重跑策略。默认只生成 HTML，因此 `--format` 仅接受 `html`。
 窗口限制、Bar 数量上限、缺失数据校验和
 费用来源沿用 Rust CLI 的 CCXT 首跑实现，详见上方 A 节。
 
