@@ -215,6 +215,18 @@ jobs:
           python3 tools/check_package_distribution.py
           cargo check --locked -p qx-sdk --lib
 
+  rust-sdk-published-quickstart:
+    name: Published Rust SDK quickstart (crates.io)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build and run the published SDK example
+        working-directory: examples/rust-sdk-quickstart
+        run: cargo run --locked --release
+
   architecture-shards:
     name: Architecture invariants (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest

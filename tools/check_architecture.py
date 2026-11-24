@@ -29051,7 +29051,7 @@ def _fn_body_line_count(text: str, start: int) -> int:
 
 
 def qx_sdk_facade_check() -> None:
-    """方案 §6.1 的第三方 Rust 门面与真实代码对账。十颗，恒发十条、不早退。"""
+    """方案 §6.1 的第三方 Rust 门面与真实代码对账。十一颗，恒发十一条、不早退。"""
     manifest = ROOT / SDK_FACADE_DIR / "Cargo.toml"
     manifest_text = _text_or_empty(manifest)
     members = _text_or_empty(ROOT / "Cargo.toml")
@@ -29216,6 +29216,45 @@ def qx_sdk_facade_check() -> None:
         "门面的每一条能力缺口都在 `maturity/capability-matrix.yaml` 的 `rust_sdk` 行如实登记"
         "（没有生产端的门面能力不许只写在散文里）",
         f"rust_sdk 行={'在' if rust_sdk is not None else '缺'}；未登记 {missing_gaps or '无'}",
+    )
+
+    # ⑪ 用户可运行的 registry quickstart 必须锁定公开 SDK，且在常驻 CI 中真的执行。
+    quickstart_manifest = _text_or_empty(ROOT / "examples/rust-sdk-quickstart/Cargo.toml")
+    quickstart_lock = _text_or_empty(ROOT / "examples/rust-sdk-quickstart/Cargo.lock")
+    ci_workflow = _text_or_empty(ROOT / ".github/workflows/ci.yml")
+    quickstart_version = re.search(
+        r'^qx-sdk = "(\d+\.\d+\.\d+)"\s*$', quickstart_manifest, re.MULTILINE
+    )
+    sdk_lock_entry = next(
+        (
+            block
+            for block in quickstart_lock.split("[[package]]")
+            if re.search(r'^name = "qx-sdk"\s*$', block, re.MULTILINE)
+        ),
+        "",
+    )
+    registry_lock = (
+        'source = "registry+https://github.com/rust-lang/crates.io-index"' in sdk_lock_entry
+    )
+    registry_quickstart = (
+        quickstart_version is not None
+        and re.search(
+            rf'^version = "{re.escape(quickstart_version.group(1))}"\s*$',
+            sdk_lock_entry,
+            re.MULTILINE,
+        )
+        is not None
+        and registry_lock
+        and "rust-sdk-published-quickstart" in ci_workflow
+        and "working-directory: examples/rust-sdk-quickstart" in ci_workflow
+        and "cargo run --locked --release" in ci_workflow
+    )
+    check(
+        registry_quickstart,
+        "独立 Rust 快速入门锁定已发布的 crates.io SDK，并由 CI 从该清单实际构建运行",
+        f"版本={quickstart_version.group(1) if quickstart_version else '缺'}；"
+        f"registry lock={registry_lock}；"
+        f"CI job={'rust-sdk-published-quickstart' in ci_workflow}",
     )
 
 

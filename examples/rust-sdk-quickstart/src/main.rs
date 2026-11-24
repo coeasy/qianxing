@@ -26,6 +26,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !dataset.usable {
         return Err(format!("sample data is unusable: {:?}", dataset.gaps).into());
     }
+    if dataset.rows != 70 {
+        return Err(format!("expected 70 sample bars, found {}", dataset.rows).into());
+    }
     let mut strategy = BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, "sma-example");
     strategy.fast_window = 2;
     strategy.slow_window = 3;
@@ -42,6 +45,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         strategy,
     );
     let outcome = client.run_backtest(&spec)?;
+    if outcome.fills != 1 {
+        return Err(format!("expected 1 sample fill, found {}", outcome.fills).into());
+    }
     let verified = client.verify_run(&outcome)?;
     if !verified.verified {
         return Err(format!("verification failed: {:?}", verified.mismatches).into());
