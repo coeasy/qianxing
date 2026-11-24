@@ -6,10 +6,11 @@
 use qx_core::{Event, EventKind, InstrumentId};
 use qx_guanxing::QuoteTick;
 use std::collections::BTreeMap;
+use std::sync::OnceLock;
 
 #[derive(Clone, Default)]
 pub(super) struct RuntimeQuoteIndex {
-    by_instrument: BTreeMap<InstrumentId, LatestQuoteState>,
+    by_instrument: OnceLock<BTreeMap<InstrumentId, LatestQuoteState>>,
 }
 
 #[derive(Clone, Copy)]
@@ -20,6 +21,14 @@ struct LatestQuoteState {
 
 impl RuntimeQuoteIndex {
     pub(super) fn remember(&mut self, event: &Event) {
+        let Some(by_instrument) = self.by_instrument.get_mut() else {
+            // Build this projection only after a caller asks for a latest quote.
+            return;
+        };
+        Self::remember_in(by_instrument, event);
+    }
+
+    fn remember_in(by_instrument: &mut BTreeMap<InstrumentId, LatestQuoteState>, event: &Event) {
         let EventKind::MarketQuote {
             instrument,
             bid,
@@ -44,13 +53,13 @@ impl RuntimeQuoteIndex {
         // observation and must not extend the source quote's freshness window.
         let received = (!event.correlation_id.starts_with("paper-execution:market:"))
             .then_some((quote, event.receive_time));
-        if let Some(state) = self.by_instrument.get_mut(instrument) {
+        if let Some(state) = by_instrument.get_mut(instrument) {
             state.latest = quote;
             if let Some(received) = received {
                 state.latest_received = Some(received);
             }
         } else {
-            self.by_instrument.insert(
+            by_instrument.insert(
                 instrument.clone(),
                 LatestQuoteState {
                     latest: quote,
@@ -60,15 +69,30 @@ impl RuntimeQuoteIndex {
         }
     }
 
-    pub(super) fn latest_quote(&self, instrument: &InstrumentId) -> Option<QuoteTick> {
-        self.by_instrument.get(instrument).map(|state| state.latest)
+    fn index(&self, events: &[Event]) -> &BTreeMap<InstrumentId, LatestQuoteState> {
+        self.by_instrument.get_or_init(|| {
+            let mut by_instrument = BTreeMap::new();
+            for event in events {
+                Self::remember_in(&mut by_instrument, event);
+            }
+            by_instrument
+        })
+    }
+
+    pub(super) fn latest_quote(
+        &self,
+        events: &[Event],
+        instrument: &InstrumentId,
+    ) -> Option<QuoteTick> {
+        self.index(events).get(instrument).map(|state| state.latest)
     }
 
     pub(super) fn latest_received_quote(
         &self,
+        events: &[Event],
         instrument: &InstrumentId,
     ) -> Option<(QuoteTick, u64)> {
-        self.by_instrument
+        self.index(events)
             .get(instrument)
             .and_then(|state| state.latest_received)
     }
@@ -113,27 +137,28 @@ mod tests {
         let eth = InstrumentId::parse("ETHUSDT.BINANCE").unwrap();
         let mut index = RuntimeQuoteIndex::default();
 
-        index.remember(&quote_event(0, 1, btc.clone(), "feed:btc-1", 100));
-        index.remember(&quote_event(1, 2, eth.clone(), "feed:eth-1", 200));
-        index.remember(&quote_event(
-            2,
-            3,
-            btc.clone(),
-            "paper-execution:market:run-1",
-            300,
-        ));
+        let btc_first = quote_event(0, 1, btc.clone(), "feed:btc-1", 100);
+        let eth_first = quote_event(1, 2, eth.clone(), "feed:eth-1", 200);
+        let execution_echo = quote_event(2, 3, btc.clone(), "paper-execution:market:run-1", 300);
 
-        let latest = index.latest_quote(&btc).unwrap();
+        index.remember(&btc_first);
+        assert!(index.by_instrument.get().is_none());
+        let history = [btc_first, eth_first, execution_echo];
+
+        let latest = index.latest_quote(&history, &btc).unwrap();
         assert_eq!(latest.ts, 3);
         assert_eq!(latest.bid, Price::from_i64(300));
-        let (received, receive_time) = index.latest_received_quote(&btc).unwrap();
+        let (received, receive_time) = index.latest_received_quote(&history, &btc).unwrap();
         assert_eq!(received.ts, 1);
         assert_eq!(received.bid, Price::from_i64(100));
         assert_eq!(receive_time, 11);
-        assert_eq!(index.latest_quote(&eth).unwrap().bid, Price::from_i64(200));
+        assert_eq!(
+            index.latest_quote(&history, &eth).unwrap().bid,
+            Price::from_i64(200)
+        );
 
         index.remember(&quote_event(3, 4, btc.clone(), "feed:btc-2", 400));
-        let (received, receive_time) = index.latest_received_quote(&btc).unwrap();
+        let (received, receive_time) = index.latest_received_quote(&history, &btc).unwrap();
         assert_eq!(received.ts, 4);
         assert_eq!(received.bid, Price::from_i64(400));
         assert_eq!(receive_time, 14);
