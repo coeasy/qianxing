@@ -5,6 +5,7 @@
 ## 面向用户的新增体验
 
 - PyPI wheel 提供 `qianxing quickstart --profile ccxt`，从 Python 入口完成匿名公开行情读取、回测和 HTML 报告。wheel 调用同版本自带的 `qx-cli`，并使用当前 Python 解释器启动行情 worker；用户无需单独安装 Rust 工具链或 CLI。
+- CCXT quickstart 默认以 1,000 USDT 固定名义金额回测（默认 100,000 USDT 研究账户的 1%），并可通过 `backtest ccxt-builtin --target-notional` 精确调整；避免把高价 BTC 的默认整币数量当成安全仓位。
 - `qianxing[ccxt]` 是可选安装项。流程只读取公开行情，不读取账户凭据、不启用执行 worker、不发送订单。无网络的离线样例仍可通过 `qianxing quickstart <目录>` 完成。
 - Rust SDK 继续通过 `qx-sdk` facade 和 14 个 crates.io 包供外部工程集成。v0.4.2 的 registry 发布、逐包 checksum 与独立 consumer 验收必须完成后，才能宣称该版本可安装。
 

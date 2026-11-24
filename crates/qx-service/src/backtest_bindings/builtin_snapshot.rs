@@ -12,6 +12,7 @@ pub struct BuiltinBacktestSnapshotInput<'a> {
     pub frame_path: &'a Path,
     pub instrument: &'a str,
     pub quantity: i64,
+    pub target_notional_raw: Option<i128>,
     pub source_config_path: &'a Path,
     pub kind: qx_strategy::BuiltinStrategyKind,
     pub config: RuntimeConfig,
@@ -26,6 +27,7 @@ pub fn prepare_builtin_backtest_snapshot(
         frame_path,
         instrument,
         quantity,
+        target_notional_raw,
         source_config_path,
         kind,
         mut config,
@@ -54,7 +56,7 @@ pub fn prepare_builtin_backtest_snapshot(
         i64::try_from(qx_core::Quantity::from_i64(quantity).raw())
             .map_err(|_| "内置策略 quantity 超出运行时策略定点数量范围".to_string())?,
     );
-    config.strategy.builtin_target_notional_raw = None;
+    config.strategy.builtin_target_notional_raw = target_notional_raw;
     config.strategy.builtin_target_available_margin_bps = None;
     config.strategy.builtin_target_volatility_bps = None;
     config.strategy.builtin_target_kelly_fraction_bps = None;
@@ -196,6 +198,7 @@ mod tests {
             frame_path: &frame_path,
             instrument: &instrument,
             quantity: 0,
+            target_notional_raw: None,
             source_config_path: &source_config_path,
             kind: qx_strategy::BuiltinStrategyKind::SmaCross,
             config: config.clone(),
@@ -209,6 +212,7 @@ mod tests {
             frame_path: &frame_path,
             instrument: &instrument,
             quantity: 100,
+            target_notional_raw: Some(1_000 * qx_core::SCALE),
             source_config_path: &source_config_path,
             kind: qx_strategy::BuiltinStrategyKind::SmaCross,
             config,
@@ -239,6 +243,10 @@ mod tests {
         let expected_quantity = i64::try_from(qx_core::Quantity::from_i64(100).raw())
             .expect("fixture quantity fits runtime representation");
         assert_eq!(snapshot.strategy.builtin_quantity, Some(expected_quantity));
+        assert_eq!(
+            snapshot.strategy.builtin_target_notional_raw,
+            Some(1_000 * qx_core::SCALE)
+        );
         assert_eq!(
             snapshot.strategy.bars_snapshot_path.as_deref(),
             Some("bars.json")

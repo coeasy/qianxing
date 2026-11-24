@@ -26,6 +26,8 @@ const QUICKSTART_STRATEGY: &str = "macd";
 /// and the snapshot builder converts it to 1e-9 raw quantity; passing SCALE here would
 /// accidentally request one billion contracts/coins.
 const CCXT_QUICKSTART_DEFAULT_QUANTITY: i64 = 1;
+/// Size the default CCXT quickstart at 1% of its 100,000 USDT research account.
+const CCXT_QUICKSTART_DEFAULT_TARGET_NOTIONAL_RAW: i128 = 1_000 * qx_core::SCALE;
 /// 项目内运行时配置的文件名，同样取自 README 那六条的写法。
 const RUNTIME_FILE_NAME: &str = "qianxing.runtime.json";
 /// 收尾计数最多打开多少个目录。正常项目是一层 data 目录，个位数够用；这一格是符号链接环
@@ -300,6 +302,8 @@ pub(crate) fn run(
             &timeframe,
             "--config",
             &runtime_text,
+            "--target-notional",
+            "1000",
             "--use-public-default-fees",
         ]);
         let as_of_label = as_of_ms
@@ -318,6 +322,7 @@ pub(crate) fn run(
             end_ms: range.end_ms,
             spec_path: None,
             quantity: CCXT_QUICKSTART_DEFAULT_QUANTITY,
+            target_notional_raw: Some(CCXT_QUICKSTART_DEFAULT_TARGET_NOTIONAL_RAW),
             runtime_config_path: Some(&runtime),
             use_public_default_fees: true,
         })
