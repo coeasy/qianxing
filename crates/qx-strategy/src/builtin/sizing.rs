@@ -151,10 +151,65 @@ impl BuiltinStrategy {
         if price_raw <= 0 {
             return Err("按名义金额 sizing 时可见价格必须为正".into());
         }
-        let quantity_raw = notional_raw
-            .checked_mul(qx_core::SCALE)
-            .and_then(|value| value.checked_div(price_raw))
+        let quantity_raw = if let Some(market) = self.config.market_spec.as_ref() {
+            if market.instrument != *instrument {
+                return Err("固定名义金额 sizing 的 market spec 标的不匹配".into());
+            }
+            let raw = if market.product.is_derivative() {
+                if market.inverse {
+                    notional_raw
+                        .checked_mul(qx_core::SCALE)
+                        .and_then(|value| value.checked_div(market.contract_size))
+                } else if market.linear {
+                    notional_raw
+                        .checked_mul(qx_core::SCALE)
+                        .and_then(|value| value.checked_mul(qx_core::SCALE))
+                        .and_then(|value| {
+                            market
+                                .contract_size
+                                .checked_mul(price_raw)
+                                .and_then(|denominator| value.checked_div(denominator))
+                        })
+                } else {
+                    return Err("衍生品 market spec 必须声明 linear 或 inverse".into());
+                }
+            } else {
+                notional_raw
+                    .checked_mul(qx_core::SCALE)
+                    .and_then(|value| value.checked_div(price_raw))
+            }
             .ok_or("target_notional_raw 转数量溢出")?;
+            let (step, minimum) = if let Some(rules) = market.exact_rules.as_ref() {
+                (
+                    rules
+                        .quantity_step
+                        .to_raw(9)
+                        .map_err(|_| "market spec 数量步长超出策略数量精度")?,
+                    rules
+                        .minimum_quantity
+                        .to_raw(9)
+                        .map_err(|_| "market spec 最小数量超出策略数量精度")?,
+                )
+            } else {
+                (market.qty_step, market.min_qty)
+            };
+            if step <= 0 || minimum <= 0 {
+                return Err("market spec 数量步长或最小数量低于策略数量精度".into());
+            }
+            let lot_aligned = raw
+                .checked_div(step)
+                .and_then(|steps| steps.checked_mul(step))
+                .ok_or("固定名义金额数量步长对齐溢出")?;
+            if lot_aligned < minimum {
+                return Err("固定名义金额低于 market spec 最小下单数量".into());
+            }
+            lot_aligned
+        } else {
+            notional_raw
+                .checked_mul(qx_core::SCALE)
+                .and_then(|value| value.checked_div(price_raw))
+                .ok_or("target_notional_raw 转数量溢出")?
+        };
         if quantity_raw <= 0 {
             return Err("target_notional_raw 小于当前价格对应的最小数量单位".into());
         }

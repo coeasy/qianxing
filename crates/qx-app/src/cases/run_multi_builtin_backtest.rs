@@ -338,6 +338,7 @@ fn build_targets(
         instrument: primary.instrument.clone(),
         quantity: Quantity::from_raw(spec.strategy.quantity_raw),
         target_notional_raw: spec.strategy.target_notional_raw,
+        market_spec: None,
         primary_market_spec: spec.primary.market_spec.clone(),
         reference_market_spec: spec.reference.market_spec.clone(),
         target_available_margin_bps: spec.strategy.target_available_margin_bps,
