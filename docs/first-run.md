@@ -1,7 +1,7 @@
 # 首跑：从安装到第一份报告
 
-这一页只回答一个问题：**装完之后，头几条命令敲什么**。它按安装方式分两支，每条命令都可以直接复制；
-一份命令属于哪个二进制写在行内，不做混写。能力全景与排障口径不在这里，见
+这一页只回答一个问题：**装完之后，头几条命令敲什么**。它覆盖 Rust CLI、Python wheel 和本机 Web Console 三种入口，
+每条命令都可以直接复制；一份命令属于哪个二进制写在行内，不做混写。能力全景与排障口径不在这里，见
 [工业化易用性收口指南](工业化易用性收口指南-V1.md)；完整安装前置与坑表见[安装指南](installation.md)。
 
 本页按 v0.4.2 发布候选准备。当前公开稳定版仍是 v0.4.1：下面 A 节与 B1 的安装命令可立即使用；v0.4.2 专属的 Python CCXT 入口仅在新版本发布后可用。使用 v0.4.1 的 Python 用户要跑真实行情，请按 A 节安装 `qx-cli`，并为行情 worker 安装 `qianxing[ccxt]`。
@@ -16,10 +16,12 @@
 |---|---|---|
 | 只想跑回测、看报告，不写 Python 策略 | A · Rust CLI | `qx-cli`（Windows 上 `qx-cli.exe`） |
 | 用 Python 写策略、取 A 股/加密行情、把运行收进项目台账 | B · Python wheel | `qianxing` |
+| 想在本机浏览器看服务并提交研究级 Bar 回测 | C · Web Console | `qx-cli console` |
 | 两支都要（Python 写策略，Rust 跑服务端/worker） | B 里补一句 `--cli` | `qianxing` + `qx-cli` |
 
-两支的**首跑承诺相同**：零配置建一个能跑的项目 → 跑一轮 → 出一份可复核的报告。差别只在数据默认值：
+A/B 两支的**首跑承诺相同**：零配置建一个能跑的项目 → 跑一轮 → 出一份可复核的报告。差别只在数据默认值：
 A 支自带一份样例 BarFrame，B 支要么用内置合成样例，要么装一个 extra 换真实源。
+C 是本机 Paper/API 控制台；它需要服务端数据文件，首跑前置见下方 C 节。
 
 CLI 还提供按角色分流的五步指南：`qx-cli guide researcher`、`qx-cli guide strategy-author`、
 `qx-cli guide operator` 和 `qx-cli guide integrator`。脚本可运行 `qx-cli guide --json` 读取版本化步骤，
@@ -300,6 +302,60 @@ qianxing run -f strategies/main.py --spec input.json         # 显式版本化 s
 
 写进阶钩子（Tick、Order Book、Timer、成交回报与预热）不属于首跑步骤，单独成页：
 [策略作者进阶：Tick、OrderBook、Timer、成交回报与预热](strategy-hooks.md)。
+
+---
+
+## C. 本机 Web Console（研究 / Paper）
+
+`qx-cli console` 在回环地址启动同源控制台和 API；默认监听 `127.0.0.1:18091`，只用于本机研究与 Paper。页面默认 Bar 规格会读取 `sample.json`，因此先从仓库根目录把教学 BarFrame 放进 API 数据根目录：
+
+```powershell
+New-Item -ItemType Directory -Force .qianxing/api-data | Out-Null
+Copy-Item deploy/qianxing.bar-frame.example.json .qianxing/api-data/sample.json
+```
+
+Linux/macOS：
+
+```bash
+mkdir -p .qianxing/api-data
+cp deploy/qianxing.bar-frame.example.json .qianxing/api-data/sample.json
+```
+
+如果设置了 `QX_API_DATA_ROOT`，请把 `sample.json` 放到那个目录；未设置时服务按启动工作目录使用 `.qianxing/api-data`。仓库外使用预编译 CLI 时，样例 BarFrame 可从 [v0.4.1 教学 fixture](https://raw.githubusercontent.com/coeasy/qianxing/v0.4.1/deploy/qianxing.bar-frame.example.json) 下载为 `sample.json`，并保存到刚创建的 `.qianxing/api-data/`。
+
+不含源码仓库时，可用以下命令下载样例：
+
+```powershell
+Invoke-WebRequest -Uri https://raw.githubusercontent.com/coeasy/qianxing/v0.4.1/deploy/qianxing.bar-frame.example.json -OutFile .qianxing/api-data/sample.json
+```
+
+```bash
+curl -L https://raw.githubusercontent.com/coeasy/qianxing/v0.4.1/deploy/qianxing.bar-frame.example.json -o .qianxing/api-data/sample.json
+```
+
+源码 checkout 已包含 `web/console/`。使用预编译 CLI 时，先把对应版本的 [Web Console 发布包](https://github.com/coeasy/qianxing/releases/download/v0.4.1/qianxing-web-console-v0.4.1.tar.gz) 解压到当前工作目录的 `web/console/`（归档里的 `qianxing-web-console/` 目录层级需去掉），然后创建本机 Paper 配置并启动：
+
+```powershell
+New-Item -ItemType Directory -Force web/console | Out-Null
+Invoke-WebRequest -Uri https://github.com/coeasy/qianxing/releases/download/v0.4.1/qianxing-web-console-v0.4.1.tar.gz -OutFile qianxing-web-console.tar.gz
+tar -xzf qianxing-web-console.tar.gz -C web/console --strip-components=1
+qx-cli console --init qianxing.runtime.console.json
+qx-cli console qianxing.runtime.console.json
+```
+
+Linux/macOS 的发布包安装方式：
+
+```bash
+mkdir -p web/console
+curl -L https://github.com/coeasy/qianxing/releases/download/v0.4.1/qianxing-web-console-v0.4.1.tar.gz -o qianxing-web-console.tar.gz
+tar -xzf qianxing-web-console.tar.gz -C web/console --strip-components=1
+qx-cli console --init qianxing.runtime.console.json
+qx-cli console qianxing.runtime.console.json
+```
+
+在仓库 checkout 中，也可直接使用 `deploy/qianxing.runtime.console.example.json` 替代 `--init` 生成的配置。
+
+服务会在终端打印一次性本机入口 URL；打开后点击“连接”，在“Bar 研究工作流”先点“只校验数据”，通过后点“回测并复核”。样例是合成教学数据，不联网、不代表真实行情或策略收益，也不会读取凭据或发送订单。CLI 与静态包必须使用同一版本。当前稳定版 v0.4.1 若更换策略或参数，请在 JSON 中手动改成新 `run_id`；v0.4.2 发布后，策略选择会自动更新 ID，手工改其他输入时用“生成新运行 ID”。
 
 ---
 

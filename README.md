@@ -81,8 +81,8 @@ Python 策略的未来数据扰动与预热长度敏感性检查见[策略偏差
 ## 安装
 
 详细安装、发布环境与 Python wheel 步骤见[安装指南](docs/installation.md)。最短安装路径与 wheel 构建命令仍列在本页「快速开始」。
-**只想装完立刻跑第一轮**（不管你是装 Rust CLI 还是装 wheel）看[首跑：从安装到第一份报告](docs/first-run.md)：两支各自的
-可复制命令、每支承诺到哪一步、出错时先看哪三行。
+**只想装完立刻跑第一轮**（Rust CLI、Python wheel 或本机 Web Console）看[首跑：从安装到第一份报告](docs/first-run.md)：各入口的
+可复制命令、首跑边界、数据准备与常见错误处理。
 
 ## 快速开始
 
