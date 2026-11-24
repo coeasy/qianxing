@@ -88,3 +88,56 @@ fn postgres_event_log_and_outbox_commit_atomically_and_retry_idempotently() {
         .collect::<Vec<_>>();
     assert_eq!(retry_events.len(), 2);
 }
+
+#[test]
+#[ignore = "requires QX_TEST_POSTGRES_DSN and a running PostgreSQL instance"]
+fn postgres_event_log_read_since_returns_only_a_verified_tail() {
+    let dsn = std::env::var("QX_TEST_POSTGRES_DSN")
+        .expect("QX_TEST_POSTGRES_DSN must point at an isolated test database");
+    let event_log = PostgresEventLogStore::connect(&dsn).expect("connect PostgreSQL EventLog");
+    let name = unique_name("tail");
+    let prefix = sample_log(3);
+    event_log.write(&name, &prefix).unwrap();
+
+    let extended = sample_log(5);
+    event_log.write(&name, &extended).unwrap();
+    let expected_tail = prefix.events().last().expect("prefix has a tail");
+    assert_eq!(
+        event_log
+            .read_since(
+                &name,
+                Some(expected_tail.seq),
+                Some((expected_tail, prefix.len())),
+                prefix.event_digest(),
+                prefix.next_seq(),
+            )
+            .unwrap(),
+        Some(extended.events()[prefix.len()..].to_vec())
+    );
+    assert_eq!(
+        event_log
+            .read_since(
+                &name,
+                extended.events().last().map(|event| event.seq),
+                Some((extended.events().last().unwrap(), extended.len(),)),
+                extended.event_digest(),
+                extended.next_seq(),
+            )
+            .unwrap(),
+        Some(Vec::new())
+    );
+
+    let wrong_tail = Event::new(2, 99, Priority::POST, EventKind::Settle);
+    assert_eq!(
+        event_log
+            .read_since(
+                &name,
+                Some(wrong_tail.seq),
+                Some((&wrong_tail, prefix.len())),
+                prefix.event_digest(),
+                prefix.next_seq(),
+            )
+            .unwrap(),
+        None
+    );
+}

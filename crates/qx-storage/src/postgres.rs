@@ -18,7 +18,7 @@ use super::{
 use super::{validate_event_log, validate_event_log_name};
 use postgres::{Error as PgError, Row};
 use qx_control::{AuditRecord, ControlCommand, ControlPlane};
-use qx_core::{EventLog, QxResult};
+use qx_core::{Event, EventLog, QxResult};
 use qx_protocol::{AccountSnapshot, ProtocolError, SnapshotStore};
 use qx_scheduler::{JobRun, JobSpec};
 use serde::de::DeserializeOwned;
@@ -224,6 +224,9 @@ fn migrate_client(client: &mut Client) -> Result<(), StorageError> {
                 .map_err(pg_error)?,
             "4" => transaction
                 .batch_execute(super::schema_migrations::POSTGRES_V4_SCHEMA)
+                .map_err(pg_error)?,
+            "5" => transaction
+                .batch_execute(super::schema_migrations::POSTGRES_V5_SCHEMA)
                 .map_err(pg_error)?,
             _ => unreachable!("migration plan only contains known schema versions"),
         }
@@ -1223,8 +1226,12 @@ impl PostgresEventLogStore {
             )
             .map_err(pg_error)?
             .map(|row| row.get(0));
-        if let Some(existing) = existing {
-            let old = EventLog::from_json(&existing).map_err(StorageError::Core)?;
+        let old = existing
+            .as_deref()
+            .map(EventLog::from_json)
+            .transpose()
+            .map_err(StorageError::Core)?;
+        if let Some(old) = &old {
             if old.len() > log.len()
                 || old
                     .events()
@@ -1235,6 +1242,7 @@ impl PostgresEventLogStore {
                 return Err(StorageError::NonAppendOnly(name.into()));
             }
             if old.len() == log.len() {
+                write_event_log_index(&mut transaction, name, Some(old), log)?;
                 transaction.commit().map_err(pg_error)?;
                 return Ok(marker_name("event-logs", name));
             }
@@ -1246,6 +1254,7 @@ impl PostgresEventLogStore {
                 &[&name, &content],
             )
             .map_err(pg_error)?;
+        write_event_log_index(&mut transaction, name, old.as_ref(), log)?;
         transaction.commit().map_err(pg_error)?;
         Ok(marker_name("event-logs", name))
     }
@@ -1277,8 +1286,12 @@ impl PostgresEventLogStore {
             )
             .map_err(pg_error)?
             .map(|row| row.get(0));
-        if let Some(existing) = existing {
-            let old = EventLog::from_json(&existing).map_err(StorageError::Core)?;
+        let old = existing
+            .as_deref()
+            .map(EventLog::from_json)
+            .transpose()
+            .map_err(StorageError::Core)?;
+        if let Some(old) = &old {
             if old.len() > log.len()
                 || old
                     .events()
@@ -1304,6 +1317,7 @@ impl PostgresEventLogStore {
                 )
                 .map_err(pg_error)?;
         }
+        write_event_log_index(&mut transaction, name, old.as_ref(), log)?;
         for event in outbox_events {
             append_outbox_in_transaction(&mut transaction, event)?;
         }
@@ -1339,6 +1353,237 @@ impl PostgresEventLogStore {
             .map(|value| EventLog::from_json(&value).map_err(StorageError::Core))
             .transpose()
     }
+
+    /// Read only the suffix after a previously verified EventLog prefix.
+    ///
+    /// `qx_event_logs.content` remains canonical. The positional tables are a derived index;
+    /// pre-v5 logs without one return `Ok(None)` and are indexed on their next transactional write.
+    /// Any mismatch returns `Ok(None)` so the runtime can use the canonical full-read path.
+    pub fn read_since(
+        &self,
+        name: &str,
+        after_seq: Option<u64>,
+        expected_prefix: Option<(&Event, usize)>,
+        expected_event_digest: u64,
+        expected_next_seq: u64,
+    ) -> Result<Option<Vec<Event>>, StorageError> {
+        validate_event_log_name(name)?;
+        let mut client = self.storage.lock_client()?;
+        let has_head = client
+            .query_opt(
+                "SELECT event_count FROM qx_event_log_heads WHERE name = $1",
+                &[&name],
+            )
+            .map_err(pg_error)?
+            .is_some();
+        if !has_head {
+            return Ok(None);
+        }
+
+        let head = client
+            .query_opt(
+                "SELECT h.event_count, h.event_digest, h.next_seq, (e.name IS NOT NULL)
+                 FROM qx_event_log_heads h
+                 LEFT JOIN qx_event_logs e ON e.name = h.name
+                 WHERE h.name = $1",
+                &[&name],
+            )
+            .map_err(pg_error)?;
+        let Some(head) = head else {
+            return Ok(None);
+        };
+        let canonical_exists: bool = head.get(3);
+        if !canonical_exists {
+            return Ok(None);
+        }
+        let event_count = parse_u64(head.get::<_, String>(0).as_str(), "event_log.event_count")?;
+        let event_digest = parse_u64(head.get::<_, String>(1).as_str(), "event_log.event_digest")?;
+        let next_seq = parse_u64(head.get::<_, String>(2).as_str(), "event_log.next_seq")?;
+        let expected_len = match expected_prefix {
+            Some((expected_tail, len)) => {
+                if len == 0 || after_seq != Some(expected_tail.seq) {
+                    return Ok(None);
+                }
+                let expected_len = u64::try_from(len).map_err(|_| {
+                    StorageError::Conflict("EventLog 前缀长度超出 PostgreSQL 范围".into())
+                })?;
+                if expected_len > event_count {
+                    return Ok(None);
+                }
+                len
+            }
+            None if after_seq.is_none() => 0,
+            None => return Ok(None),
+        };
+        let expected_len_u64 = u64::try_from(expected_len)
+            .map_err(|_| StorageError::Conflict("EventLog 前缀长度超出范围".into()))?;
+        let first_position = event_log_position(expected_len.saturating_sub(1))?;
+        let rows = client
+            .query(
+                "SELECT position, event_json FROM qx_event_log_entries
+                 WHERE name = $1 AND position >= $2 ORDER BY position ASC",
+                &[&name, &first_position],
+            )
+            .map_err(pg_error)?;
+        let mut events = Vec::with_capacity(rows.len());
+        for (offset, row) in rows.into_iter().enumerate() {
+            let expected_position = first_position
+                .checked_add(i64::try_from(offset).map_err(|_| {
+                    StorageError::Conflict("PostgreSQL EventLog position 超出范围".into())
+                })?)
+                .ok_or_else(|| {
+                    StorageError::Conflict("PostgreSQL EventLog position 溢出".into())
+                })?;
+            if row.get::<_, i64>(0) != expected_position {
+                return Ok(None);
+            }
+            let event = match decode_event_json(&row.get::<_, String>(1)) {
+                Ok(event) => event,
+                Err(_) => return Ok(None),
+            };
+            events.push(event);
+        }
+        let tail = if let Some((expected_tail, _)) = expected_prefix {
+            let Some(indexed_tail) = events.first() else {
+                return Ok(None);
+            };
+            if indexed_tail != expected_tail {
+                return Ok(None);
+            }
+            events.into_iter().skip(1).collect::<Vec<_>>()
+        } else {
+            events
+        };
+        if u64::try_from(tail.len()).ok() != Some(event_count.saturating_sub(expected_len_u64)) {
+            return Ok(None);
+        }
+        let actual_digest = EventLog::extend_event_digest(expected_event_digest, &tail);
+        let actual_next_seq = tail.iter().fold(expected_next_seq, |next, event| {
+            next.max(event.seq.saturating_add(1))
+        });
+        if actual_digest != event_digest || actual_next_seq != next_seq {
+            return Ok(None);
+        }
+        Ok(Some(tail))
+    }
+}
+
+fn event_log_position(position: usize) -> Result<i64, StorageError> {
+    i64::try_from(position)
+        .map_err(|_| StorageError::Conflict("PostgreSQL EventLog position 超出范围".into()))
+}
+
+fn decode_event_json(value: &str) -> Result<Event, StorageError> {
+    serde_json::from_str(value)
+        .map_err(|error| StorageError::Io(format!("PostgreSQL 事件 JSON 非法: {error}")))
+}
+
+fn write_event_log_index(
+    transaction: &mut Transaction<'_>,
+    name: &str,
+    previous: Option<&EventLog>,
+    log: &EventLog,
+) -> Result<(), StorageError> {
+    if let Some(previous) = previous {
+        if previous.len() > log.len()
+            || previous
+                .events()
+                .iter()
+                .zip(log.events())
+                .any(|(old, new)| old != new)
+        {
+            return Err(StorageError::NonAppendOnly(name.into()));
+        }
+    }
+    let previous_len = previous.map_or(0, EventLog::len);
+    let mut index_start = 0;
+    let head = transaction
+        .query_opt(
+            "SELECT event_count, event_digest, next_seq
+             FROM qx_event_log_heads WHERE name = $1",
+            &[&name],
+        )
+        .map_err(pg_error)?;
+    match head {
+        Some(head) => {
+            let Some(previous) = previous else {
+                return Err(StorageError::Conflict(format!(
+                    "PostgreSQL EventLog {name:?} 索引孤立于规范日志"
+                )));
+            };
+            let count = parse_u64(head.get::<_, String>(0).as_str(), "event_log.event_count")?;
+            let digest = parse_u64(head.get::<_, String>(1).as_str(), "event_log.event_digest")?;
+            let next_seq = parse_u64(head.get::<_, String>(2).as_str(), "event_log.next_seq")?;
+            let previous_count = u64::try_from(previous.len())
+                .map_err(|_| StorageError::Conflict("EventLog 事件数超出范围".into()))?;
+            if count != previous_count
+                || digest != previous.event_digest()
+                || next_seq != previous.next_seq()
+            {
+                return Err(StorageError::Conflict(format!(
+                    "PostgreSQL EventLog {name:?} 索引 head 与规范日志不一致"
+                )));
+            }
+            index_start = previous_len;
+        }
+        None => {
+            let entries_exist: bool = transaction
+                .query_one(
+                    "SELECT EXISTS (
+                         SELECT 1 FROM qx_event_log_entries WHERE name = $1
+                     )",
+                    &[&name],
+                )
+                .map_err(pg_error)?
+                .get(0);
+            if entries_exist {
+                return Err(StorageError::Conflict(format!(
+                    "PostgreSQL EventLog {name:?} 存在无 head 的索引行"
+                )));
+            }
+        }
+    }
+    insert_event_log_entries(transaction, name, index_start, &log.events()[index_start..])?;
+    let event_count = u64::try_from(log.len())
+        .map_err(|_| StorageError::Conflict("PostgreSQL EventLog 事件数超出范围".into()))?;
+    let event_count = u64_text(event_count);
+    let event_digest = u64_text(log.event_digest());
+    let next_seq = u64_text(log.next_seq());
+    transaction
+        .execute(
+            "INSERT INTO qx_event_log_heads(name, event_count, event_digest, next_seq)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT(name) DO UPDATE SET
+                 event_count = EXCLUDED.event_count,
+                 event_digest = EXCLUDED.event_digest,
+                 next_seq = EXCLUDED.next_seq",
+            &[&name, &event_count, &event_digest, &next_seq],
+        )
+        .map_err(pg_error)?;
+    Ok(())
+}
+
+fn insert_event_log_entries(
+    transaction: &mut Transaction<'_>,
+    name: &str,
+    start_position: usize,
+    events: &[Event],
+) -> Result<(), StorageError> {
+    if events.is_empty() {
+        return Ok(());
+    }
+    let start_position = event_log_position(start_position)?;
+    let encoded_events = serde_json::to_string(events)
+        .map_err(|error| StorageError::Io(format!("PostgreSQL 事件批次序列化失败: {error}")))?;
+    transaction
+        .execute(
+            "INSERT INTO qx_event_log_entries(name, position, event_json)
+             SELECT $1, $3::bigint + entries.ordinality - 1, entries.value::text
+             FROM jsonb_array_elements($2::jsonb) WITH ORDINALITY AS entries(value, ordinality)",
+            &[&name, &encoded_events, &start_position],
+        )
+        .map_err(pg_error)?;
+    Ok(())
 }
 
 fn append_outbox_in_transaction(
