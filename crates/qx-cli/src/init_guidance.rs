@@ -20,6 +20,18 @@ use qx_strategy::{BuiltinStrategy, BuiltinStrategyKind};
 
 use crate::cli_args;
 
+/// Render a generated command path so it works from any current directory and
+/// remains a single shell argument when the project directory contains spaces.
+pub(crate) fn command_path(path: &Path) -> String {
+    let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let display = absolute.display().to_string();
+    if display.chars().any(char::is_whitespace) {
+        format!("\"{display}\"")
+    } else {
+        display
+    }
+}
+
 /// init 生成的项目里那条回测命令：只承认"文件真的被复制进项目、入口真的读得动这份绑定"的组合。
 ///
 /// 以前 7 个 profile 打印同一行 `backtest <runtime> qianxing.bar-frame.example.json
@@ -51,16 +63,19 @@ pub(crate) fn init_backtest_step(
         copied("qianxing.binance.spot.spec.json")
     };
     let spec_arg = spec
-        .map(|name| format!(" {}", project_root.join(name).display()))
+        .map(|name| format!(" {}", command_path(&project_root.join(name))))
         .unwrap_or_default();
-    let frame = project_root.join(&frame).display().to_string();
+    let frame = command_path(&project_root.join(&frame));
     // 绑定了策略就让它自己的配置跑；否则退回不读运行时的内置策略入口。
     Some(if bound_strategy(config) {
-        format!("{program} backtest {} {frame}{spec_arg}", output.display())
+        format!(
+            "{program} backtest {} {frame}{spec_arg}",
+            command_path(output)
+        )
     } else {
         format!(
             "{program} backtest builtin sma_cross {frame}{spec_arg} --config {}",
-            output.display()
+            command_path(output)
         )
     })
 }
@@ -83,7 +98,7 @@ pub(crate) fn init_flow_tail(
     config: &RuntimeConfig,
 ) -> Option<String> {
     let program = cli_args::PROGRAM_NAME;
-    let runtime = output.display().to_string();
+    let runtime = command_path(output);
     if matches!(profile, "paper" | "crypto-paper") {
         return Some(format!("{program} paper-check {runtime}"));
     }
@@ -100,7 +115,7 @@ pub(crate) fn init_readme(
     config: &RuntimeConfig,
 ) -> String {
     let program = cli_args::PROGRAM_NAME;
-    let runtime = output.display().to_string();
+    let runtime = command_path(output);
     let selected_strategy = strategy.or(config.strategy.builtin_strategy.as_deref());
     let strategy_line = selected_strategy
         .map(|name| format!("已绑定内置策略：`{name}`。"))

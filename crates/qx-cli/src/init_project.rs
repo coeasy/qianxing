@@ -510,7 +510,7 @@ fn run_init_with_profile_selection(
     if emit_next_step {
         println!(
             "下一步：{program} doctor {}{}",
-            output.display(),
+            init_guidance::command_path(output),
             backtest_step
                 .map(|step| format!("；{step}"))
                 .unwrap_or_default()
@@ -854,8 +854,8 @@ pub(crate) fn run_strategy_init(
     let program = cli_args::PROGRAM_NAME;
     println!(
         "下一步：{program} strategy backtest {} {}",
-        output.display(),
-        project_root.join(&bars).display()
+        init_guidance::command_path(output),
+        init_guidance::command_path(&project_root.join(&bars))
     );
     Ok(())
 }
