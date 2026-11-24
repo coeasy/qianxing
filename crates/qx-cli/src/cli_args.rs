@@ -77,7 +77,7 @@ pub(crate) enum Command {
         /// 复现窗口的 UTC Unix 毫秒时间上限；同一值可让多所 quickstart 对齐结束 K 线。
         #[arg(long)]
         as_of_ms: Option<u64>,
-        /// CCXT 永续合约标的（必须含结算币和交易所后缀），默认 BTC/USDT:USDT.OKX。
+        /// CCXT 永续合约标的（必须含结算币和交易所后缀）；省略时按 --exchange 选择 BTC/USDT 永续合约，缺省 OKX。
         #[arg(long)]
         instrument: Option<String>,
         /// 公共行情交易所：okx、binance 或 bitget。
@@ -398,6 +398,7 @@ impl Command {
             Self::Report(args) => args.json,
             Self::Plan(args) => args.json,
             Self::Ecosystem(args) | Self::All(args) | Self::Verify(args) => args.json,
+            Self::Guide(args) => args.json,
             Self::Config { action } => action.as_ref().is_some_and(ConfigCommand::machine_output),
             Self::Run { action } => action.as_ref().is_some_and(RunCommand::machine_output),
             // version 与 app 只有机读正文，和 --json 一样抑制横幅（U1）。

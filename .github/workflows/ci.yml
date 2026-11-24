@@ -215,6 +215,18 @@ jobs:
           python3 tools/check_package_distribution.py
           cargo check --locked -p qx-sdk --lib
 
+  rust-sdk-published-quickstart:
+    name: Published Rust SDK quickstart (crates.io)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build and run the published SDK example
+        working-directory: examples/rust-sdk-quickstart
+        run: cargo run --locked --release
+
   architecture-shards:
     name: Architecture invariants (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
@@ -410,6 +422,53 @@ jobs:
             benchmarks/results/linux-resource-bounded-real-data.json
           if-no-files-found: error
           retention-days: 30
+      - name: Record performance failure context
+        if: failure()
+        env:
+          BASELINE_RUN_ID: ${{ steps.previous.outputs.run_id }}
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.sha }}
+          REF_NAME: ${{ github.head_ref || github.ref_name }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUNNER_ARCH: ${{ runner.arch }}
+          RUNNER_NAME: ${{ runner.name }}
+          RUNNER_OS: ${{ runner.os }}
+        run: |
+          mkdir -p benchmarks/results/diagnostics
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          keys = (
+              "BASELINE_RUN_ID",
+              "EVENT_NAME",
+              "HEAD_SHA",
+              "REF_NAME",
+              "RUN_ID",
+              "RUN_ATTEMPT",
+              "RUNNER_ARCH",
+              "RUNNER_NAME",
+              "RUNNER_OS",
+          )
+          context = {key.lower(): os.environ.get(key, "") for key in keys}
+          Path("benchmarks/results/diagnostics/ci-context.json").write_text(
+              json.dumps(context, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+      - name: Upload performance diagnostics after failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-diagnostics-${{ github.run_attempt }}
+          path: |
+            benchmarks/results/*.json
+            benchmarks/results/previous/*.json
+            benchmarks/results/diagnostics/ci-context.json
+          if-no-files-found: warn
+          retention-days: 14
 
   python-wheel-build:
     name: Build Python wheel (${{ matrix.os }})
