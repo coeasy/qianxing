@@ -4,6 +4,8 @@ use serde_json::{json, Value};
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -14,15 +16,26 @@ fn repo_root() -> PathBuf {
 }
 
 fn scratch(label: &str) -> PathBuf {
-    let root = repo_root().join("target").join(format!(
-        "qx-app-depth-contract/{label}-{}",
-        std::process::id()
-    ));
-    if root.exists() {
-        std::fs::remove_dir_all(&root).expect("reset test directory");
+    static NEXT_SCRATCH_ID: AtomicU64 = AtomicU64::new(0);
+    let parent = repo_root().join("target/qx-app-depth-contract");
+    std::fs::create_dir_all(&parent).expect("create test directory parent");
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    for _ in 0..32 {
+        let root = parent.join(format!(
+            "{label}-{}-{timestamp}-{}",
+            std::process::id(),
+            NEXT_SCRATCH_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        match std::fs::create_dir(&root) {
+            Ok(()) => return root,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => panic!("create test directory {}: {error}", root.display()),
+        }
     }
-    std::fs::create_dir_all(&root).expect("create test directory");
-    root
+    panic!("could not allocate a unique test directory for {label}")
 }
 
 fn python_depth(spec: &str) -> Option<Value> {
