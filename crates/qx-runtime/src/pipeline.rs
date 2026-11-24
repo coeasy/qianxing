@@ -28,11 +28,13 @@ mod backend_switch;
 mod commit;
 mod event_identity;
 mod fact_context;
+mod market_facts;
 mod order_facts;
 mod quote_index;
 
 use event_identity::RuntimeEventIdentityIndex;
 use fact_context::{enrich_runtime_event_context, runtime_event_metadata};
+use market_facts::RuntimeMarketFactIndex;
 use order_facts::RuntimeOrderFactIndex;
 use quote_index::RuntimeQuoteIndex;
 
@@ -494,6 +496,7 @@ pub struct LiveEventPipeline {
     pending_amendments: BTreeMap<u64, (String, Order)>,
     event_identities: RuntimeEventIdentityIndex,
     quote_index: RuntimeQuoteIndex,
+    market_facts: RuntimeMarketFactIndex,
     order_facts: RuntimeOrderFactIndex,
     // 下面这一格**只增不减的成交幂等台账**共用同一个上界：进程一生 ingest 过的成交数。
     // user stream、reconcile 与 Outbox 补投影三条路径都会把同一笔 fill 重投，`fill_key` 挡
@@ -749,6 +752,7 @@ impl LiveEventPipeline {
             pending_amendments: BTreeMap::new(),
             event_identities: RuntimeEventIdentityIndex::default(),
             quote_index: RuntimeQuoteIndex::default(),
+            market_facts: RuntimeMarketFactIndex::default(),
             order_facts: RuntimeOrderFactIndex::default(),
             seen_fills: BTreeSet::new(),
             store,
@@ -995,22 +999,9 @@ impl LiveEventPipeline {
     }
 
     pub fn venue_order_id(&self, client_order_id: u64) -> Option<String> {
-        self.log
-            .events()
-            .iter()
-            .rev()
-            .find_map(|event| match &event.kind {
-                EventKind::Accepted {
-                    client_order_id: id,
-                    venue_order_id,
-                } if *id == client_order_id => venue_order_id.clone(),
-                EventKind::OrderStatusReconciled {
-                    client_order_id: id,
-                    venue_order_id,
-                    ..
-                } if *id == client_order_id => venue_order_id.clone(),
-                _ => None,
-            })
+        self.order_facts
+            .venue_order_id(client_order_id)
+            .map(str::to_owned)
     }
 
     pub fn marks(&self) -> &BTreeMap<InstrumentId, Price> {
@@ -1028,6 +1019,28 @@ impl LiveEventPipeline {
         instrument: &InstrumentId,
     ) -> Option<(QuoteTick, u64)> {
         self.quote_index.latest_received_quote(instrument)
+    }
+
+    /// Check whether the latest durable order book for this instrument equals the supplied
+    /// snapshot. Used by market polling to avoid writing duplicate snapshots into the EventLog.
+    pub fn latest_order_book_matches(
+        &self,
+        instrument: &InstrumentId,
+        bids: &[MarketDepthLevel],
+        asks: &[MarketDepthLevel],
+    ) -> bool {
+        let Some(event_index) = self.market_facts.latest_order_book_index(instrument) else {
+            return false;
+        };
+        matches!(
+            self.log.events().get(event_index).map(|event| &event.kind),
+            Some(EventKind::MarketOrderBook {
+                instrument: current_instrument,
+                bids: current_bids,
+                asks: current_asks,
+                ..
+            }) if current_instrument == instrument && current_bids == bids && current_asks == asks
+        )
     }
 
     pub fn metrics(&self) -> PipelineMetricsSnapshot {
@@ -1255,6 +1268,7 @@ impl LiveEventPipeline {
     /// 账簿不在这里动：现金与持仓由 `LedgerApplied` 事实单独驱动（见调用点）。
     fn apply_index_event(&mut self, event: &Event, event_index: usize) -> QxResult<()> {
         self.quote_index.remember(event);
+        self.market_facts.remember(event, event_index);
         self.order_facts.remember(event, event_index);
         match &event.kind {
             EventKind::OrderSubmitted { order } => {
@@ -1484,6 +1498,8 @@ impl LiveEventPipeline {
         self.log.append_checked(event.clone())?;
         self.event_identities.remember(&event);
         self.quote_index.remember(&event);
+        self.market_facts
+            .remember(&event, self.log.events().len().saturating_sub(1));
         self.order_facts
             .remember(&event, self.log.events().len().saturating_sub(1));
         self.last_engine_ts = self.last_engine_ts.max(effective_ts);
@@ -1807,6 +1823,7 @@ impl LiveEventPipeline {
             pending_amendments: BTreeMap::new(),
             event_identities: RuntimeEventIdentityIndex::default(),
             quote_index: RuntimeQuoteIndex::default(),
+            market_facts: RuntimeMarketFactIndex::default(),
             order_facts: RuntimeOrderFactIndex::default(),
             seen_fills: BTreeSet::new(),
             store: self.store.clone(),
@@ -3177,6 +3194,7 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(recovered.orders()[0].status, OrderStatus::Accepted);
+        assert_eq!(recovered.venue_order_id(7).as_deref(), Some("remote-7"));
         let reconciled = recovered
             .log()
             .events()
@@ -3189,6 +3207,10 @@ mod tests {
         assert_eq!(reconciled.metadata.context.intent_id, "7");
         let final_recovery = LiveEventPipeline::open(&root, "binance-main", "USDT").unwrap();
         assert_eq!(final_recovery.orders()[0].status, OrderStatus::Accepted);
+        assert_eq!(
+            final_recovery.venue_order_id(7).as_deref(),
+            Some("remote-7")
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -4069,6 +4091,70 @@ mod tests {
             recovered_quote.ask_qty_exact,
             Some(ExactDecimal::parse("0.0000000002").unwrap())
         );
+        assert_eq!(
+            recovered.latest_quote_with_depth_and_receive_time(&instrument),
+            Some((recovered_quote, 101))
+        );
+    }
+
+    #[test]
+    fn quote_indexes_keep_paper_execution_echo_out_of_market_freshness() {
+        let root = temp_root("quote-fact-index");
+        let instrument = InstrumentId::new("BTCUSDT", VenueId::new("BINANCE")).unwrap();
+        let original_quote = QuoteTick::new(
+            100,
+            Price::from_i64(99),
+            Quantity::from_i64(2),
+            Price::from_i64(101),
+            Quantity::from_i64(3),
+            1,
+        );
+        let execution_echo = QuoteTick::new(
+            120,
+            Price::from_i64(109),
+            Quantity::from_i64(4),
+            Price::from_i64(111),
+            Quantity::from_i64(5),
+            2,
+        );
+        let mut pipeline = LiveEventPipeline::open(&root, "binance-market", "USDT").unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::market_quote(
+                instrument.clone(),
+                original_quote,
+                110,
+                1,
+                "binance:ticker:1",
+            ))
+            .unwrap();
+        pipeline
+            .ingest(RuntimeEventEnvelope::market_quote(
+                instrument.clone(),
+                execution_echo,
+                130,
+                2,
+                "paper-execution:market:order-7",
+            ))
+            .unwrap();
+
+        assert_eq!(
+            pipeline.latest_quote_with_depth(&instrument),
+            Some(execution_echo)
+        );
+        assert_eq!(
+            pipeline.latest_quote_with_depth_and_receive_time(&instrument),
+            Some((original_quote, 110))
+        );
+        let reopened = LiveEventPipeline::open(&root, "binance-market", "USDT").unwrap();
+        assert_eq!(
+            reopened.latest_quote_with_depth(&instrument),
+            Some(execution_echo)
+        );
+        assert_eq!(
+            reopened.latest_quote_with_depth_and_receive_time(&instrument),
+            Some((original_quote, 110))
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -4313,7 +4399,7 @@ mod tests {
             .ingest(RuntimeEventEnvelope::venue(
                 RuntimeExternalEvent::Accepted {
                     client_order_id: 7,
-                    venue_order_id: None,
+                    venue_order_id: Some("remote-7".into()),
                 },
                 110,
                 111,
@@ -4333,6 +4419,7 @@ mod tests {
 
         reader.refresh().unwrap();
         assert_eq!(reader.orders()[0].status, OrderStatus::Filled);
+        assert_eq!(reader.venue_order_id(7).as_deref(), Some("remote-7"));
         assert_eq!(
             reader.fee_baseline_for_order(7).unwrap().get("USDT"),
             Some(&1_000_000_000)
@@ -4344,6 +4431,93 @@ mod tests {
         reader.refresh().unwrap();
         assert_eq!(reader.metrics.tail_appends.load(Ordering::Relaxed), 1);
         assert_eq!(reader.metrics.rebuilds.load(Ordering::Relaxed), 0);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(feature = "sqlite")]
+    #[test]
+    fn sqlite_runtime_fact_indexes_update_on_append_tail_refresh_and_restart() {
+        let root = temp_root("sqlite-market-fact-index");
+        std::fs::create_dir_all(&root).unwrap();
+        let db = root.join("qx-runtime.sqlite");
+        let mut writer = LiveEventPipeline::open_sqlite(&db, "binance-main", "USDT").unwrap();
+        writer.register_order(order(), 100).unwrap();
+        let mut reader = LiveEventPipeline::open_sqlite(&db, "binance-main", "USDT").unwrap();
+        let instrument = order().instrument;
+        let quote = QuoteTick::new(
+            120,
+            Price::from_i64(99),
+            Quantity::from_i64(2),
+            Price::from_i64(101),
+            Quantity::from_i64(3),
+            2,
+        );
+        let bids = vec![MarketDepthLevel {
+            price: Price::from_i64(99),
+            quantity: Quantity::from_i64(1),
+            price_exact: None,
+            quantity_exact: None,
+        }];
+        let asks = vec![MarketDepthLevel {
+            price: Price::from_i64(101),
+            quantity: Quantity::from_i64(1),
+            price_exact: None,
+            quantity_exact: None,
+        }];
+
+        writer
+            .ingest(RuntimeEventEnvelope::venue(
+                RuntimeExternalEvent::Accepted {
+                    client_order_id: 7,
+                    venue_order_id: Some("remote-7".into()),
+                },
+                110,
+                111,
+                1,
+                "sqlite-venue-id-7",
+            ))
+            .unwrap();
+        writer
+            .ingest(RuntimeEventEnvelope::market_quote(
+                instrument.clone(),
+                quote,
+                121,
+                2,
+                "sqlite-quote-7",
+            ))
+            .unwrap();
+        writer
+            .ingest(RuntimeEventEnvelope::market_order_book(
+                instrument.clone(),
+                1,
+                bids.clone(),
+                asks.clone(),
+                130,
+                131,
+                3,
+                "sqlite-book-7",
+            ))
+            .unwrap();
+
+        assert_eq!(writer.venue_order_id(7).as_deref(), Some("remote-7"));
+        assert_eq!(writer.latest_quote_with_depth(&instrument), Some(quote));
+        assert!(writer.latest_order_book_matches(&instrument, &bids, &asks));
+        reader.refresh().unwrap();
+        assert_eq!(reader.venue_order_id(7).as_deref(), Some("remote-7"));
+        assert_eq!(reader.latest_quote_with_depth(&instrument), Some(quote));
+        assert_eq!(
+            reader.latest_quote_with_depth_and_receive_time(&instrument),
+            Some((quote, 121))
+        );
+        assert!(reader.latest_order_book_matches(&instrument, &bids, &asks));
+        assert!(!reader.latest_order_book_matches(&instrument, &bids, &[]));
+
+        drop(reader);
+        drop(writer);
+        let restored = LiveEventPipeline::open_sqlite(&db, "binance-main", "USDT").unwrap();
+        assert_eq!(restored.venue_order_id(7).as_deref(), Some("remote-7"));
+        assert_eq!(restored.latest_quote_with_depth(&instrument), Some(quote));
+        assert!(restored.latest_order_book_matches(&instrument, &bids, &asks));
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -4524,6 +4698,7 @@ mod tests {
                 "binance:orderbook:88",
             ))
             .unwrap();
+        assert!(pipeline.latest_order_book_matches(&instrument, &bids, &asks));
         let event = pipeline.log().events().last().unwrap();
         let EventKind::MarketOrderBook {
             sequence,
@@ -4545,9 +4720,9 @@ mod tests {
 
         let error = pipeline
             .ingest(RuntimeEventEnvelope::market_order_book(
-                instrument,
+                instrument.clone(),
                 89,
-                bids,
+                bids.clone(),
                 vec![level("0.0000000006", "0.0000000004")],
                 101,
                 111,
@@ -4557,9 +4732,11 @@ mod tests {
             .unwrap_err();
         assert!(format!("{error:?}").contains("盘口最优买价高于最优卖价"));
         assert_eq!(pipeline.log().len(), 1);
+        assert!(pipeline.latest_order_book_matches(&instrument, &bids, &asks));
 
         let restored = LiveEventPipeline::open(&root, "binance-depth", "USDT").unwrap();
         assert_eq!(restored.snapshot(), pipeline.snapshot());
+        assert!(restored.latest_order_book_matches(&instrument, &bids, &asks));
         drop(restored);
         drop(pipeline);
         let _ = std::fs::remove_dir_all(root);

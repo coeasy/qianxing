@@ -17993,6 +17993,7 @@ def pipeline_order_fact_index_check() -> None:
     risk_commit = _rust_fn_body(commit, "record_order_risk_decision_commit")
     capability_commit = _rust_fn_body(commit, "record_execution_capability_decision_commit")
     capability_reader = _rust_fn_body(pipeline, "execution_capability_decision")
+    venue_reader = _rust_fn_body(pipeline, "venue_order_id")
 
     check(
         "struct RuntimeOrderFactIndex" in index
@@ -18001,8 +18002,11 @@ def pipeline_order_fact_index_check() -> None:
             token in index
             for token in (
                 "fee_events_by_order",
+                "venue_order_ids",
                 "order_risk_decisions",
                 "execution_capability_decisions",
+                "EventKind::Accepted",
+                "EventKind::OrderStatusReconciled",
                 "EventKind::Filled",
                 "EventKind::FeeAdjustment",
                 "EventKind::OrderRiskDecision",
@@ -18011,6 +18015,7 @@ def pipeline_order_fact_index_check() -> None:
             )
         )
         and "push(event_index)" in remember
+        and "venue_order_ids" in remember
         and "order_decision_indexes_keep_the_first_durable_fact" in index
         and "fee_event_index_is_scoped_by_order_and_preserves_log_order" in index,
         "订单事实索引覆盖手续费与不可变决策，并保留事件顺序和最早决策",
@@ -18059,6 +18064,76 @@ def pipeline_order_fact_index_check() -> None:
         and "events().iter()" not in capability_reader,
         "执行能力决策公开读取通过订单索引定位 durable EventLog 事实",
         "执行能力决策读 API 仍扫描全日志或没有核对索引位置",
+    )
+    check(
+        venue_reader is not None
+        and "self.order_facts" in venue_reader
+        and "venue_order_id(client_order_id)" in venue_reader
+        and "events().iter()" not in venue_reader
+        and "venue_order_id_index_keeps_latest_known_identity" in index,
+        "订单远端 ID 读取使用由 Accepted/对账事实维护的订单索引",
+        "venue_order_id 仍按历史扫描，或索引未覆盖其事实来源",
+    )
+
+
+def pipeline_market_fact_index_check() -> None:
+    """Keep latest per-instrument market facts indexed through replay and append."""
+    index = case_source("crates/qx-runtime/src/pipeline/market_facts.rs")
+    pipeline = case_source(PIPELINE_FILE)
+    service = case_source("crates/qx-service/src/ccxt_market_host.rs")
+    remember = _rust_fn_body(index, "remember")
+    apply_index_event = _rust_fn_body(pipeline, "apply_index_event")
+    append = _rust_fn_body(pipeline, "append_at_engine")
+    quote_reader = _rust_fn_body(pipeline, "latest_quote_with_depth")
+    freshness_reader = _rust_fn_body(pipeline, "latest_quote_with_depth_and_receive_time")
+    book_reader = _rust_fn_body(pipeline, "latest_order_book_matches")
+    book_poll = _rust_fn_body(service, "run_ccxt_market_worker")
+
+    check(
+        "struct RuntimeMarketFactIndex" in index
+        and remember is not None
+        and all(
+            token in index
+            for token in (
+                "latest_quotes",
+                "latest_observed_quotes",
+                "latest_order_books",
+                "EventKind::MarketQuote",
+                "EventKind::MarketOrderBook",
+                "PAPER_EXECUTION_MARKET_PREFIX",
+                "quote_and_book_indexes_are_instrument_scoped_and_ignore_execution_echo_for_freshness",
+            )
+        )
+        and "latest_observed_quotes" in remember,
+        "市场事实索引区分最新报价、真实观测报价和最新盘口，并排除 Paper 回声污染 freshness",
+        "market_facts.rs 缺少按标的投影、Paper freshness 语义或回归用例",
+    )
+    check(
+        "market_facts: RuntimeMarketFactIndex" in pipeline
+        and apply_index_event is not None
+        and "self.market_facts.remember(event, event_index)" in apply_index_event
+        and append is not None
+        and "self.market_facts" in append
+        and ".remember(&event," in append
+        and all(
+            body is not None
+            and "self.market_facts" in body
+            and ".get(event_index)" in body
+            and "events().iter()" not in body
+            for body in (quote_reader, freshness_reader, book_reader)
+        )
+        and "quote_tick_from_market_event" in quote_reader
+        and "event.receive_time" in freshness_reader,
+        "报价 freshness 与最新盘口查询通过 EventLog 位置索引，追加/重放共同维护索引",
+        "最新行情查询仍扫描全日志，或增量追加/重放没有维护同一索引",
+    )
+    check(
+        book_poll is not None
+        and "pipeline.latest_order_book_matches(instrument, &bids, &asks)" in book_poll
+        and "fn latest_order_book_matches(" not in service
+        and "pipeline.log().events().iter()" not in service,
+        "CCXT 行情轮询通过 runtime 最新盘口接口去重，不再反向扫描 EventLog",
+        "CCXT 行情轮询仍保留自己的全日志盘口扫描实现",
     )
 
 
@@ -33827,8 +33902,8 @@ def binance_unknown_outcome_recovery_check() -> None:
         and "filled_exact == Some(amounts.filled)" in reconcile_source
         and "EventKind::OrderStatusReconciled" in strategy_updates
         and "EventKind::OrderStatusReconciled" in live_admission
-        and "EventKind::OrderStatusReconciled" in runtime_venue_order_reader
-        and "venue_order_id.clone()" in runtime_venue_order_reader
+        and "self.order_facts" in runtime_venue_order_reader
+        and "venue_order_id(client_order_id)" in runtime_venue_order_reader
         and 'EventKind::OrderStatusReconciled' in api_projection,
         "Binance 对账只在成交量相符时写入可重放的权威订单状态并解除未知提交",
         "Binance reconciliation does not safely connect remote status snapshots to EventLog recovery",
@@ -34376,6 +34451,7 @@ def main() -> int:
     event_log_append_batch_check()
     pipeline_cursor_refresh_check()
     pipeline_order_fact_index_check()
+    pipeline_market_fact_index_check()
     valuation_single_source_check()
     orderbook_strategy_margin_check()
     paper_account_admission_serialization_check()
