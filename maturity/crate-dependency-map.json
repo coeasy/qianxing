@@ -2409,9 +2409,18 @@
       "external_dependency_count": {
         "normal": 3,
         "build": 0,
-        "dev": 0
+        "dev": 1
       },
       "external_dependencies": [
+        {
+          "kind": "dev",
+          "name": "criterion",
+          "requirement": "^0.8.2",
+          "target": null,
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "optional": false,
+          "features": []
+        },
         {
           "kind": "normal",
           "name": "libc",

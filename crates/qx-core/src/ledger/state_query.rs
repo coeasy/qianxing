@@ -2,7 +2,7 @@ use super::{Ledger, LedgerEntry, PositionState};
 use crate::identity::InstrumentId;
 use crate::numeric::{ExactDecimal, Money, Quantity};
 use crate::trading::PositionSide;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
 static EMPTY_CASH_BALANCES: OnceLock<BTreeMap<String, i128>> = OnceLock::new();
@@ -15,6 +15,63 @@ pub struct ExactPositionState {
 }
 
 impl Ledger {
+    /// Copy the account's canonical risk state without its append-only audit history.
+    ///
+    /// Risk checks need current cash and positions, not every historical ledger entry or
+    /// corporate-action entitlement. Keeping this projection small lets read-only recovery
+    /// guards take a stable snapshot without copying state proportional to account lifetime.
+    pub fn risk_snapshot_for_account(&self, account_id: &str) -> Self {
+        let cash = self
+            .cash
+            .get(account_id)
+            .map(|balances| BTreeMap::from([(account_id.to_string(), balances.clone())]))
+            .unwrap_or_default();
+        let exact_cash = self
+            .exact_cash
+            .get(account_id)
+            .map(|balances| BTreeMap::from([(account_id.to_string(), balances.clone())]))
+            .unwrap_or_default();
+        let positions = self
+            .positions
+            .get(account_id)
+            .map(|positions| BTreeMap::from([(account_id.to_string(), positions.clone())]))
+            .unwrap_or_default();
+        let hedge_positions = self
+            .hedge_positions
+            .get(account_id)
+            .map(|positions| BTreeMap::from([(account_id.to_string(), positions.clone())]))
+            .unwrap_or_default();
+
+        Self {
+            cash,
+            exact_cash,
+            positions,
+            hedge_positions,
+            rights_entitlements: BTreeMap::new(),
+            cash_dividend_entitlements: BTreeMap::new(),
+            convertible_bond_interest_entitlements: BTreeMap::new(),
+            entries: Vec::new(),
+            next_id: 0,
+        }
+    }
+
+    /// Instruments represented in the account's current position indexes.
+    pub fn position_instruments_for_account(&self, account_id: &str) -> BTreeSet<InstrumentId> {
+        let mut instruments = self
+            .positions
+            .get(account_id)
+            .into_iter()
+            .flat_map(|positions| positions.keys().cloned())
+            .collect::<BTreeSet<_>>();
+        instruments.extend(
+            self.hedge_positions
+                .get(account_id)
+                .into_iter()
+                .flat_map(|positions| positions.keys().cloned()),
+        );
+        instruments
+    }
+
     /// 返回账户所有币种的现金余额，按币种排序，供跨币种抵押品估值使用。
     pub fn cash_balances_for(&self, account_id: &str) -> BTreeMap<String, i128> {
         self.cash_balances_for_ref(account_id).clone()
@@ -253,5 +310,23 @@ mod exact_cash_iteration_tests {
             })
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn account_risk_snapshot_keeps_canonical_cash_without_audit_history() {
+        let mut ledger = Ledger::new();
+        ledger
+            .deposit("main", "USDT", Money::from_i64(2), 1)
+            .unwrap();
+        ledger
+            .deposit("other", "BTC", Money::from_i64(3), 2)
+            .unwrap();
+
+        let snapshot = ledger.risk_snapshot_for_account("main");
+
+        assert_eq!(snapshot.cash_for("main", "USDT"), Money::from_i64(2).raw());
+        assert_eq!(snapshot.cash_for("other", "BTC"), 0);
+        assert!(snapshot.entries().is_empty());
+        assert_eq!(ledger.entries().len(), 2);
     }
 }
