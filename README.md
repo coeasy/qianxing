@@ -91,20 +91,20 @@ Python 策略的未来数据扰动与预热长度敏感性检查见[策略偏差
 只体验回测与离线图表：
 
 ```bash
-python -m pip install "qianxing==0.4.2"
+python -m pip install "qianxing==0.4.1"
 qianxing quickstart ./qianxing-demo
 ```
 
-用交易所真实公开 K 线回测（需要网络，不需要账户密钥，也不会下单）：
+上面的命令使用当前已发布的 v0.4.1 和离线样例数据。v0.4.1 的 Python wheel 尚未提供 Python CCXT 快捷入口；要立即跑真实公开行情，请安装 GitHub Release 中的 `qx-cli`，并按[首跑指南](docs/first-run.md)安装 `qianxing[ccxt]` 行情 worker。
 
-该 wheel 自带匹配版本的 Rust CLI，并自动将当前 Python 解释器传给行情 worker；安装 `ccxt` extra 后即可直接完成公开行情下载、回测和 HTML 报告，无需另装 Rust 或 CLI。
+v0.4.2 发布后，可从 Python 入口直接获取交易所真实公开 K 线（需要网络，不需要账户密钥，也不会下单）。该 wheel 自带匹配版本的 Rust CLI，并自动将当前 Python 解释器传给行情 worker；安装 `ccxt` extra 后即可完成公开行情下载、回测和 HTML 报告，无需另装 Rust 或 CLI：
 
 ```bash
 python -m pip install "qianxing[ccxt]==0.4.2"
 qianxing quickstart ./qianxing-okx --profile ccxt --exchange okx --days 30 --timeframe 1h
 ```
 
-第一条使用明确标注的离线样例数据；第二条从 OKX 获取真实公开永续行情。Python wheel 会调用同版自带 CLI，并让行情 worker 使用当前 Python 环境，因此不需要单独安装 Rust 或 `qx-cli`，也不读取密钥、不下单。`qianxing quickstart --profile ccxt` 已通过 [OKX/Bitget 公共行情验收](https://github.com/coeasy/qianxing/actions/runs/45007539531)；本候选将该入口纳入 `qianxing==0.4.2` wheel。已发布的 0.4.1 用户仍可按[首跑指南](docs/first-run.md)使用 CLI 路径。完整参数、Python 策略与分步数据工作流见[首跑指南](docs/first-run.md)。
+该候选的 Python wheel → 公开行情 → 回测 → HTML 报告路径已通过 [OKX/Bitget 公共行情验收 #124](https://github.com/coeasy/qianxing/actions/runs/45407201135)；只读公共行情、不读取账户密钥、不提交订单。完整参数、Python 策略与分步数据工作流见[首跑指南](docs/first-run.md)。
 
 Rust 应用当前可从 crates.io 使用已发布的 `qx-sdk = "0.4.1"`，其 14 包依赖闭包已通过逐包 checksum 与 Ubuntu、Windows、macOS 独立消费者验收。v0.4.2 候选保持同一 SDK facade，并将在发布后提供新版本；当前 crates.io 状态见 [qx-sdk](https://crates.io/crates/qx-sdk)。独立快速入门仍可直接从 registry 构建运行，源码 Git 消费路径另由独立脚本验收。
 
@@ -119,7 +119,7 @@ Rust 应用当前可从 crates.io 使用已发布的 `qx-sdk = "0.4.1"`，其 14
 cargo build --release
 
 # Rust CLI 安装方式：从源码仓库固定 tag 编译安装；也可直接下载 GitHub Release 的平台二进制
-cargo install --git https://github.com/coeasy/qianxing --tag v0.4.2 --locked qx-cli
+cargo install --git https://github.com/coeasy/qianxing --tag v0.4.1 --locked qx-cli
 
 # 运行端到端演示（含确定性自校验）
 cargo run -p qx-cli --release
@@ -320,7 +320,7 @@ Linux 本机补充验收：
 
 历史验收当时的交付边界是本机可重放的研究/回测与 Paper 工作流，以及 Linux/Windows 候选构建和 PostgreSQL/NATS 集成路径。该快照中的 CI、候选预检和逻辑审计链接仅说明对应提交的测试结果；不能再据此说正式发布尚未发生。
 
-**稳定版与发布候选（2026-11-24）：** 当前已发布版本仍为 [`v0.4.1`](https://github.com/coeasy/qianxing/releases/tag/v0.4.1)：PyPI `qianxing==0.4.1`、14 个 crates.io SDK 包及三平台独立消费者验收均已完成。v0.4.2 候选把 Python 公共行情 quickstart 随匹配的 CLI 一起发布到 wheel，使安装 `qianxing[ccxt]` 后可以直接从 Python 入口完成行情下载、回测和 HTML 报告；它尚未发布，仍需候选 CI、合并和正式 tag 发布通过。生产/沙盒下单仍不在该候选承诺范围内。
+**稳定版与发布候选（2026-11-24）：** 当前已发布版本仍为 [`v0.4.1`](https://github.com/coeasy/qianxing/releases/tag/v0.4.1)：PyPI `qianxing==0.4.1`、14 个 crates.io SDK 包及三平台独立消费者验收均已完成。v0.4.2 候选把 Python 公共行情 quickstart 随匹配的 CLI 一起发布到 wheel，使安装 `qianxing[ccxt]` 后可以直接从 Python 入口完成行情下载、回测和 HTML 报告；候选 CI 与 OKX/Bitget 公共行情验收已通过，合并和正式 tag 发布仍未完成。生产/沙盒下单仍不在该候选承诺范围内。
 
 运行时插件目前只支持启动期静态装配，不支持动态加载或热替换。Paper 成交与 Bar、Tick、订单簿回测使用各自的数据档位内核；共享风控与归约规则不表示撮合实现相同。详细能力、限制和各项证据请查阅能力目录与成熟度台账。
 ## 许可
