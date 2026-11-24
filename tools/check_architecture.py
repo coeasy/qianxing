@@ -15966,7 +15966,10 @@ def performance_baseline_check() -> None:
         and "qx_runtime_latest_quote_lookup" in runtime_criterion_source
         and "latest_quote_with_depth_and_receive_time" in runtime_pipeline_source
         and "self.quote_index.remember(event)" in runtime_pipeline_source
-        and "self.quote_index.latest_received_quote(instrument)" in runtime_pipeline_source
+        and ".latest_received_quote(self.log.events(), instrument)" in runtime_pipeline_source
+        and "OnceLock<BTreeMap<InstrumentId, LatestQuoteState>>" in runtime_quote_index_source
+        and "self.by_instrument.get_or_init" in runtime_quote_index_source
+        and "self.by_instrument.get_mut()" in runtime_quote_index_source
         and "paper-execution:market:" in runtime_quote_index_source
         and '"qx_runtime_latest_quote_lookup/{mode}/{size}"' in bench_driver_source
         and '"qx-runtime"' in bench_driver_source,
