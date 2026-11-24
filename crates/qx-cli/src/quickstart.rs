@@ -508,6 +508,7 @@ fn write_public_ccxt_config(
         "use_environment_proxy": true,
         "enable_rate_limit": true,
         "timeout_ms": 30000,
+        "historical_data_timeout_ms": 300000,
         "default_type": "swap",
         "options": {},
         "instruments": [instrument],
@@ -561,6 +562,8 @@ mod tests {
         let config: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(config["use_environment_proxy"], true);
+        assert_eq!(config["timeout_ms"], 30_000);
+        assert_eq!(config["historical_data_timeout_ms"], 300_000);
         assert!(config.get("credential_env").is_none());
         std::fs::remove_dir_all(root).unwrap();
     }
