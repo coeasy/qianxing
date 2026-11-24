@@ -4,6 +4,8 @@
 一份命令属于哪个二进制写在行内，不做混写。能力全景与排障口径不在这里，见
 [工业化易用性收口指南](工业化易用性收口指南-V1.md)；完整安装前置与坑表见[安装指南](installation.md)。
 
+本页按 v0.4.2 发布候选准备。候选完成正式 tag 发布前，PyPI 与 GitHub 最新可安装版本仍是 v0.4.1；当前 PyPI 用户运行 Python CCXT 首跑时请使用 A 节的 `qx-cli` 路径。
+
 > 标注口径：**【已实现】**= 命令在当前工作树里可执行，且行为由常驻用例或门禁钉住；
 > **进阶**= 能力存在，但不属于首跑承诺，本页只在末尾点名，不给步骤。本页不重复登记未实现的设计意图，
 > 那类条目一律留在方案文档里标【设计意图，未排期】。
@@ -28,25 +30,25 @@ CLI 还提供按角色分流的五步指南：`qx-cli guide researcher`、`qx-cl
 ## A. 只装 CLI（不需要 Python）【已实现】
 
 最快方式是从 [GitHub 最新 Release](https://github.com/coeasy/qianxing/releases/latest) 下载对应平台的预编译 CLI，无需安装 Rust 或 Python。
-v0.4.1 对应资产名为 Windows x64 `qx-cli-v0.4.1-Windows-X64.exe`、Linux x64 `qx-cli-v0.4.1-Linux-X64`、
-Apple Silicon `qx-cli-v0.4.1-macOS-ARM64`；Release 同时提供 SHA-256 校验文件。下载后在文件所在目录直接运行：
+v0.4.2 对应资产名为 Windows x64 `qx-cli-v0.4.2-Windows-X64.exe`、Linux x64 `qx-cli-v0.4.2-Linux-X64`、
+Apple Silicon `qx-cli-v0.4.2-macOS-ARM64`；Release 同时提供 SHA-256 校验文件。下载后在文件所在目录直接运行：
 
 ```powershell
 # Windows x64
-Invoke-WebRequest https://github.com/coeasy/qianxing/releases/download/v0.4.1/qx-cli-v0.4.1-Windows-X64.exe -OutFile qx-cli.exe
+Invoke-WebRequest https://github.com/coeasy/qianxing/releases/download/v0.4.2/qx-cli-v0.4.2-Windows-X64.exe -OutFile qx-cli.exe
 .\qx-cli.exe quickstart my-qx --html
 ```
 
 ```bash
 # Linux x64（Debian 12 / Ubuntu 22.04 基线）
-curl -L https://github.com/coeasy/qianxing/releases/download/v0.4.1/qx-cli-v0.4.1-Linux-X64 -o qx-cli
+curl -L https://github.com/coeasy/qianxing/releases/download/v0.4.2/qx-cli-v0.4.2-Linux-X64 -o qx-cli
 chmod +x qx-cli
 ./qx-cli quickstart my-qx --html
 ```
 
 ```bash
 # macOS Apple Silicon
-curl -L https://github.com/coeasy/qianxing/releases/download/v0.4.1/qx-cli-v0.4.1-macOS-ARM64 -o qx-cli
+curl -L https://github.com/coeasy/qianxing/releases/download/v0.4.2/qx-cli-v0.4.2-macOS-ARM64 -o qx-cli
 chmod +x qx-cli
 ./qx-cli quickstart my-qx --html
 ```
@@ -54,7 +56,7 @@ chmod +x qx-cli
 要将 `qx-cli` 安装到 PATH 并由 Cargo 编译，可在仓库外固定到当前 tag：
 
 ```bash
-cargo install --git https://github.com/coeasy/qianxing --tag v0.4.1 --locked qx-cli
+cargo install --git https://github.com/coeasy/qianxing --tag v0.4.2 --locked qx-cli
 qx-cli quickstart my-qx                          # 建 macd 项目 → 静态检查 → 回测 → 读回摘要 → 安全状态
 qx-cli quickstart my-rsi --strategy rsi           # 同一条链路直接运行 RSI 内置策略
 qx-cli quickstart my-ashare --profile ashare     # 建 A 股样例项目 → 静态检查 → 回测 → 读回摘要 → 安全状态
@@ -104,20 +106,20 @@ HTML 和三张独立 SVG，`-o reports/latest.html` 改输出前缀。
 普通使用直接从 PyPI 安装当前稳定包：
 
 ```bash
-python -m pip install "qianxing==0.4.1"
+python -m pip install "qianxing==0.4.2"
 qianxing doctor
 ```
 
 需要交易所真实公共行情时安装带 CCXT 的可选依赖：
 
 ```bash
-python -m pip install "qianxing[ccxt]==0.4.1"
+python -m pip install "qianxing[ccxt]==0.4.2"
 ```
 
 只有从 GitHub Release 下载 wheel 或测试本地构建时，才需要按文件名安装指定 wheel：
 
 ```bash
-python -m pip install dist/qianxing-0.4.1-cp310-abi3-win_amd64.whl    # 平台换成你的那份
+python -m pip install dist/qianxing-0.4.2-cp310-abi3-win_amd64.whl    # 平台换成你的那份
 python -c "import qianxing as qx; print(qx.doctor()['status'])"
 ```
 
@@ -155,8 +157,7 @@ qianxing quickstart ./demo --rows 120 --cli qx-cli
 
 #### 真实公共行情（只读 CCXT）
 
-当前 PyPI `qianxing==0.4.1` 用户先用 A 节的 `qx-cli quickstart --profile ccxt` 完成这条链路；v0.4.1 已支持 OKX、Binance
-和 Bitget 的真实公开永续合约行情。本文新增的 Python 便捷入口会随包含本次改动的后续 wheel 发布，发布后可直接运行：
+已发布的 PyPI `qianxing==0.4.1` wheel 尚不含 Python CCXT 便捷入口，可先用 A 节的 `qx-cli quickstart --profile ccxt`。本候选发布为 `qianxing==0.4.2` 后，Python wheel 可直接运行下面的只读公开行情流程：
 
 ```bash
 qianxing quickstart ./okx-btc --profile ccxt --exchange okx --days 30 --timeframe 1h
