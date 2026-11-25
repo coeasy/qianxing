@@ -331,7 +331,7 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           git fetch --no-tags origin "$BASE_SHA"
-          if git diff --quiet "$BASE_SHA...$GITHUB_SHA" -- \
+          if git diff --quiet "$BASE_SHA" "$GITHUB_SHA" -- \
               Cargo.toml Cargo.lock rust-toolchain.toml .cargo/config.toml \
               crates/qx-core/Cargo.toml crates/qx-core/src crates/qx-core/benches; then
             echo "profile=pr" >> "$GITHUB_OUTPUT"

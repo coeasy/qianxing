@@ -250,9 +250,12 @@ def main() -> int:
     )
     parser.add_argument(
         "--profile",
-        choices=("full", "pr"),
+        choices=("full", "pr", "pr-core"),
         default="full",
-        help="full runs the complete benchmark ledger; pr measures the stable core hot-path subset",
+        help=(
+            "full runs the complete benchmark ledger; pr measures selected runtime hot paths; "
+            "pr-core also includes the full qx-core suite"
+        ),
     )
     args = parser.parse_args()
     required_criterion, criterion_commands = criterion_plan(args.cargo, args.profile)
