@@ -278,6 +278,7 @@ def main() -> int:
                     "min_ms": round(min(elapsed_samples), 3),
                     "max_ms": round(max(elapsed_samples), 3),
                     "mean_ms": round(statistics.fmean(elapsed_samples), 3),
+                    "raw_ms": [round(value, 3) for value in elapsed_samples],
                     **resource_summary(samples),
                     "result_hash": hashes[0],
                     "deterministic_across_repeats": deterministic,

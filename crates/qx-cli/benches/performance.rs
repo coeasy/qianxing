@@ -364,12 +364,15 @@ fn bench_steady_state_tick_cost(n: usize) {
     const WINDOWS: usize = 5;
     let instrument = InstrumentId::parse("BTCUSDT.BINANCE").expect("valid instrument");
     let mut samples = Vec::with_capacity(TICKS * WINDOWS);
+    let mut window_p50_samples = Vec::with_capacity(WINDOWS);
+    let mut window_p50_ms = Vec::with_capacity(WINDOWS);
     let mut final_digest = 0;
     for _window in 0..WINDOWS {
         let fixture = TickFixture::new(n);
         let mut pipeline = LiveEventPipeline::open_sqlite(&fixture.database, "steady-tick", "USDT")
             .expect("open seeded live pipeline");
         assert_eq!(pipeline.log().len(), n);
+        let mut window_samples = Vec::with_capacity(TICKS);
         for tick in 0..TICKS {
             let ts = (n + tick + 1) as u64;
             let quote = QuoteTick::new(
@@ -393,19 +396,29 @@ fn bench_steady_state_tick_cost(n: usize) {
                     .ingest(black_box(envelope))
                     .expect("ingest steady tick"),
             );
-            samples.push(started.elapsed());
+            let elapsed = started.elapsed();
+            samples.push(elapsed);
+            window_samples.push(elapsed);
         }
+        let window_p50 = percentile(window_samples, 0.50);
+        window_p50_samples.push(window_p50);
+        window_p50_ms.push(window_p50.as_secs_f64() * 1_000.0);
         assert_eq!(pipeline.log().len(), n + TICKS);
         final_digest = pipeline.log().digest();
         drop(pipeline);
         drop(fixture);
     }
-    let p50 = percentile(samples.clone(), 0.50);
+    let p50 = percentile(window_p50_samples, 0.50);
     let p95 = percentile(samples, 0.95);
     let seconds = p50.as_secs_f64();
     let ticks_per_second = if seconds > 0.0 { 1.0 / seconds } else { 0.0 };
+    let raw_ms = window_p50_ms
+        .iter()
+        .map(|sample| format!("{sample:.6}"))
+        .collect::<Vec<_>>()
+        .join(",");
     println!(
-        "{{\"benchmark\":\"steady_state_pipeline_ingest\",\"operations\":{n},\"windows\":{WINDOWS},\"ticks_per_window\":{TICKS},\"ticks\":{},\"median_ms\":{:.6},\"p95_ms\":{:.6},\"operations_per_second\":{ticks_per_second:.3},\"event_log_digest\":\"{:016x}\"}}",
+        "{{\"benchmark\":\"steady_state_pipeline_ingest\",\"operations\":{n},\"windows\":{WINDOWS},\"ticks_per_window\":{TICKS},\"ticks\":{},\"samples\":{WINDOWS},\"raw_ms\":[{raw_ms}],\"median_ms\":{:.6},\"p95_ms\":{:.6},\"operations_per_second\":{ticks_per_second:.3},\"event_log_digest\":\"{:016x}\"}}",
         TICKS * WINDOWS,
         p50.as_secs_f64() * 1_000.0,
         p95.as_secs_f64() * 1_000.0,

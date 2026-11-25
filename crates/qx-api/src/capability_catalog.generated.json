@@ -8,7 +8,7 @@
   },
   "source_sha256": {
     "maturity/capability-matrix.yaml": "c6927e2c6a1a4cc4fad188ca4a393fe1a0f85832738fd9fde55e88cd700d3575",
-    "maturity/capabilities.yaml": "8ca9751dddbcd50c16957848ed677570edf932368b4a792e94708ab7f9b5d492",
+    "maturity/capabilities.yaml": "32ce6d08e0f5a20ed72fa2740f16d45c46c55542191cd5fcbd62ca1c7333559b",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
   "product_levels": [
@@ -2146,8 +2146,8 @@
           ],
           "evidence": [
             "maturity/targets.yaml benchmark_regression_thresholds is the single source for the four +10% same-hardware regression limits",
-            "benchmarks/compare_baseline.py compares changed measurement-source fingerprints on compatible runner shapes, blocks registered latency and throughput regressions, and keeps low-sample p95 diagnostic-only",
-            "benchmarks/tests/test_compare_baseline.py covers regression direction, source fingerprint skips, memory fingerprint jitter, low-sample p95, first sample, and unregistered group behavior",
+            "benchmarks/compare_baseline.py compares changed measurement-source fingerprints on compatible runner shapes, blocks registered latency and throughput regressions, requires Criterion 95% confidence bounds to establish a threshold breach, and keeps uncertain estimates plus low-sample p95 diagnostic-only",
+            "benchmarks/tests/test_compare_baseline.py covers regression direction, Criterion confidence-bound decisions, source fingerprint skips, memory fingerprint jitter, low-sample p95, first sample, and unregistered group behavior",
             ".github/workflows/ci.yml performance-trend uses 21-sample profile runs and a retained main or candidate baseline artifact",
             "tools/check_architecture.py performance_baseline_check verifies the ledger limits, comparator behavior, test cases and blocking CI wiring",
             "maturity/evidence/profile-market-backtest-rss-2026-10-22.json records qx-cli process peak working set for six synthetic market-spec fixtures at 1k/8k/64k bars on the local Ryzen 7 8700G; it does not change product profile measurement status",
