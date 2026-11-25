@@ -388,6 +388,8 @@ jobs:
           ref: ${{ inputs.release_tag || github.ref }}
       - uses: actions/download-artifact@v4
         with:
+          # Reusable CI builds its own same-named wheels for installation tests.
+          pattern: '!python-wheel-*'
           path: dist
           merge-multiple: true
       - name: Assemble hash manifest and identity file
@@ -447,6 +449,27 @@ jobs:
               --notes "可复现发布件：binary / wheel / C++ SDK / Web 控制台 + SHA256SUMS + sbom.json + release-identity.json（build provenance 见 Release 附件证明）。" \
               "${assets[@]}"
           fi
+
+      - name: Download the wheel artifacts selected for PyPI
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: ${{ runner.temp }}/pypi-wheels
+          merge-multiple: true
+      - name: Compare draft GitHub Release wheels with the PyPI payload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          wheels=("$RUNNER_TEMP"/pypi-wheels/*.whl)
+          if (( ${#wheels[@]} != 3 )); then
+            echo "Expected three platform wheels for PyPI, found ${#wheels[@]}." >&2
+            exit 1
+          fi
+          gh release download "$QX_RELEASE_TAG" --pattern '*.whl' --dir "$RUNNER_TEMP/draft-wheels"
+          diff -qr "$RUNNER_TEMP/pypi-wheels" "$RUNNER_TEMP/draft-wheels"
 
   publish-github-release:
     name: Publish GitHub Release after PyPI
