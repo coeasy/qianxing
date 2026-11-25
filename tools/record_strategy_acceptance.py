@@ -144,9 +144,18 @@ def main() -> int:
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     log_path = ARTIFACT_DIR / f"{run_id}.log"
     source_manifest = tracked_source_manifest(log_path)
+    source_paths = {
+        item["path"]
+        for item in source_manifest["files"]
+        if isinstance(item, dict) and isinstance(item.get("path"), str)
+    }
     inputs = []
     for raw in args.input:
         path, relative = repo_file(raw)
+        if relative not in source_paths:
+            parser.error(
+                f"input is excluded from the source manifest and cannot be bound: {relative}"
+            )
         inputs.append({"path": relative, "sha256": sha256_file(path)})
     revision = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, check=True, capture_output=True, text=True
