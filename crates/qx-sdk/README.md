@@ -11,7 +11,7 @@ The SDK runs locally in your Rust process. It does not fetch market data or subm
 qx-sdk = "0.4.2"
 ```
 
-The 0.4.2 package is available after its release is published to crates.io. The commands below target 0.4.2; for the currently published 0.4.1, replace both `0.4.2` references with `0.4.1`.
+Install Rust 1.87 or later to use the [published 0.4.2 SDK](https://crates.io/crates/qx-sdk/0.4.2).
 
 Create a consumer project and fetch the matching teaching fixture:
 

@@ -335,16 +335,16 @@ Build a template once from the same release version as the local SDK:
 from e2b import Template
 
 template = Template().from_python_image("3.12").run_cmd(
-    "pip install qianxing==0.4.1"
+    "pip install qianxing==0.4.2"
 )
-Template.build(template, name="qianxing-0-2-2", cpu_count=2, memory_mb=2048)
+Template.build(template, name="qianxing-0-4-2", cpu_count=2, memory_mb=2048)
 ```
 
 Then submit an experiment. The E2B API key is read from `E2B_API_KEY`; choose the prebuilt template with `QX_E2B_TEMPLATE` or `--template`. The host must set `QX_E2B_EXPECTED_CPU_COUNT` and `QX_E2B_EXPECTED_MEMORY_MB` to the template's actual resources; the command reads the created sandbox's resource info and fails before uploading strategy files if the values are missing, unreadable, or different. E2B is the default provider.
 
 ```powershell
 $env:E2B_API_KEY = "<your E2B API key>"
-$env:QX_E2B_TEMPLATE = "qianxing-0-3-0"
+$env:QX_E2B_TEMPLATE = "qianxing-0-4-2"
 $env:QX_E2B_EXPECTED_CPU_COUNT = "2"
 $env:QX_E2B_EXPECTED_MEMORY_MB = "2048"
 qianxing remote-research ./my_strategy.py ./run-experiment-spec.json --output-dir ./runs/remote-001
@@ -400,7 +400,7 @@ For E2B, install the optional SDK on the worker host and build the selected temp
 pip install "qianxing[sandbox-e2b]"
 $env:QX_PYTHON_STRATEGY_EXECUTION_MODE = "e2b"
 $env:QX_PYTHON_STRATEGY_SANDBOX_REQUIRED = "true"
-$env:QX_E2B_TEMPLATE = "qianxing-0-2-2"
+$env:QX_E2B_TEMPLATE = "qianxing-0-4-2"
 $env:QX_E2B_EXPECTED_CPU_COUNT = "2"
 $env:QX_E2B_EXPECTED_MEMORY_MB = "2048"
 $env:E2B_API_KEY = "<host-side E2B API key>"
