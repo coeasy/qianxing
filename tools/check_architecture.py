@@ -16013,7 +16013,7 @@ def performance_baseline_check() -> None:
         and 'row.get("mean_ns", row.get("median_ns"))' in compare_source
         and 'row.get("mean_ci95_ns")' in compare_source
         and "new_interval[0] > threshold_bound" in compare_source,
-        "Criterion 95% 置信区间确认超过 targets.yaml 阈值才阻断，其他指标仍按登记阈值判定",
+        "Criterion 使用 95% 置信区间，端到端使用重复样本边界确认超过 targets.yaml 阈值才阻断",
         "比较器缺少台账阈值、阻断退出或仅识别回归方向的判据",
     )
     targets_source = TARGETS_FILE.read_text(encoding="utf-8")
@@ -16033,8 +16033,9 @@ def performance_baseline_check() -> None:
         and "test_registered_paper_lifecycle_v2_regression_over_ten_percent_fails" in compare_tests_source
         and "test_short_criterion_estimate_without_confidence_intervals_is_diagnostic" in compare_tests_source
         and "test_criterion_point_spike_with_overlapping_confidence_intervals_is_non_blocking" in compare_tests_source
+        and "test_end_to_end_point_spike_with_overlapping_repeat_envelope_is_inconclusive" in compare_tests_source
         and "test_crypto_paper_worker_e2e_record_uses_blocking_end_to_end_threshold" in compare_tests_source,
-        "性能阈值在目标台账登记且一般回归、Criterion 区间、改善、首样本和版本化 workload 各有行为用例",
+        "性能阈值在目标台账登记且重复样本边界、Criterion 区间、改善、首样本和版本化 workload 各有行为用例",
         f"登记组={sorted(threshold_groups)} / 比较器行为用例存在={compare_tests.is_file()}",
     )
     workflow = ROOT / ".github/workflows/ci.yml"

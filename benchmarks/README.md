@@ -1,6 +1,6 @@
 # Qianxing Benchmarks
 
-性能基线与复现入口。CI 的短期回归门对独立进程负载采用 7 次重复；中位数用于阻断回归，尾延迟只记录、不以 7 个样本的近似最大值阻断发布。PR 运行保留原 Criterion 样本设置，只运行 12 个核心热路径基准；主分支与发布路径仍运行完整的 171 项台账。**本目录不是免责声明**：`run_baseline.py` 是真会跑的驱动器，读数落
+性能基线与复现入口。CI 对端到端独立进程负载默认采用 7 次重复；p50 展示趋势，只有候选最快样本相对基线最慢样本仍超过登记阈值才阻断。尾延迟只记录，Criterion 使用自己的 95% 置信区间。PR 运行保留原 Criterion 样本设置，只运行 12 个核心热路径基准；主分支与发布路径仍运行完整的 171 项台账。**本目录不是免责声明**：`run_baseline.py` 是真会跑的驱动器，读数落
 `benchmarks/results/baseline.json`。
 
 ## PreparedEvaluation 持久化批次与崩溃恢复
@@ -199,8 +199,10 @@ python benchmarks/run_crypto_paper_e2e.py \
 账簿/EventLog/审计、同目录幂等重跑和独立目录事实一致性。每个样本都必须先通过 acceptance，随后报告
 整轮 wall-clock p50/p95、主链订单/成交/账本计数、进程树峰值 RSS、CPU、I/O 和进程数；资源项按平台能力
 如实输出 `null`，不以缺少采样的 0 代替。它不拆解单笔订单延迟，也不覆盖真实 funding provider 或 8 小时结算调度。
-CI 把 workload `crypto-paper-worker-acceptance-v1` 作为已登记的 `end_to_end` 项比较，首次匹配仅记录，
-后续同硬件回退超过 targets.yaml 的 10% 阈值会阻断。它与 qx-zhenlu v2 microbenchmark 共同形成 Crypto Paper
+CI 把 workload `crypto-paper-worker-acceptance-v1` 作为已登记的 `end_to_end` 项比较，首次匹配仅记录。
+端到端计时保留每轮 wall-clock；只有当前最快样本仍比基线最慢样本慢过 `targets.yaml` 的阈值才阻断。
+p50 超阈值但重复样本范围重叠时记录为“证据不足”，避免一次 CI runner 速度差异误报成代码回归。
+它与 qx-zhenlu v2 microbenchmark 共同形成 Crypto Paper
 性能证据，但不单独声称完整 profile 已测量。
 
 ## Rust 微基准：Criterion + JSON 证据

@@ -52,7 +52,16 @@ def series(report: dict) -> dict[tuple[str, str], dict[str, float | list[float]]
     result = {}
     for row in report.get("rows", []):
         key = ("end_to_end", str(row["bars"]))
-        result[key] = {name: float(row[name]) for name in ("p50_ms", "p95_ms") if name in row}
+        metrics: dict[str, float | list[float]] = {
+            name: float(row[name])
+            for name in ("p50_ms", "p95_ms", "min_ms", "max_ms")
+            if name in row
+        }
+        if isinstance(row.get("raw_ms"), list):
+            metrics["raw_ms"] = [float(value) for value in row["raw_ms"]]
+        if isinstance(row.get("repeats"), (int, float)):
+            metrics["sample_count"] = float(row["repeats"])
+        result[key] = metrics
     for row in report.get("records", []):
         size = row.get("operations", row.get("events", "all"))
         key = (str(row["benchmark"]), str(size))
@@ -61,6 +70,8 @@ def series(report: dict) -> dict[tuple[str, str], dict[str, float | list[float]]
             for name in (
                 "median_ms",
                 "p95_ms",
+                "min_ms",
+                "max_ms",
                 "operations_per_second",
                 "incremental_refresh_p50_ms",
                 "append_batch_p50_ms",
@@ -68,6 +79,10 @@ def series(report: dict) -> dict[tuple[str, str], dict[str, float | list[float]]
             )
             if name in row
         }
+        if isinstance(row.get("raw_ms"), list):
+            metrics["raw_ms"] = [float(value) for value in row["raw_ms"]]
+        if isinstance(row.get("samples"), (int, float)):
+            metrics["sample_count"] = float(row["samples"])
         result[key] = metrics
     for row in report.get("criterion_records", []):
         key = (f"criterion:{row['benchmark']}", "criterion")
@@ -81,8 +96,37 @@ def series(report: dict) -> dict[tuple[str, str], dict[str, float | list[float]]
     if report.get("evidence_kind") == "ashare_rules_on_cli_backtest_throughput":
         for row in report.get("workloads", []):
             key = ("ashare_rules_on_cli_backtest", str(row["bars"]))
-            result[key] = {name: float(row[name]) for name in ("p50_ms", "p95_ms") if name in row}
+            metrics = {
+                name: float(row[name])
+                for name in ("p50_ms", "p95_ms", "min_ms", "max_ms")
+                if name in row
+            }
+            if isinstance(row.get("raw_ms"), list):
+                metrics["raw_ms"] = [float(value) for value in row["raw_ms"]]
+            if isinstance(row.get("repeats"), (int, float)):
+                metrics["sample_count"] = float(row["repeats"])
+            result[key] = metrics
     return result
+
+
+def repeat_bound(metrics: dict[str, float | list[float]], *, upper: bool) -> float | None:
+    """Return an observed repeat bound; p95 is a max for the CI's 5–7 samples."""
+    raw = metrics.get("raw_ms")
+    if isinstance(raw, list) and len(raw) >= 3:
+        values = [value for value in raw if math.isfinite(value) and value > 0]
+        if len(values) >= 3:
+            return max(values) if upper else min(values)
+
+    sample_count = metrics.get("sample_count")
+    if not isinstance(sample_count, (int, float)) or sample_count < 3:
+        return None
+    if upper:
+        value = metrics.get("max_ms", metrics.get("p95_ms"))
+    else:
+        value = metrics.get("min_ms")
+    if isinstance(value, (int, float)) and math.isfinite(value) and value > 0:
+        return float(value)
+    return None
 
 
 def load_thresholds(path: Path) -> dict[str, float]:
@@ -169,13 +213,43 @@ def main() -> int:
             continue
         shared_metrics = old_rows[key].keys() & new_rows[key].keys()
         for metric in sorted(shared_metrics):
-            if metric == "p95_ms" or metric.endswith("_ci95_ms"):
+            if metric in {"p95_ms", "min_ms", "max_ms", "raw_ms", "sample_count"} or (
+                metric.endswith("_ci95_ms")
+            ):
                 # With 5–7 independent process runs, nearest-rank p95 is effectively
-                # the maximum and is too noisy to block a release candidate. CI bounds
-                # are compared with their estimate below, not as standalone metrics.
+                # the maximum; repeat bounds are evidence for the median comparison, not
+                # standalone performance metrics.
                 continue
             before = old_rows[key][metric]
             after = new_rows[key][metric]
+            if group in {"end_to_end", "ashare_rules_on"} and metric in {"p50_ms", "median_ms"}:
+                baseline_upper = repeat_bound(old_rows[key], upper=True)
+                current_lower = repeat_bound(new_rows[key], upper=False)
+                if baseline_upper is not None and current_lower is not None and baseline_upper > 0:
+                    envelope_ratio = current_lower / baseline_upper
+                    if envelope_ratio > 1 + threshold:
+                        failed = True
+                        change_pct = (envelope_ratio - 1) * 100
+                        note = (
+                            f"[FAIL] {key[0]}[{key[1]}] {metric}: baseline upper sample "
+                            f"{baseline_upper:.3f} ms -> current lower sample {current_lower:.3f} ms "
+                            f"({change_pct:+.1f}% beyond observed repeat envelope, registered limit "
+                            f"+{threshold * 100:.0f}%)"
+                        )
+                        print(note)
+                        print(f"::error title=Qianxing benchmark regression::{note}")
+                    elif before > 0 and after / before > 1 + threshold:
+                        print(
+                            f"[INCONCLUSIVE] {key[0]}[{key[1]}] {metric}: point estimate increased by "
+                            f"{(after / before - 1) * 100:+.1f}%, but the repeated timing envelopes "
+                            "do not establish a regression beyond the limit."
+                        )
+                elif before > 0 and after / before > 1 + threshold:
+                    print(
+                        f"[INCONCLUSIVE] {key[0]}[{key[1]}] {metric}: point estimate increased by "
+                        "more than the registered limit, but repeat bounds are unavailable."
+                    )
+                continue
             if group == "criterion" and metric == "point_ms":
                 old_interval = old_rows[key].get("mean_ci95_ms")
                 new_interval = new_rows[key].get("mean_ci95_ms")

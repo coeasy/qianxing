@@ -316,6 +316,7 @@ def main() -> int:
                     "action_effect_verified": action_effect_verified,
                     "p50_ms": round(statistics.median(samples), 3),
                     "p95_ms": round(ordered[min(len(ordered) - 1, round(0.95 * (len(ordered) - 1)))], 3),
+                    "raw_ms": [round(value, 3) for value in samples],
                     "peak_rss_bytes_max": max(peak_rss_values) if peak_rss_values else None,
                     "peak_rss_samples": len(peak_rss_values),
                     "process_tree_peak_rss_bytes_max": max(peak_tree_rss_values) if peak_tree_rss_values else None,
