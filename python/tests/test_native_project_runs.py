@@ -108,6 +108,27 @@ class NativeProjectRunTests(unittest.TestCase):
         self.assertEqual(record["status"], "succeeded")
         self.assertTrue(self.runs.verify_project_artifacts(project, result["project_run_id"])["verified"])
 
+    def test_python_quickstart_runs_bundled_local_paper_lifecycle(self):
+        renderer = os.environ.get("QX_TEST_REPORT_CLI")
+        if not renderer:
+            self.skipTest("set QX_TEST_REPORT_CLI to the freshly built report renderer")
+        project = Path(self.temp.name) / "python paper quickstart"
+        with contextlib.redirect_stdout(io.StringIO()) as output, contextlib.redirect_stderr(io.StringIO()) as errors:
+            code = self.cli.main([
+                "quickstart", str(project), "--profile", "paper", "--cli", renderer,
+            ])
+        self.assertEqual(code, 0, errors.getvalue())
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["status"], "succeeded")
+        self.assertEqual(result["profile"], "paper")
+        self.assertEqual(result["data"]["source"], "local_synthetic_l1")
+        self.assertFalse(result["data"]["network_accessed"])
+        self.assertFalse(result["data"]["credentials_loaded"])
+        self.assertFalse(result["data"]["live_orders_submitted"])
+        self.assertGreater(result["paper"]["new_orders"], 0)
+        self.assertGreater(result["paper"]["new_ledger_entries"], 0)
+        self.assertTrue((project / "qianxing.runtime.json").is_file())
+
     def test_native_success_verifies_replay_and_isolates_repeated_run_artifacts(self):
         from qianxing.app import verify_run
         previous = Path.cwd()

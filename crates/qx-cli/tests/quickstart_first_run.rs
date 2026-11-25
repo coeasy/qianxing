@@ -333,6 +333,134 @@ fn ashare_profile_runs_the_full_offline_quickstart_chain() {
     let _ = std::fs::remove_dir_all(base);
 }
 
+/// Paper gets a separate, honest first-run flow: a local synthetic L1 quote is
+/// processed by Scheduler → Strategy → Paper Execution → Ledger, with no network.
+#[test]
+fn paper_profile_runs_the_full_local_paper_chain_without_exchange_access() {
+    let base = temp_base("paper");
+    let project = base.join("paper project");
+    let (code, stdout, stderr) = run(
+        &base,
+        &[
+            "quickstart",
+            &project.to_string_lossy(),
+            "--profile",
+            "paper",
+        ],
+    );
+    assert_eq!(code, 0, "Paper quickstart 失败: {stderr}");
+    assert!(
+        stdout.contains("依次执行 4 步（建项目 → 静态检查 → Paper 主链路 → 安全状态）"),
+        "Paper 首跑必须公开自己的四步链路:\n{stdout}"
+    );
+    for step in ["建项目", "静态检查", "Paper 主链路", "安全状态"] {
+        assert!(
+            stdout.contains(&format!("[完成] {step}：")),
+            "Paper 首跑缺少已完成步骤 {step}:\n{stdout}"
+        );
+    }
+    assert!(
+        stdout.contains("本地合成 L1 报价"),
+        "必须说明 Paper 行情来源: {stdout}"
+    );
+    assert!(
+        stdout.contains("不联网、不读取密钥、不连接交易所、不发送实盘订单"),
+        "必须明确 Paper 副作用边界: {stdout}"
+    );
+    let result_line = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("[QuickstartPaperResult] "))
+        .expect("必须输出 Python 包可消费的 Paper 首跑结果");
+    let result: serde_json::Value =
+        serde_json::from_str(result_line).expect("Paper 结果必须是 JSON");
+    assert_eq!(result["profile"], "paper");
+    assert!(result["new_orders"].as_u64().unwrap_or_default() > 0);
+    assert!(result["new_ledger_entries"].as_u64().unwrap_or_default() > 0);
+    assert_eq!(result["quote_source"], "local_synthetic_l1");
+    assert_eq!(result["network_accessed"], false);
+    assert_eq!(result["credentials_loaded"], false);
+    assert_eq!(result["live_orders_submitted"], false);
+    assert!(project.join("qianxing.runtime.json").is_file());
+    assert!(!base.join("data").exists(), "Paper 首跑不得污染启动目录");
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
+fn paper_quickstart_rejects_force_before_writing() {
+    let base = temp_base("paper-force");
+    let project = base.join("paper project");
+    let (code, stdout, stderr) = run(
+        &base,
+        &[
+            "quickstart",
+            &project.to_string_lossy(),
+            "--profile",
+            "paper",
+            "--force",
+        ],
+    );
+    assert_eq!(
+        code, 2,
+        "Paper ledger state must never be silently reset: {stdout}"
+    );
+    assert!(stderr.contains("不支持 --force"), "{stderr}");
+    assert!(!project.exists(), "拒绝覆盖必须发生在创建项目之前");
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
+fn paper_quickstart_preserves_existing_project_files() {
+    let base = temp_base("paper-existing");
+    let project = base.join("paper project");
+    std::fs::create_dir_all(&project).expect("预置 Paper 项目目录");
+    let sentinel = project.join("ledger.jsonl");
+    std::fs::write(&sentinel, "existing-ledger-fact\n").expect("预置账本事实");
+    let (code, stdout, stderr) = run(
+        &base,
+        &[
+            "quickstart",
+            &project.to_string_lossy(),
+            "--profile",
+            "paper",
+        ],
+    );
+    assert_eq!(code, 2, "Paper 首跑不得复用现存项目: {stdout}");
+    assert!(stderr.contains("新的空目录"), "{stderr}");
+    assert_eq!(
+        std::fs::read_to_string(&sentinel).expect("账本事实仍可读取"),
+        "existing-ledger-fact\n"
+    );
+    assert!(
+        !project.join("qianxing.runtime.json").exists(),
+        "拒绝必须发生在任何项目文件写入之前"
+    );
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
+fn paper_quickstart_rejects_backtest_only_options_before_writing() {
+    for (suffix, option) in [("html", "--html"), ("strategy", "--strategy")] {
+        let base = temp_base(&format!("paper-{suffix}"));
+        let project = base.join("paper project");
+        let mut args = vec![
+            "quickstart".to_owned(),
+            project.to_string_lossy().into_owned(),
+            "--profile".to_owned(),
+            "paper".to_owned(),
+            option.to_owned(),
+        ];
+        if option == "--strategy" {
+            args.push("ema_cross".to_owned());
+        }
+        let borrowed = args.iter().map(String::as_str).collect::<Vec<_>>();
+        let (code, stdout, stderr) = run(&base, &borrowed);
+        assert_eq!(code, 2, "Paper quickstart 不接受 {option}: {stdout}");
+        assert!(stderr.contains("不接受 --html 或 --strategy"), "{stderr}");
+        assert!(!project.exists(), "拒绝必须发生在创建项目之前");
+        let _ = std::fs::remove_dir_all(base);
+    }
+}
+
 /// 只有已经实现完整首跑链的 profile 才能通过 quickstart 参数校验。
 #[test]
 fn unknown_quickstart_profile_is_rejected_before_writing() {
