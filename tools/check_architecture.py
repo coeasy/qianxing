@@ -16051,6 +16051,17 @@ def performance_baseline_check() -> None:
     workflow_source = workflow.read_text(encoding="utf-8") if workflow.is_file() else ""
     performance_job = workflow_source.split("  performance-trend:", 1)[-1].split("\n  python-wheel-build:", 1)[0]
     check(
+        "name: Select PR Criterion scope" in performance_job
+        and '"$BASE_SHA...$GITHUB_SHA"' in performance_job
+        and "crates/qx-core/src" in performance_job
+        and "crates/qx-core/benches" in performance_job
+        and "steps.criterion-scope.outputs.profile" in performance_job
+        and '"pr-core"' in bench_driver_source
+        and "PR_CORE_CRITERION_FILTERS" in bench_driver_source,
+        "PR 保持 21 个产品热路径样本；涉及 qx-core 或共享构建输入时追加完整 core 基准",
+        "PR 性能基准范围未由 qx-core 源码/构建输入变更驱动",
+    )
+    check(
         "performance-trend:" in workflow_source
         and "name: Blocking registered performance regressions" in workflow_source
         and "--targets maturity/targets.yaml" in performance_job

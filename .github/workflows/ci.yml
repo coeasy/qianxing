@@ -324,13 +324,31 @@ jobs:
           assert report["deterministic_across_repeats"] is True, report
           print("Observed 2 CPU quota, 8 GiB memory quota, and stable real-data results.")
           PY
+      - name: Select PR Criterion scope
+        id: criterion-scope
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --no-tags origin "$BASE_SHA"
+          if git diff --quiet "$BASE_SHA...$GITHUB_SHA" -- \
+              Cargo.toml Cargo.lock rust-toolchain.toml .cargo/config.toml \
+              crates/qx-core/Cargo.toml crates/qx-core/src crates/qx-core/benches; then
+            echo "profile=pr" >> "$GITHUB_OUTPUT"
+            echo "qx-core and shared Rust build inputs are unchanged; using the scoped PR profile."
+          else
+            echo "profile=pr-core" >> "$GITHUB_OUTPUT"
+            echo "qx-core or shared Rust build inputs changed; including the full qx-core benchmark suite."
+          fi
       - name: Measure end-to-end and kernel performance
+        env:
+          CRITERION_PROFILE: ${{ github.event_name == 'pull_request' && steps.criterion-scope.outputs.profile || 'full' }}
         run: |
           python3 benchmarks/run_baseline.py \
             --binary target/release/qx-cli \
             --out benchmarks/results/end-to-end.json --json --repeats 7
           python3 benchmarks/run_rust_bench.py \
-            --profile "${{ github.event_name == 'pull_request' && 'pr' || 'full' }}" \
+            --profile "$CRITERION_PROFILE" \
             --out benchmarks/results/rust-micro.json
           python3 benchmarks/run_ashare_profile_backtest.py \
             --binary target/release/qx-cli \
