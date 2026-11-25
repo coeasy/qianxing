@@ -21057,6 +21057,63 @@
         }
       ],
       "notes": "Final R23 scope and title integrity gate with defensive handling of malformed ledger fields; R23 remains pending explicit human review."
+    },
+    {
+      "run_id": "867b689c-6aa3-402d-bd6e-63ecf80fd1f5",
+      "acceptance_id": "R23-AC01",
+      "recorded_at_utc": "2026-11-25T19:11:27.366206Z",
+      "source_revision": "84b0b9e174a9f265879de10c8ae507d857fb6a1e",
+      "source_tree_sha256": "0d8ad903b6bc773a9405522c21e595165145f7e93c470f58eaf4019046a12f79",
+      "source_manifest": "maturity/acceptance-artifacts/867b689c-6aa3-402d-bd6e-63ecf80fd1f5.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "python",
+        "tools/check_strategy_refactor_ledger.py"
+      ],
+      "inputs": [
+        {
+          "path": "maturity/strategy-run-refactor-work-packages.json",
+          "sha256": "83032e910681fe88736ecf437d1a6b293bc905512d4ecd3ee08630db52ccd942"
+        },
+        {
+          "path": "schemas/strategy-run-acceptance-v1.json",
+          "sha256": "739434056feb16d3a569cb8e23265c8fe9e59a5e55921c49615f66c91933df37"
+        },
+        {
+          "path": "tools/record_strategy_acceptance.py",
+          "sha256": "d440b87a6f89b382dbaa202205245a8b67e8bbe1eb40992461978a8ca302b91d"
+        },
+        {
+          "path": "tools/check_strategy_refactor_ledger.py",
+          "sha256": "babb0647cb73a89c4e59f362f9816fefc4f37390f6de6143205295ce8c5aec43"
+        },
+        {
+          "path": "docs/architecture-local-server-refactor-review-2026-10-28.md",
+          "sha256": "696bdf8af31b547b82fb4cbea2d32ebe4d96a027a2dafd8e7eed0442533ceffa"
+        },
+        {
+          "path": "docs/牵星全量优化方案与竞品超越路线图-2026-11-11.md",
+          "sha256": "c33999169e4225c6c0eb0b6fadc8db7965dcb0803a13b083e8aca32f6187a1b5"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/867b689c-6aa3-402d-bd6e-63ecf80fd1f5.log",
+          "sha256": "7fd7ac2ceff72002e657461ae30ca9e6ae828b273f0434e7b9052dc319e8ee60"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/867b689c-6aa3-402d-bd6e-63ecf80fd1f5.source-tree.json",
+          "sha256": "ae4db6e861954fa3f42ee57d3fed166056c9be75f5811ddfd089308852965a13"
+        }
+      ],
+      "notes": "R23 scope and source-tree-bound evidence contract verified at the benchmark timing precision revision; all recorded inputs are present in the bound source manifest."
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"
