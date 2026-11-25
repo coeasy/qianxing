@@ -1481,7 +1481,7 @@ def snapshot_project_input(root: Path, input_path: Path) -> Path:
     run = _ACTIVE.get()
     if run is None:
         raise RuntimeError("input snapshots require an active managed project run")
-    from .strategy_project import _INPUT_PATH_KEYS, _resolve_input_paths
+    from .strategy_project import _iter_input_path_fields, _resolve_input_paths
 
     input_bytes = input_path.read_bytes()
     try:
@@ -1501,53 +1501,43 @@ def snapshot_project_input(root: Path, input_path: Path) -> Path:
     copied: dict[str, str] = {}
     source_records: dict[str, dict[str, Any]] = {}
 
-    def freeze(value: Any) -> None:
-        if isinstance(value, dict):
-            for key, item in value.items():
-                if key in _INPUT_PATH_KEYS and isinstance(item, str):
-                    source = Path(item)
-                    if not source.is_absolute():
-                        source = root / source
-                    source = source.resolve(strict=True)
-                    destination_text = None
-                    digest_state = hashlib.sha256()
-                    temporary = snapshots / f".{uuid.uuid4().hex}.tmp"
-                    try:
-                        with source.open("rb") as source_stream, temporary.open("xb") as output_stream:
-                            for chunk in iter(lambda: source_stream.read(1024 * 1024), b""):
-                                digest_state.update(chunk)
-                                output_stream.write(chunk)
-                            output_stream.flush()
-                            os.fsync(output_stream.fileno())
-                        digest = digest_state.hexdigest()
-                        destination_text = copied.get(digest)
-                        suffix = source.suffix[:32]
-                        destination = snapshots / f"{digest}{suffix}"
-                        if destination_text is None:
-                            if destination.exists():
-                                temporary.unlink(missing_ok=True)
-                            else:
-                                os.replace(temporary, destination)
-                            destination_text = str(destination.resolve())
-                            copied[digest] = destination_text
-                            source_records[digest] = {
-                                "sha256": digest,
-                                "source": str(source),
-                                "snapshot": destination_text,
-                                "bytes": destination.stat().st_size,
-                            }
-                        else:
-                            temporary.unlink(missing_ok=True)
-                    finally:
-                        temporary.unlink(missing_ok=True)
-                    value[key] = destination_text
+    for parent, key, raw in _iter_input_path_fields(resolved):
+        source = Path(raw)
+        if not source.is_absolute():
+            source = root / source
+        source = source.resolve(strict=True)
+        destination_text = None
+        digest_state = hashlib.sha256()
+        temporary = snapshots / f".{uuid.uuid4().hex}.tmp"
+        try:
+            with source.open("rb") as source_stream, temporary.open("xb") as output_stream:
+                for chunk in iter(lambda: source_stream.read(1024 * 1024), b""):
+                    digest_state.update(chunk)
+                    output_stream.write(chunk)
+                output_stream.flush()
+                os.fsync(output_stream.fileno())
+            digest = digest_state.hexdigest()
+            destination_text = copied.get(digest)
+            suffix = source.suffix[:32]
+            destination = snapshots / f"{digest}{suffix}"
+            if destination_text is None:
+                if destination.exists():
+                    temporary.unlink(missing_ok=True)
                 else:
-                    freeze(item)
-        elif isinstance(value, list):
-            for item in value:
-                freeze(item)
-
-    freeze(resolved)
+                    os.replace(temporary, destination)
+                destination_text = str(destination.resolve())
+                copied[digest] = destination_text
+                source_records[digest] = {
+                    "sha256": digest,
+                    "source": str(source),
+                    "snapshot": destination_text,
+                    "bytes": destination.stat().st_size,
+                }
+            else:
+                temporary.unlink(missing_ok=True)
+        finally:
+            temporary.unlink(missing_ok=True)
+        parent[key] = destination_text
     destination = run.directory / "preflight-input.json"
     _write(destination, resolved)
     run.record["input_spec_source"] = str(input_path.resolve())

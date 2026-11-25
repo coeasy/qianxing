@@ -18,7 +18,7 @@ import sys
 import tempfile
 import threading
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
 
 from .process_tree import run_process_tree
 from qianxing_strategy.manifest import (
@@ -98,28 +98,77 @@ _INPUT_PATH_KEYS = {
     "depth_path", "quality_manifest_path", "dataset_snapshot_path",
 }
 
+_STRATEGY_CONFIG_KEYS = {"strategy", "strategies", "strategy_slot"}
+
+
+def _iter_input_path_fields(
+    value: Any,
+    *,
+    in_strategy_config: bool = False,
+    in_base_config: bool = False,
+    at_root: bool = True,
+) -> Iterator[tuple[dict[str, Any], str, str]]:
+    """Yield mutable object/key/path triples for declared input-file references.
+
+    Strategy config is user-defined: a parameter named ``path`` is a string value,
+    not an instruction to read that value as a file. Keep that subtree opaque while
+    still resolving explicit dataset paths elsewhere in the input spec.
+    """
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in _STRATEGY_CONFIG_KEYS:
+                yield from _iter_input_path_fields(
+                    item,
+                    in_strategy_config=True,
+                    at_root=False,
+                )
+            elif key == "base":
+                yield from _iter_input_path_fields(
+                    item,
+                    in_strategy_config=in_strategy_config,
+                    in_base_config=True,
+                    at_root=False,
+                )
+            elif key == "parameters" and (
+                at_root or in_strategy_config or in_base_config
+            ):
+                yield from _iter_input_path_fields(
+                    item,
+                    in_strategy_config=True,
+                    at_root=False,
+                )
+            elif (
+                not in_strategy_config
+                and key in _INPUT_PATH_KEYS
+                and isinstance(item, str)
+            ):
+                yield value, key, item
+            else:
+                yield from _iter_input_path_fields(
+                    item,
+                    in_strategy_config=in_strategy_config,
+                    at_root=False,
+                )
+    elif isinstance(value, list):
+        for item in value:
+            yield from _iter_input_path_fields(
+                item,
+                in_strategy_config=in_strategy_config,
+                in_base_config=in_base_config,
+                at_root=False,
+            )
+
 
 def _resolve_input_paths(root: Path, spec: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """Return a copy with project-relative data references made absolute."""
     resolved_spec = copy.deepcopy(spec)
     failures: list[str] = []
-
-    def visit(value: Any) -> None:
-        if isinstance(value, dict):
-            for key, item in value.items():
-                if key in _INPUT_PATH_KEYS and isinstance(item, str):
-                    candidate = Path(item).expanduser()
-                    resolved = candidate.resolve() if candidate.is_absolute() else (root / candidate).resolve()
-                    if not resolved.is_file():
-                        failures.append(str(resolved))
-                    value[key] = str(resolved)
-                else:
-                    visit(item)
-        elif isinstance(value, list):
-            for item in value:
-                visit(item)
-
-    visit(resolved_spec)
+    for parent, key, raw in _iter_input_path_fields(resolved_spec):
+        candidate = Path(raw).expanduser()
+        resolved = candidate.resolve() if candidate.is_absolute() else (root / candidate).resolve()
+        if not resolved.is_file():
+            failures.append(str(resolved))
+        parent[key] = str(resolved)
     return resolved_spec, failures
 
 
