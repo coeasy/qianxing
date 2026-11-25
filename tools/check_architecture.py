@@ -15586,6 +15586,15 @@ def release_supply_chain_check() -> None:
         f"PyPI-before-public-GitHub={pypi_publish_after_draft}",
     )
     publish_job = release_job_sections["publish-python"]
+    checks_source = "release_sha: ${{ needs.version-consistency.outputs.release_sha }}"
+    check(
+        checks_source in quality_job
+        and checks_source in text.split("    uses: ./.github/workflows/public-ccxt-quickstart.yml", 1)[-1].split("\n  binary:", 1)[0]
+        and "QX_EXPECTED_RELEASE_SHA" in wheel_job
+        and 'qianxing.doctor()["report_renderer"]' in wheel_job,
+        "发布验收与 wheel 内置 CLI 核对冻结标签提交",
+        "CI、公共行情验收或已安装 wheel 的发布提交检查缺失",
+    )
     draft_job = release_job_sections["release"]
     wheel_artifact_pattern = "pattern: wheel-*"
     check(
