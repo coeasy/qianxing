@@ -6,14 +6,11 @@
 
 The 2026-10-29 record and the following v0.4.0 candidate checks are historical snapshots. They closed only the Windows leg at the time; the subsequent Linux Podman preflight, 33-job hosted CI run, and Linux clean-wheel acceptance are archived in the linked evidence. Those records do not describe the current release state.
 
-## Current release status (2026-11-25)
+## Current release status (2026-11-26)
 
-GitHub Release [`v0.4.1`](https://github.com/coeasy/qianxing/releases/tag/v0.4.1) provides Windows x64, Linux x64, and macOS Apple Silicon CLI binaries plus platform wheels. PyPI `qianxing==0.4.1` is published. All 14 Rust SDK crates, including `qx-sdk 0.4.1`, are published to crates.io and checksum-verified by workflow [45019067095](https://github.com/coeasy/qianxing/actions/runs/45019067095). The independent registry consumer matrix [45030066158](https://github.com/coeasy/qianxing/actions/runs/45030066158) passed on Ubuntu, Windows, and macOS from clean Cargo homes; each run completed the 70-bar quickstart with 1 fill and `Verified: true`. The project has not declared an MSRV, so this matrix is not an MSRV claim. Current capability and venue evidence is in [`maturity/capabilities.yaml`](../maturity/capabilities.yaml); package and consumer verification does not imply sandbox or production approval.
+[`v0.4.2`](https://github.com/coeasy/qianxing/releases/tag/v0.4.2) is the current published release. GitHub Release provides Windows x64, Linux x64, and macOS Apple Silicon CLI binaries, platform wheels, the C++ SDK, and the Web Console package. PyPI [`qianxing==0.4.2`](https://pypi.org/project/qianxing/0.4.2/) provides CPython 3.10+ stable-ABI wheels for Windows x64, Linux x86_64 (glibc 2.34+), and macOS Apple Silicon; all three have PyPI Trusted Publishing provenance. **A post-release audit found that the three GitHub Release wheel SHA-256 values do not match the same-named PyPI wheels. On Windows, the bundled CLI reports tag commit `6e9e862` in the PyPI wheel and dispatch commit `49ae18e` in the GitHub Release wheel.** PR [#43](https://github.com/coeasy/qianxing/pull/43) adds source-identity and byte-parity gates, but cannot change the already-published v0.4.2 files. Use the PyPI wheel for the documented Python quickstart; treat the GitHub Release wheel as a distinct artifact until a corrected version is published. The 14-crate Rust SDK closure, including `qx-sdk 0.4.2`, is published to crates.io. The clean registry consumer matrix for Ubuntu, Windows, and macOS completed the quickstart. Current capability and venue evidence is in [`maturity/capabilities.yaml`](../maturity/capabilities.yaml); package and consumer verification does not imply sandbox or production approval.
 
-
-## v0.4.2 release candidate (2026-11-25)
-
-The v0.4.2 candidate packages the Python `qianxing quickstart --profile ccxt` entry with its matching bundled Rust CLI. After the release is published, a clean Python environment can install `qianxing[ccxt]==0.4.2` and run the public-data-to-backtest-to-HTML-report flow without a separate Rust toolchain or CLI install. This is anonymous public market data only; it loads no account credentials and submits no orders. Hosted CI [#850](https://github.com/coeasy/qianxing/actions/runs/45466193593) passed all 30 jobs. Public-market acceptance [#140](https://github.com/coeasy/qianxing/actions/runs/45466194122) passed on OKX and Bitget: each fetched 180 days of 15-minute candles (17,280 bars, no missing intervals), completed the backtest with zero rejected orders, and produced HTML/SVG reports. PR [#40](https://github.com/coeasy/qianxing/pull/40) is merged and the `v0.4.2` tag exists, but its initial release run [#45515432971](https://github.com/coeasy/qianxing/actions/runs/45515432971) failed at the performance gate before wheel or GitHub Release publication. v0.4.1 remains the available stable package. PR [#41](https://github.com/coeasy/qianxing/pull/41) fixes the gate and adds a manual retry path for the existing tag; its CI passed 39/39 and it still awaits merge authorization.
+The release includes the Python `qianxing quickstart --profile ccxt` entry with its matching bundled Rust CLI. A clean Python environment can install `qianxing[ccxt]==0.4.2` and run the public-data-to-backtest-to-HTML-report flow without a separate Rust toolchain or CLI install. This reads anonymous public market data only; it loads no account credentials and submits no orders. Hosted CI [#850](https://github.com/coeasy/qianxing/actions/runs/45466193593) passed all 30 jobs. Public-market acceptance [#140](https://github.com/coeasy/qianxing/actions/runs/45466194122) passed on OKX and Bitget: each fetched 180 days of 15-minute candles (17,280 bars, no missing intervals), completed the backtest with zero rejected orders, and produced HTML/SVG reports. The initial tag run [#45515432971](https://github.com/coeasy/qianxing/actions/runs/45515432971) failed at the performance gate; after PR [#41](https://github.com/coeasy/qianxing/pull/41) merged, the protected continuation completed and v0.4.2 was published. These checks do not establish sandbox or production order approval.
 ## 安装
 
 Rust CLI 与 Python wheel 由 tag 发布流水线构建，并随 GitHub Release 提供。Python wheel 还会在全部发布门禁通过后通过 PyPI Trusted Publishing 发布。Rust CLI 提供平台二进制与源码安装路径；Rust SDK 的 14 包 crates.io 闭包现已全部发布，并通过逐包 checksum 与独立 crates.io consumer 验收，详见 [`qx-sdk` 发布说明](qx-sdk-migration.md#查看-rust-发布依赖)。
@@ -29,7 +26,7 @@ Rust CLI 与 Python wheel 由 tag 发布流水线构建，并随 GitHub Release 
 预编译 Release 二进制无需 Rust 工具链，首次使用优先下载[对应平台的 `qx-cli`](https://github.com/coeasy/qianxing/releases/latest)。从源码仓库固定 tag 编译安装时，需要 Rust 工具链（本轮实测 `cargo 1.98.1` / `rustc 1.98.1`），命令可在仓库外执行：
 
 ```bash
-cargo install --git https://github.com/coeasy/qianxing --tag v0.4.1 --locked qx-cli
+cargo install --git https://github.com/coeasy/qianxing --tag v0.4.2 --locked qx-cli
 ```
 
 在仓库根目录开发时可用 `cargo install --path crates/qx-cli --locked`；完全离线且依赖缓存齐全时再加 `--offline`。当前没有 `cargo install qianxing` 的 crates.io 发布包。
@@ -137,8 +134,9 @@ uv venv .venv-qx --python 3.12
 uv pip install --offline dist/qianxing-0.4.2-cp310-abi3-win_amd64.whl
 python -c "import qianxing as qx; print(qx.doctor())"
 # 当前稳定版 PyPI 安装
-python -m pip install "qianxing==0.4.1"
-# v0.4.2 发布后才可执行：python -m pip install "qianxing[ccxt]==0.4.2"
+python -m pip install "qianxing==0.4.2"
+# 包含匿名公开行情 quickstart 的可选 CCXT extra
+python -m pip install "qianxing[ccxt]==0.4.2"
 # PyPI 可选 extras 示例
 python -m pip install "qianxing[a-share]"
 # 本地 wheel 已进入缓存时，也可离线安装可选 extras

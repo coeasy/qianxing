@@ -110,9 +110,9 @@ domains:
   - name: release
     capability_id: qx.domain.release
     level: partial
-    evidence: [.github/workflows, tools/python_wheel_smoke.py, tools/generate_cargo_sbom.py, maturity/evidence/cargo-spdx-sbom-local-2026-11-14.json, maturity/evidence/python_sdk/windows-cp310-abi3-20261014-752e095b.yaml, tools/check_architecture.py]
-    limitations: ["v0.4.1 的 GitHub Release、PyPI wheel、crates.io 14-crate checksum 与三平台 registry consumer 闭环已通过托管证据验收；v0.4.2 的版本一致性、Python CCXT quickstart wheel、tag Release、SDK registry 上传及新版本消费者验收尚未完成", "SPDX 2.3 清单覆盖锁定 Cargo 源依赖图，不是每个平台二进制的独立 SBOM；实际 Release 附件与全部构件 attestation 尚未验收"]
-    next_gate: "验证 v0.4.2 SPDX SBOM 与平台构件 provenance/attestation 随 Release 发布并纳入哈希清单；完成 v0.4.2 Rust crate 拓扑发布与三平台 registry consumer 矩阵，并保留 Backtest/Paper 范围声明"
+    evidence: [.github/workflows, tools/python_wheel_smoke.py, tools/generate_cargo_sbom.py, maturity/evidence/cargo-spdx-sbom-local-2026-11-14.json, maturity/evidence/python_sdk/windows-cp310-abi3-20261014-752e095b.yaml, maturity/evidence/release-v0.4.2-publication-2026-11-25.json, tools/check_architecture.py]
+    limitations: ["v0.4.2 已在 GitHub Release、PyPI 与 crates.io 发布，14-crate checksum 与三平台 registry consumer 已验收；但 GitHub Release 与 PyPI 的三平台同名 wheel SHA-256 均不一致，Windows 包内 CLI 构建提交也不同，见 release-v0.4.2-publication-2026-11-25.json；PR #43 正在增加来源身份与字节对齐门禁，当前版本无法原位替换", "Release tag v0.4.2 是未签名 annotated tag", "SPDX 2.3 清单覆盖锁定 Cargo 源依赖图，不是每个平台二进制的独立 SBOM；发布 provenance 不能单独证明跨渠道构件字节一致", "公开行情与 Paper 发布范围不证明 sandbox 或 production 下单"]
+    next_gate: "合并并验证 PR #43；使用经授权的新版本号从不可变 tag 重建，确认 GitHub Release 与 PyPI 三平台 wheels 文件名和字节完全一致、内置 CLI commit 与 tag 一致，并保留 Backtest/Paper 与交易所外部验收边界"
 
 venues:
   - name: PaperVenue

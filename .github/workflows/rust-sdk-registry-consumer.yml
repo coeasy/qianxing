@@ -6,7 +6,7 @@ on:
       version:
         description: "Exact published qx-sdk version, for example 0.4.2"
         required: true
-        default: "0.4.1"
+        default: "0.4.2"
         type: string
 
 permissions:
