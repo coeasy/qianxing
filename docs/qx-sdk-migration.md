@@ -100,9 +100,7 @@ python tools/check_crates_io_artifacts.py qx-sdk --json
 设为精确的 `vX.Y.Z`，并把确认输入填写为 `qx-sdk@X.Y.Z`。工作流从默认分支读取已审阅的发布器，另行 checkout
 精确源码 tag，再执行依赖闭包预检、顺序上传、逐包 checksum 等待与独立 crates.io quickstart。不得从 PR 分支调度，
 也不要把 token 写入仓库文件或命令参数。
-首次发布会永久占用成功上传的 crate 名称和版本；如果中途失败，先检查 crates.io 已发布记录与 checksum，修复权限或
-名称冲突后从同一源码 tag 重新调度，工具只会跳过字节完全一致且未撤回的版本。续发 v0.4.1 时将 `release_tag` 设为
-`v0.4.1`、确认值设为 `qx-sdk@0.4.1`。请以 GitHub Actions 的逐包 checksum 和独立 crates.io quickstart 结果作为发布证据。
+crate 名称和版本一经上传就永久占用；中途失败时，先核对已经上传的包及其 checksum，再从原样未移动的源码 tag 续跑。工具只会跳过字节完全一致且未撤回的版本，其他构件会失败关闭。续跑时让 `release_tag` 与确认值对应同一个确切版本，并以逐包 checksum 和独立 crates.io quickstart 作为验收依据。当前 v0.4.2 的 14 包发布及三平台 consumer 验收已经完成，详见下方发布记录。
 
 ### 2. 导入前缀
 

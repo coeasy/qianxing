@@ -67,7 +67,7 @@ qx-cli quickstart my-qx --strategy macd --html
 
 Paper 是单独的本地虚拟成交模型：买单按卖一价、卖单按买一价，按该档显示数量限量成交并按 client order id 顺序处理。它不模拟隐藏流动性、排队位置、交易所撮合延迟或市场冲击，也不与 Bar/L1/L2 回测撮合等价；`paper-check --json` 会在 `paper_check.execution_model` 中输出模型与限制，并在 `paper_risk_audit` 中只读汇总 Paper 账户已持久化的风控裁决（最多展示最近 100 条，定点原始值使用字符串）。这些裁决用于审计，不代表订单成交或盈亏。文件型 Paper EventLog 大小会显示在 `paper_risk_audit.storage_observation`；默认 1 GiB 起提示，可用 `QIANXING_EVENT_LOG_WARN_BYTES` 调整。SQLite/PostgreSQL 容量需由数据库侧监控；该命令不会自动轮转或删除日志。
 
-2026-11-22 的 Windows x64/MSVC 本地源码安装记录来自 0.4.0 候选快照：`cargo install --path ... --offline` 用时 **6 分 54 秒**，版本播报为 `0.4.0`，复用了工作区缓存且构建身份带 `dirty`。这只是历史开发构建读数，不是 v0.4.1 冷安装或发布件验收；首次使用应优先走上方 GitHub Release 预编译二进制。该历史 binary 从仓库外运行 quickstart 成功，记录只证明当时的离线样例路径。
+2026-11-22 的 Windows x64/MSVC 本地源码安装记录来自 0.4.0 候选快照：`cargo install --path ... --offline` 用时 **6 分 54 秒**，版本播报为 `0.4.0`，复用了工作区缓存且构建身份带 `dirty`。这只是历史开发构建读数，不代表 v0.4.2 的公开构件或干净环境安装；首次使用应优先走上方 GitHub Release 预编译二进制。该历史 binary 从仓库外运行 quickstart 成功，记录只证明当时的离线样例路径。
 从仓库外启动时，`quickstart` 与上述六步得到相同的 `result_hash`。集成测试见 `crates/qx-cli/tests/quickstart_first_run.rs`。CLI 自带回测与 Paper 入口，跨语言策略和 CCXT worker 还需要 Python。
 
 **产物身份**：带可读本地数据集的 `init` 还会生成经 `project-manifest-v1` 校验的 `qianxing.project.json`；每次通过重放的回测除 RunManifest、summary、equity、fills 外，还会生成 `*.record.json`（RunRecord），对这四类文件逐个写入摘要。`report` 会按摘要指针读取 RunRecord、核对同轮 RunManifest 并重算每个产物摘要，缺失或被篡改即拒绝展示报告。
