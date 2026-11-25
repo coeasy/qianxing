@@ -1,13 +1,13 @@
 # Qianxing 0.4.2 发布范围（候选）
 
-状态：候选准备中，尚未合并、打 tag 或上传 PyPI / crates.io。当前公开稳定版仍为 v0.4.1。
+状态（2026-11-25）：PR #40 已合并，`v0.4.2` tag 已创建；Rust SDK 的 14 个 crates.io 包已发布并完成 checksum 与独立 consumer 验收。首次 tag 发布工作流 [#45515432971](https://github.com/coeasy/qianxing/actions/runs/45515432971) 在性能门禁失败，PyPI wheel 与 GitHub Release 尚未发布。当前公开稳定版仍为 v0.4.1。PR #41 的重复测量门禁修复和精确 tag 手动续跑入口 CI 39/39 通过，尚待合并授权。
 
 ## 面向用户的新增体验
 
 - PyPI wheel 提供 `qianxing quickstart --profile ccxt`，从 Python 入口完成匿名公开行情读取、回测和 HTML 报告。wheel 调用同版本自带的 `qx-cli`，并使用当前 Python 解释器启动行情 worker；用户无需单独安装 Rust 工具链或 CLI。
 - CCXT quickstart 默认以 1,000 USDT 固定名义金额回测（默认 100,000 USDT 研究账户的 1%），并可通过 `backtest ccxt-builtin --target-notional` 精确调整；避免把高价 BTC 的默认整币数量当成安全仓位。
 - `qianxing[ccxt]` 是可选安装项。流程只读取公开行情，不读取账户凭据、不启用执行 worker、不发送订单。无网络的离线样例仍可通过 `qianxing quickstart <目录>` 完成。
-- Rust SDK 继续通过 `qx-sdk` facade 和 14 个 crates.io 包供外部工程集成。v0.4.2 的 registry 发布、逐包 checksum 与独立 consumer 验收必须完成后，才能宣称该版本可安装。
+- Rust SDK 继续通过 `qx-sdk` facade 和 14 个 crates.io 包供外部工程集成。v0.4.2 的 14 包 registry 发布、逐包 checksum 与独立 consumer 验收均已完成；这不代表 GitHub Release、CLI 或 Python wheel 已发布。
 - crates.io 的 `qx-sdk` 包将附带包级快速接入 README：从单一依赖创建 consumer，下载有明确合成数据标识的 BarFrame，复用只读预检、回测和产物复核；未引入额外业务门面或隐式交易行为。
 
 ## 行情与回测验收范围
@@ -21,7 +21,7 @@
 
 正式发布前必须在同一个候选提交上完成版本一致性、完整 CI、Python wheel clean install / quickstart、OKX 与 Bitget 公开行情验收、Windows/Linux/macOS CLI 与 wheel 构建、C++ SDK、SBOM、校验和及来源证明。Python wheel 和内置 CLI 的身份必须匹配。
 
-Rust SDK 14 包闭包应从不可变 `v0.4.2` tag 依赖拓扑发布；逐包 registry checksum 与 Ubuntu、Windows、macOS clean Cargo home 消费者 quickstart 均通过后，才将 `qx-sdk 0.4.2` 标记为已发布。
+Rust SDK 14 包闭包已从不可变 `v0.4.2` tag 依赖拓扑发布；registry API 与 Ubuntu、Windows、macOS clean Cargo home consumer quickstart 均验证了 `qx-sdk 0.4.2`。Python wheel 和 GitHub Release 仍须完成各自发布及独立安装/资产核验。
 
 ## 不在本版承诺范围
 
@@ -29,4 +29,4 @@ Rust SDK 14 包闭包应从不可变 `v0.4.2` tag 依赖拓扑发布；逐包 re
 - Python wheel 的 CCXT 路径不是账户交易客户端；公开行情验收不得表述为订单连接器验收。
 - Paper 撮合结果不等价于交易所撮合，不证明真实流动性、排队位置、市场冲击或策略盈利能力。
 
-发布后应把 GitHub Release、PyPI 版本、crates.io 工作流和独立消费者结果写回本页与成熟度证据；在此之前，全部 v0.4.2 内容均为候选说明。
+完成 PyPI 与 GitHub Release 后，应把发布文件、校验和、provenance、crates.io 工作流和独立消费者结果写回本页与成熟度证据。当前 v0.4.2 的 crates.io SDK 已发布；未发布的 Python wheel 与 GitHub Release 仍属候选。
