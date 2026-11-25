@@ -3,7 +3,9 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
-use super::cli_value_parsers::{parse_bps, parse_quantity, parse_relay_limit};
+use super::cli_value_parsers::{
+    parse_bps, parse_quantity, parse_quote_notional, parse_relay_limit,
+};
 use super::console_args::ConsoleArgs;
 use super::data_validate_args::{DatasetSnapshotArgs, DepthDatasetValidateArgs};
 use super::evidence_signature_args::EvidenceArgs;
@@ -640,6 +642,9 @@ pub(crate) enum BacktestCommand {
         spec: Option<PathBuf>,
         #[arg(value_parser = parse_quantity)]
         quantity: Option<i64>,
+        /// Fixed quote-currency notional target (for example 1000 USDT); overrides whole-unit quantity.
+        #[arg(long = "target-notional", value_name = "QUOTE_AMOUNT", value_parser = parse_quote_notional)]
+        target_notional_raw: Option<i128>,
         #[arg(long)]
         config: Option<PathBuf>,
         /// Use the public CCXT market metadata maker/taker defaults as the frozen backtest cost.

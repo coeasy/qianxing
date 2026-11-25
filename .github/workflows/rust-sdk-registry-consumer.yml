@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Exact published qx-sdk version, for example 0.4.1"
+        description: "Exact published qx-sdk version, for example 0.4.2"
         required: true
         default: "0.4.1"
         type: string

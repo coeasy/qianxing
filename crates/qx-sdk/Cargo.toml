@@ -1,6 +1,7 @@
 [package]
 name = "qx-sdk"
 description = "牵星面向第三方的稳定 Rust 门面（方案 §6.1）：单一 qx-app 内核之上的 semver 边界"
+readme = "README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -18,10 +19,10 @@ exclude = [".task-tmp/**", ".tmp-test/**"]
 # `qx_strategy::BuiltinStrategyKind`，而 qx-app 没有把它重导出。第三方要构造一份回测规格，
 # 就必须拿得到这个枚举——否则门面等于少了一块，集成方只能自己再加一个 `qx-strategy` 依赖，
 # 那正是门面要消灭的状态。这不是"拼接领域 crate"，是**补全 qx-app 自己的输入类型**。
-qx-app = { version = "0.4.1", path = "../qx-app" }
-qx-execution = { version = "0.4.1", path = "../qx-execution" }
-qx-provider = { version = "0.4.1", path = "../qx-provider" }
-qx-strategy = { version = "0.4.1", path = "../qx-strategy" }
+qx-app = { version = "0.4.2", path = "../qx-app" }
+qx-execution = { version = "0.4.2", path = "../qx-execution" }
+qx-provider = { version = "0.4.2", path = "../qx-provider" }
+qx-strategy = { version = "0.4.2", path = "../qx-strategy" }
 serde_json = { workspace = true }
 serde = { workspace = true }
 

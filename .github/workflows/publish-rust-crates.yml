@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Exact source tag to publish, for example v0.4.1"
+        description: "Exact source tag to publish, for example v0.4.2"
         required: true
         type: string
       confirm:
-        description: "Type the exact SDK release identity, for example qx-sdk@0.4.1"
+        description: "Type the exact SDK release identity, for example qx-sdk@0.4.2"
         required: true
         type: string
 

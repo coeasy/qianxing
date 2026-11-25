@@ -17,6 +17,7 @@ pub(crate) struct CcxtBuiltinBacktestInput<'a> {
     pub(crate) end_ms: u64,
     pub(crate) spec_path: Option<&'a Path>,
     pub(crate) quantity: i64,
+    pub(crate) target_notional_raw: Option<i128>,
     pub(crate) runtime_config_path: Option<&'a Path>,
     pub(crate) use_public_default_fees: bool,
 }
@@ -33,6 +34,7 @@ pub(crate) fn run_ccxt_builtin_backtest(
         end_ms,
         spec_path,
         quantity,
+        target_notional_raw,
         runtime_config_path,
         use_public_default_fees,
     } = input;
@@ -41,6 +43,9 @@ pub(crate) fn run_ccxt_builtin_backtest(
     }
     if quantity <= 0 {
         return Err("内置策略 quantity 必须为正整数".into());
+    }
+    if target_notional_raw.is_some_and(|value| value <= 0) {
+        return Err("target-notional 必须为正数".into());
     }
     let kind = BuiltinStrategyKind::parse(strategy_name)?;
     if timeframe.ends_with('M') {
@@ -177,6 +182,7 @@ pub(crate) fn run_ccxt_builtin_backtest(
         &snapshot.bars_path,
         effective_spec_path.as_deref(),
         quantity,
+        target_notional_raw,
         Some(&snapshot.manifest_path),
         &runtime_path,
         kind,

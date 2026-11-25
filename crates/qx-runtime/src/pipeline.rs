@@ -1021,7 +1021,7 @@ impl LiveEventPipeline {
 
     /// 返回 EventLog 中最近一次完整 L1 报价及买卖盘数量。
     pub fn latest_quote_with_depth(&self, instrument: &InstrumentId) -> Option<QuoteTick> {
-        self.quote_index.latest_quote(instrument)
+        self.quote_index.latest_quote(self.log.events(), instrument)
     }
 
     /// 返回最近一次完整 L1 报价与本地接收时间，供实时执行入口检查行情新鲜度。
@@ -1029,7 +1029,8 @@ impl LiveEventPipeline {
         &self,
         instrument: &InstrumentId,
     ) -> Option<(QuoteTick, u64)> {
-        self.quote_index.latest_received_quote(instrument)
+        self.quote_index
+            .latest_received_quote(self.log.events(), instrument)
     }
 
     /// Check whether the latest durable order book for this instrument equals the supplied

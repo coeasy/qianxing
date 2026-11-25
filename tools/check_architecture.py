@@ -6544,14 +6544,14 @@ def event_consumer_pipe_write_budget_check() -> None:
 
 
 def ccxt_pipe_write_budget_check() -> None:
-    """公共 CCXT 进程桥的 stdin 写入必须与读取同受 timeout_ms 约束（V13 R4-A / R17 fam04）。
+    """公共 CCXT 进程桥的 stdin 写入与读取必须同受按操作选择的 RPC deadline 约束。
 
     `CcxtProcessClient::call`（qx-adapter/src/ccxt.rs）修复前把 write_all 直接跑在主线程，
     只有后面的 recv_timeout 收口——一旦 Python CCXT worker "活着但不再读 stdin"（例如卡在一次
     长网络调用里），超出 OS 匿名管道缓冲（~64KB）的那段 write_all 会永久阻塞，timeout_ms 管不到，
     本进程就此卡死。这与策略宿主（V13 R2 #281）和 event consumer handler（#282）是同一个缺陷的
     第三处。R17 把三处收进唯一一条带预算的写入通道 `qx_process_io::write_all_within`，判据改钉
-    "这一处走的是统一通道、预算取自 self.timeout_ms、成功分支回收句柄"。
+    "这一处走的是统一通道、预算取自请求预算选择器、成功分支回收句柄"。
     """
     source = (CRATES / "qx-adapter/src/ccxt.rs").read_text(encoding="utf-8")
     start = source.index('fn call(&mut self, request: Value) -> Result<Value, String> {')
@@ -6565,15 +6565,37 @@ def ccxt_pipe_write_budget_check() -> None:
         f"write_all_within {region.count('write_all_within(')}（期望 1）、"
         f"裸 write_all {region.count('.write_all(')}（期望 0）",
     )
-    # 预算必须真的取自 timeout_ms，而不是拍一个大常数把无限阻塞换成"很久后才失败"。
+    # 写入预算须来自操作选择器，而不是拍常数；读取使用写入后的同一个总 deadline。
+    request_budget_start = source.index("fn timeout_for_request(")
+    request_budget_end = source.index("/// Send one request", request_budget_start)
+    request_budget = source[request_budget_start:request_budget_end]
     wcall = ""
     if "write_all_within(" in region:
         wstart = region.index("write_all_within(")
         wcall = region[wstart : wstart + 240]
+    normalized_wcall = re.sub(r"\s+", " ", wcall)
     check(
-        "Duration::from_millis(self.timeout_ms)" in wcall,
-        "CCXT 写侧等待预算与读侧同源，取自 self.timeout_ms",
-        "write_all_within 调用窗口内没有引用 self.timeout_ms",
+        "let timeout = Duration::from_millis(timeout_ms)" in region
+        and "write_all_within(stdin, bytes, timeout," in normalized_wcall
+        and "let remaining = timeout.saturating_sub(started.elapsed())" in region
+        and ".recv_timeout(remaining)" in region
+        and "request.get(\"op\").and_then(Value::as_str) == Some(\"fetch_ohlcv\")" in request_budget
+        and '"historical_data_timeout_ms"' in request_budget
+        and '"rpc_timeout_ms"' in request_budget,
+        "CCXT 写入和读取共用有界 deadline，历史行情与其他 RPC 按请求类型选预算",
+        "写侧未使用请求预算、读侧未用同一总 deadline，或 fetch_ohlcv/普通 RPC 预算未分开",
+    )
+    cancellable_start = source.index("pub fn call_cancellable(")
+    cancellable_end = source.index("fn stop_child(", cancellable_start)
+    cancellable = source[cancellable_start:cancellable_end]
+    normalized_cancellable = re.sub(r"\s+", " ", cancellable)
+    check(
+        "Self::timeout_for_request(" in cancellable
+        and "let timeout = Duration::from_millis(timeout_ms)" in cancellable
+        and "write_all_within_cancellable(stdin, bytes, timeout," in normalized_cancellable
+        and "let remaining = timeout.saturating_sub(started.elapsed())" in cancellable,
+        "CCXT 可取消 RPC 同样使用请求预算并共享写读 deadline",
+        "可取消路径没有复用按请求选择的有界 deadline",
     )
     # 超时是可观测事实：成功分支回收一次句柄，失败按"提交结果未知"报出去。
     check(
@@ -15951,7 +15973,10 @@ def performance_baseline_check() -> None:
         and "qx_runtime_latest_quote_lookup" in runtime_criterion_source
         and "latest_quote_with_depth_and_receive_time" in runtime_pipeline_source
         and "self.quote_index.remember(event)" in runtime_pipeline_source
-        and "self.quote_index.latest_received_quote(instrument)" in runtime_pipeline_source
+        and ".latest_received_quote(self.log.events(), instrument)" in runtime_pipeline_source
+        and "OnceLock<BTreeMap<InstrumentId, LatestQuoteState>>" in runtime_quote_index_source
+        and "self.by_instrument.get_or_init" in runtime_quote_index_source
+        and "self.by_instrument.get_mut()" in runtime_quote_index_source
         and "paper-execution:market:" in runtime_quote_index_source
         and '"qx_runtime_latest_quote_lookup/{mode}/{size}"' in bench_driver_source
         and '"qx-runtime"' in bench_driver_source,
@@ -15977,11 +16002,13 @@ def performance_baseline_check() -> None:
     )
     check(
         "steady_state_pipeline_ingest" in bench_source
+        and "raw_ms" in bench_source
         and "steady_state_pipeline_ingest" in micro_driver_source
         and "steady_state_tick_curve" in micro_driver_source
+        and "window_p50_ms" in micro_driver_source
         and "candidate_positive_knee_at_history_events" in micro_driver_source,
-        "Rust 基准测量并输出 1k/8k/64k 单次 pipeline ingest 的边际成本曲线",
-        "缺少真实单 tick 工作负载、证据生成或正向拐点判定",
+        "Rust 基准测量 1k/8k/64k 单次 pipeline ingest，并输出窗口重复样本和边际成本曲线",
+        "缺少真实单 tick 工作负载、窗口重复样本、证据生成或正向拐点判定",
     )
     compare = ROOT / "benchmarks/compare_baseline.py"
     compare_source = compare.read_text(encoding="utf-8") if compare.is_file() else ""
@@ -15992,9 +16019,12 @@ def performance_baseline_check() -> None:
         and "load_thresholds(args.targets)" in compare_source
         and "ratio > 1 + threshold" in compare_source
         and 'report.get("criterion_records", [])' in compare_source
-        and 'row["median_ns"]' in compare_source,
-        "同机已登记基准回归按 targets.yaml 阈值阻断，性能提升不失败",
-        "比较器缺少台账阈值、阻断退出或仅识别回归方向的判据",
+        and 'row.get("mean_ns", row.get("median_ns"))' in compare_source
+        and 'row.get("mean_ci95_ns")' in compare_source
+        and "new_interval[0] > threshold_bound" in compare_source
+        and 'key[0] == "steady_state_pipeline_ingest"' in compare_source,
+        "Criterion 使用 95% 置信区间，端到端和稳态 pipeline 仅在重复样本确认越过 targets.yaml 阈值时阻断",
+        "比较器缺少台账阈值、阻断退出或可靠重复样本回归判据",
     )
     targets_source = TARGETS_FILE.read_text(encoding="utf-8")
     threshold_block = _block_lines(targets_source, "benchmark_regression_thresholds")
@@ -16011,8 +16041,13 @@ def performance_baseline_check() -> None:
         and "test_unregistered_metric_group_is_not_blocked" in compare_tests_source
         and "test_new_paper_lifecycle_semantics_do_not_compare_with_old_workload_id" in compare_tests_source
         and "test_registered_paper_lifecycle_v2_regression_over_ten_percent_fails" in compare_tests_source
+        and "test_short_criterion_estimate_without_confidence_intervals_is_diagnostic" in compare_tests_source
+        and "test_criterion_point_spike_with_overlapping_confidence_intervals_is_non_blocking" in compare_tests_source
+        and "test_rust_micro_pipeline_ingest_blocks_only_beyond_window_repeat_envelope" in compare_tests_source
+        and "test_rust_micro_pipeline_ingest_legacy_baseline_without_windows_is_inconclusive" in compare_tests_source
+        and "test_end_to_end_point_spike_with_overlapping_repeat_envelope_is_inconclusive" in compare_tests_source
         and "test_crypto_paper_worker_e2e_record_uses_blocking_end_to_end_threshold" in compare_tests_source,
-        "性能阈值在目标台账登记且回归/改善/首样本/未登记/版本化 workload 各有行为用例",
+        "性能阈值在目标台账登记且重复样本边界、Criterion 区间、改善、首样本和版本化 workload 各有行为用例",
         f"登记组={sorted(threshold_groups)} / 比较器行为用例存在={compare_tests.is_file()}",
     )
     workflow = ROOT / ".github/workflows/ci.yml"
@@ -18122,6 +18157,8 @@ def pipeline_market_fact_index_check() -> None:
     service = case_source("crates/qx-service/src/ccxt_market_host.rs")
     remember = _rust_fn_body(index, "remember")
     quote_remember = _rust_fn_body(quote_index, "remember")
+    quote_remember_in = _rust_fn_body(quote_index, "remember_in")
+    quote_index_builder = _rust_fn_body(quote_index, "index")
     apply_index_event = _rust_fn_body(pipeline, "apply_index_event")
     append = _rust_fn_body(pipeline, "append_at_engine")
     quote_reader = _rust_fn_body(pipeline, "latest_quote_with_depth")
@@ -18145,7 +18182,10 @@ def pipeline_market_fact_index_check() -> None:
         and "latest_received" in quote_index
         and "PAPER_EXECUTION_MARKET_PREFIX" in quote_index
         and quote_remember is not None
-        and "latest_received" in quote_remember,
+        and (
+            "latest_received" in quote_remember
+            or (quote_remember_in is not None and "latest_received" in quote_remember_in)
+        ),
         "报价值与 freshness 由 quote index 维护，盘口位置索引按标的更新",
         "行情索引缺少按标的报价/盘口投影或 Paper freshness 语义",
     )
@@ -18159,17 +18199,30 @@ def pipeline_market_fact_index_check() -> None:
         and "self.quote_index.remember(event)" in apply_index_event
         and "self.quote_index.remember(&event)" in append
         and quote_reader is not None
-        and "self.quote_index.latest_quote(instrument)" in quote_reader
+        and (
+            "self.quote_index.latest_quote(instrument)" in quote_reader
+            or "self.quote_index.latest_quote(self.log.events(), instrument)" in quote_reader
+        )
         and "events().iter()" not in quote_reader
         and freshness_reader is not None
-        and "self.quote_index.latest_received_quote(instrument)" in freshness_reader
+        and (
+            "self.quote_index.latest_received_quote(instrument)" in freshness_reader
+            or "latest_received_quote(self.log.events(), instrument)" in freshness_reader
+        )
         and "events().iter()" not in freshness_reader
+        and (
+            quote_index_builder is None
+            or (
+                "get_or_init" in quote_index_builder
+                and "remember_in" in quote_index_builder
+            )
+        )
         and book_reader is not None
         and "self.market_facts" in book_reader
         and ".get(event_index)" in book_reader
         and "events().iter()" not in book_reader,
-        "报价 freshness 与最新盘口查询使用各自的索引，追加/重放共同维护索引",
-        "最新行情/盘口查询仍扫描全日志，或增量追加/重放没有维护对应索引",
+        "报价 freshness 与最新盘口查询使用各自索引，追加/重放维护投影",
+        "最新行情/盘口读取未走索引，或增量追加/重放未维护索引；惰性建索引须从 EventLog 初始化",
     )
     check(
         book_poll is not None
@@ -25461,7 +25514,9 @@ def cli_behavior_parity_check() -> None:
                 "fn bar_dataset_validation_replays_the_same_manifest_contract()",
                 "fn dataset_ingest_replays_the_same_persisted_data_contract()",
                 "fn depth_dataset_validation_replays_both_tiers_and_persists_the_same_manifest()",
-                "fn quickstart_replays_the_same_five_step_backtest_contract()",
+                "fn quickstart_replays_the_same_six_step_backtest_contract()",
+                '"复核摘要并生成 EvidenceBundle"',
+                'path.ends_with(".evidence.json")',
                 "fn init_replays_project_artifacts_and_rejects_overwrite_without_force()",
                 'let args = ["init", "project/runtime.json"]',
                 '"project/README.qianxing.md"',
@@ -26048,7 +26103,7 @@ def cli_ccxt_builtin_parity_check() -> None:
                 '"op": "fetch_ohlcv"',
                 '"start_ms": 1000',
                 '"end_ms": 70000',
-                "result_hash=c3d92708bceb2ecb",
+                "result_hash=ae3ebd2ee27f9304",
                 "immutable normalized CCXT dataset cache",
                 "manifest_fingerprint",
                 "quality_manifest_path",

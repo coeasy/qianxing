@@ -98,7 +98,7 @@ pub fn single_strategy_backtest_bindings_from_runtime(
                     ));
                 }
             }
-            let builtin_config = qx_runtime::builtin_strategy_config_from_runtime(
+            let mut builtin_config = qx_runtime::builtin_strategy_config_from_runtime(
                 &input.config.strategy,
                 &input.frame.instrument,
             )
@@ -106,6 +106,8 @@ pub fn single_strategy_backtest_bindings_from_runtime(
                 Some(path) => format!("{error}；runtime_config={}", path.display()),
                 None => error,
             })?;
+            builtin_config.market_spec = input.instrument_spec.clone();
+            builtin_config.validate()?;
             // The application spec is also the stable input to read-only backtest preflight.
             // Keep its strategy declaration aligned with the runtime-selected builtin instead
             // of leaving the placeholder SMA kind assembled above.
@@ -159,6 +161,7 @@ mod tests {
             "../../../../deploy/qianxing.bar-frame.example.json"
         ))
         .expect("BarFrame example is valid");
+        let market_spec = qx_core::TradingInstrumentSpec::spot_default(&frame.instrument, "USDT");
 
         let bindings =
             single_strategy_backtest_bindings_from_runtime(SingleStrategyBacktestBindingInput {
@@ -167,7 +170,7 @@ mod tests {
                 frame: &frame,
                 input_path: "bars.json".into(),
                 strategy_id: "sma_cross",
-                instrument_spec: None,
+                instrument_spec: Some(market_spec.clone()),
                 margin_model: None,
                 instrument_spec_version: "market-spec-default-v1",
                 ashare_rules: None,
@@ -189,6 +192,14 @@ mod tests {
         assert!(bindings.builtin_execution.is_some());
         assert!(bindings.builtin_signal.is_some());
         assert!(bindings.builtin_signal_note.is_some());
+        match bindings.builtin_execution.as_ref().unwrap() {
+            qx_app::StrategyBacktestExecution::NativeBuiltin { strategy, .. } => {
+                assert_eq!(strategy.market_spec, Some(market_spec));
+            }
+            qx_app::StrategyBacktestExecution::Adapter(_) => {
+                panic!("runtime builtin should remain a native strategy")
+            }
+        }
     }
 
     #[test]

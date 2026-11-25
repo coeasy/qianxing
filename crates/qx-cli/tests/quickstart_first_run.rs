@@ -1,7 +1,7 @@
 //! `qx-cli quickstart` 的首跑契约（易用性 P2 第一格 / #260 #261）。
 //!
 //! 三条判据都来自本轮实测，不是设计愿望：
-//! - 一条命令等于 README 那五条入口逐条敲：退出码 0、五句 `[完成]` 按顺序出现、项目里 17 份
+//! - 一条命令走完六步首跑：退出码 0、六句 `[完成]` 按顺序出现、项目里 18 份
 //!   文件，且 `result_hash` 与同一输入的直跑链**逐字相等**。quickstart 直调同一批函数，所以这条
 //!   相等性是结构性的——一旦有人把它改成"另起一套实现"，先在这里判红。
 //! - #260 屏幕上印出的程序名必须就是这台机器上敲得动的那个：判据取测试二进制自身的文件名，
@@ -16,10 +16,10 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// `init` 落 11 份（含 Grafana 面板）+ 首轮回测落 6 份（项目清单、datasets manifest、runs 四份核心产物及事件追溯 sidecar）；这份分解由
-/// `src/tests/init_onboarding.rs` 的 `init_lands_ten_files_and_the_advertised_backtest_adds_six`
-/// 逐文件钉住，两处口径必须一起改。
-const EXPECTED_PROJECT_FILES: usize = 17;
+/// `init` 落 11 份（含 Grafana 面板），首轮回测落 6 份（项目清单、datasets manifest、runs 四份核心产物及事件追溯 sidecar），
+/// 报告再落 1 份 EvidenceBundle。`src/tests/init_onboarding.rs` 中的 `init_lands_ten_files_and_the_advertised_backtest_adds_six`
+/// 逐文件钉住前两项；quickstart 用例钉住新增证据包，改模板时两处口径都要一起更新。
+const EXPECTED_PROJECT_FILES: usize = 18;
 
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -120,7 +120,7 @@ fn advertised_next_steps(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// 一条命令 == 逐条敲：五步、份数、落点与结果指纹逐项对照第二条链。
+/// 一条命令 == 逐条敲：六步、份数、落点、EvidenceBundle 与结果指纹逐项对照。
 #[test]
 fn one_command_lands_the_same_chain_as_the_command_by_command_chain() {
     let base = temp_base("chain");
@@ -143,13 +143,14 @@ fn one_command_lands_the_same_chain_as_the_command_by_command_chain() {
         ("建项目", "init"),
         ("静态检查", "doctor"),
         ("跑一轮回测", "backtest"),
-        ("读回摘要", "report"),
+        ("复核摘要并生成 EvidenceBundle", "report"),
+        ("离线核验证据包", "evidence"),
         ("看安全状态", "status"),
     ];
     assert_eq!(
         done.len(),
         expected.len(),
-        "首跑必须正好印五句 [完成]，实际 {} 句:\n{stdout}",
+        "首跑必须正好印六句 [完成]，实际 {} 句:\n{stdout}",
         done.len()
     );
     for (index, (label, entry)) in expected.iter().enumerate() {
@@ -166,6 +167,31 @@ fn one_command_lands_the_same_chain_as_the_command_by_command_chain() {
         "首跑落盘份数与文档口径不符：{} 里 {} 份",
         project.display(),
         count_files(&project)
+    );
+    let evidence_path = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("[Report] evidence="))
+        .map(PathBuf::from)
+        .expect("首跑报告应生成 EvidenceBundle 并回显其路径");
+    assert!(
+        evidence_path.is_file(),
+        "EvidenceBundle 不存在: {}",
+        evidence_path.display()
+    );
+    assert!(
+        evidence_path.starts_with(&project),
+        "EvidenceBundle 写出首跑项目目录"
+    );
+    assert!(
+        stdout.contains("\"operation\":\"run-evidence-input-and-artifact-verified\""),
+        "quickstart 必须真的执行离线 EvidenceBundle 校验:\n{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!(
+            "EvidenceBundle 已离线核验：{}",
+            evidence_path.display()
+        )),
+        "成功收尾应明确打印已核验的证据包落点:\n{stdout}"
     );
     // 屏幕上声明的每一份产物落点都必须在项目里：裸相对路径或写到启动目录都算跑偏。
     let mut declared = 0_usize;
@@ -270,13 +296,17 @@ fn ashare_profile_runs_the_full_offline_quickstart_chain() {
     );
     assert_eq!(
         stdout.matches("[完成] ").count(),
-        5,
-        "A 股 quickstart 必须完成五步:\n{stdout}"
+        6,
+        "A 股 quickstart 必须完成六步:\n{stdout}"
     );
     assert_eq!(
         count_files(&project),
-        16,
+        17,
         "A 股首跑落盘份数与当前 init/回测产物不一致"
+    );
+    assert!(
+        stdout.contains("\"operation\":\"run-evidence-input-and-artifact-verified\""),
+        "A 股 quickstart 也必须实际离线核验 EvidenceBundle:\n{stdout}"
     );
     assert!(
         !base.join("data").exists(),
@@ -458,8 +488,8 @@ fn second_run_without_force_stops_at_the_first_step() {
     assert_eq!(code, 0, "--force 必须把整条链条重走完: {stderr}");
     assert_eq!(
         stdout.matches("[完成] ").count(),
-        5,
-        "--force 重跑的五步不齐:\n{stdout}"
+        6,
+        "--force 重跑的六步不齐:\n{stdout}"
     );
     let _ = std::fs::remove_dir_all(base);
 }
@@ -472,7 +502,7 @@ fn html_option_writes_the_interactive_report_bundle_without_changing_backtest_id
     let (code, stdout, stderr) = run(&base, &["quickstart", &project.to_string_lossy(), "--html"]);
     assert_eq!(code, 0, "quickstart --html 失败: {stderr}");
     assert!(
-        stdout.contains("[完成] 复核摘要并生成 HTML 报告：")
+        stdout.contains("[完成] 复核摘要并生成 EvidenceBundle：")
             && stdout.contains(" report ")
             && stdout.contains("--html"),
         "报告步骤没有回显实际使用的 HTML 命令:\n{stdout}"

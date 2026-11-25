@@ -181,6 +181,7 @@ pub(super) fn run_inner(
         instrument: primary.instrument.clone(),
         quantity: Quantity::from_raw(spec.strategy.quantity_raw),
         target_notional_raw: spec.strategy.target_notional_raw,
+        market_spec: None,
         primary_market_spec: primary_spec.cloned(),
         reference_market_spec: reference_spec.cloned(),
         target_available_margin_bps: spec.strategy.target_available_margin_bps,
