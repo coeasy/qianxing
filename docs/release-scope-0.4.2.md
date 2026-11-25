@@ -34,3 +34,5 @@ Rust SDK 14 包闭包已从不可变 `v0.4.2` tag 依赖拓扑发布；registry 
 ### Python 安装包校验
 
 v0.4.2 的 Windows x64、Linux x64 和 macOS ARM64 wheel 在 PyPI 与 GitHub Release 上使用相同文件名，两个渠道公布的 SHA-256 均不同。使用 pip 安装时可在 [PyPI 文件列表](https://pypi.org/project/qianxing/0.4.2/#files) 中核对摘要。手动下载 GitHub 附件时使用该 Release 附带的 [SHA256SUMS](https://github.com/coeasy/qianxing/releases/download/v0.4.2/SHA256SUMS)。
+
+在 Windows x64 的两个独立环境中，分别安装各渠道校验过的 wheel。两者均完成离线 quickstart、生成 HTML 并通过产物核验。PyPI wheel 内置 CLI 的构建提交为 `6e9e862`，与 v0.4.2 标签一致。GitHub Release 的同名 wheel 报告 `49ae18e`。需要复现标签构建时，在 Windows 上选用 PyPI wheel。Linux 和 macOS 此处只核对了渠道摘要。
