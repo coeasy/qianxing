@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "observed_at_utc": "2026-11-25T21:32:45Z",
+  "version": "0.4.2",
+  "tag": "v0.4.2",
+  "tag_commit": "6e9e8629e378fe3dfc4e9b99cb3db2211c3ae56d",
+  "tag_signature": {
+    "verified": false,
+    "reason": "unsigned"
+  },
+  "github_release": {
+    "url": "https://github.com/coeasy/qianxing/releases/tag/v0.4.2",
+    "published_at_utc": "2026-11-25T07:02:54Z",
+    "draft": false,
+    "asset_count": 32,
+    "release_identity_commit": "6e9e8629e378fe3dfc4e9b99cb3db2211c3ae56d",
+    "sha256_manifest": "SHA256SUMS",
+    "sbom": "sbom.json",
+    "python_wheels": [
+      {
+        "filename": "qianxing-0.4.2-cp310-abi3-win_amd64.whl",
+        "sha256": "bcd3ee5882791d8047c33d7b4a6cced36a0a7a786d0dd5f16e329c9705aa95a3"
+      },
+      {
+        "filename": "qianxing-0.4.2-cp310-abi3-manylinux_2_34_x86_64.whl",
+        "sha256": "2d46e1418b686d107660d362c64e0ee7a73a38c8f4ac88fb24fe8ac156eb50f7"
+      },
+      {
+        "filename": "qianxing-0.4.2-cp310-abi3-macosx_11_0_arm64.whl",
+        "sha256": "563d60c2fb986a3a7e601c4aae4e533230c53ab81959e8dd4befca73efde0da1"
+      }
+    ]
+  },
+  "pypi": {
+    "url": "https://pypi.org/project/qianxing/0.4.2/",
+    "trusted_publishing": true,
+    "attested_workflow_commit": "49ae18e497c1192a785cc382978a63e82b3b6948",
+    "python_wheels": [
+      {
+        "filename": "qianxing-0.4.2-cp310-abi3-win_amd64.whl",
+        "sha256": "b68b6c8c6ced53e1429aa5015127c5477450be8f755fe652f779ec3b73ca5e0b"
+      },
+      {
+        "filename": "qianxing-0.4.2-cp310-abi3-manylinux_2_34_x86_64.whl",
+        "sha256": "3f599f612b410581c3fa4f37fc1e6124c8afcd1315a4572c03c3c1fba53dfc45"
+      },
+      {
+        "filename": "qianxing-0.4.2-cp310-abi3-macosx_11_0_arm64.whl",
+        "sha256": "5ef0544bc4cced74e39ec8d44392279e7b35e33a16f7c31dbe99f06d6c1d5da3"
+      }
+    ]
+  },
+  "parity_check": {
+    "same_filename_wheel_sha256_equal": false,
+    "mismatched_platforms": [
+      "windows-x86_64",
+      "linux-x86_64",
+      "macos-arm64"
+    ],
+    "windows_bundled_cli_commit": {
+      "pypi_wheel": "6e9e8629e378fe3dfc4e9b99cb3db2211c3ae56d",
+      "github_release_wheel": "49ae18e497c1192a785cc382978a63e82b3b6948"
+    }
+  },
+  "crates_io": {
+    "qx_sdk_version": "0.4.2",
+    "qx_sdk_yanked": false,
+    "qx_sdk_checksum": "50fbf354182d47edf4e87a3c633ddd173c3de496c0dafe2e8f1585f3ca0eccfc",
+    "qx_sdk_rust_version": "1.87",
+    "workspace_crate_count": 14,
+    "registry_consumer_platforms": [
+      "ubuntu",
+      "windows",
+      "macos"
+    ]
+  },
+  "evidence_sources": [
+    "https://api.github.com/repos/coeasy/qianxing/releases/tags/v0.4.2",
+    "https://api.github.com/repos/coeasy/qianxing/git/ref/tags/v0.4.2",
+    "https://api.github.com/repos/coeasy/qianxing/git/tags/cc6cb81eda00657b79be7eaa40ed8ca52fc42f52",
+    "https://pypi.org/project/qianxing/0.4.2/",
+    "https://crates.io/api/v1/crates/qx-sdk/0.4.2",
+    "https://github.com/coeasy/qianxing/pull/43"
+  ],
+  "limitations": [
+    "Wheel hashes and bundled CLI identities are compared; differing hashes do not alone establish a user-visible behavioral difference.",
+    "The PyPI attestation records the publishing workflow commit; it is not proof that the GitHub Release and PyPI wheels are byte-identical.",
+    "The tag object is unsigned.",
+    "Backtest, Paper, and anonymous public market acceptance do not establish exchange sandbox or production order acceptance."
+  ],
+  "follow_up": {
+    "pull_request": "https://github.com/coeasy/qianxing/pull/43",
+    "state_at_observation": "open",
+    "required_before_next_release": [
+      "Build release artifacts from the immutable version tag.",
+      "Exclude unrelated CI wheel artifacts from GitHub Release assembly.",
+      "Compare the complete GitHub Release wheel set byte-for-byte with the exact wheel set selected for PyPI before publishing.",
+      "Verify each bundled CLI reports the immutable tag commit."
+    ]
+  }
+}
