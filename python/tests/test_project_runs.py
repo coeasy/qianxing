@@ -691,6 +691,30 @@ class ProjectRunTests(unittest.TestCase):
         invoke.assert_not_called()
         self.assertIn("不支持 --force", self.output.getvalue())
 
+    @unittest.skipUnless(hasattr(Path, "symlink_to"), "symbolic links are unavailable")
+    def test_paper_quickstart_preserves_symlink_root_for_rust_safety_check(self):
+        target = self.root / "paper-target"
+        target.mkdir()
+        alias = self.root / "paper-link"
+        try:
+            alias.symlink_to(target, target_is_directory=True)
+        except OSError as error:
+            self.skipTest(f"cannot create symlink in this environment: {error}")
+        process = types.SimpleNamespace(
+            returncode=2,
+            stdout="",
+            stderr="Paper 首跑拒绝使用目录符号链接",
+        )
+        renderer = {"path": "qx-cli", "origin": "bundled", "status": "ready"}
+        with patch("qianxing.report_renderer.require_report_renderer", return_value=renderer), \
+             patch("subprocess.run", return_value=process) as invoke, \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.main(["quickstart", str(alias), "--profile", "paper"]), 2)
+
+        command = invoke.call_args.args[0]
+        self.assertEqual(command[2], os.path.abspath(alias))
+        self.assertNotEqual(command[2], str(alias.resolve()))
+
     def test_ccxt_quickstart_does_not_report_success_without_evidence_bundle(self):
         from qianxing_ccxt import CcxtExchangeClient
 

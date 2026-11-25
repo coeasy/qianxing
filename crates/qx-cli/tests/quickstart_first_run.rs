@@ -461,6 +461,34 @@ fn paper_quickstart_rejects_backtest_only_options_before_writing() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn paper_quickstart_rejects_symlink_project_root() {
+    use std::os::unix::fs::symlink;
+
+    let base = temp_base("paper-symlink");
+    let target = base.join("paper-target");
+    let project = base.join("paper-link");
+    std::fs::create_dir(&target).expect("创建 Paper 目标目录");
+    symlink(&target, &project).expect("创建 Paper 项目符号链接");
+    let (code, stdout, stderr) = run(
+        &base,
+        &[
+            "quickstart",
+            &project.to_string_lossy(),
+            "--profile",
+            "paper",
+        ],
+    );
+    assert_eq!(code, 2, "Paper 根路径符号链接必须失败关闭: {stdout}");
+    assert!(stderr.contains("目录符号链接"), "{stderr}");
+    assert!(
+        !target.join("qianxing.runtime.json").exists(),
+        "拒绝符号链接必须发生在目标目录写入之前"
+    );
+    let _ = std::fs::remove_dir_all(base);
+}
+
 /// 只有已经实现完整首跑链的 profile 才能通过 quickstart 参数校验。
 #[test]
 fn unknown_quickstart_profile_is_rejected_before_writing() {

@@ -1020,7 +1020,9 @@ def _run_paper_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any]
     if not executable:
         raise ValueError("匹配当前 Python wheel 的 qx-cli 不可用；请重新安装 qianxing wheel 或传入 --cli PATH")
 
-    project = Path(args.directory).expanduser().resolve(strict=False)
+    # Keep the final path component lexical so the Rust CLI can reject a symlink
+    # project root before it writes persistent Paper order/ledger state.
+    project = Path(os.path.abspath(Path(args.directory).expanduser()))
     command = [executable, "quickstart", str(project), "--profile", "paper"]
     environment = os.environ.copy()
     environment["QX_PYTHON"] = sys.executable
