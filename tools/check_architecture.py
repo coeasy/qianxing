@@ -16059,7 +16059,7 @@ def performance_baseline_check() -> None:
     performance_job = workflow_source.split("  performance-trend:", 1)[-1].split("\n  python-wheel-build:", 1)[0]
     check(
         "name: Select PR Criterion scope" in performance_job
-        and '"$BASE_SHA...$GITHUB_SHA"' in performance_job
+        and '"$BASE_SHA" "$GITHUB_SHA"' in performance_job
         and "crates/qx-core/src" in performance_job
         and "crates/qx-core/benches" in performance_job
         and "steps.criterion-scope.outputs.profile" in performance_job
