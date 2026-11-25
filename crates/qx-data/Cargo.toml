@@ -8,8 +8,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-qx-core = { version = "0.4.1", path = "../qx-core" }
-qx-datastruct = { version = "0.4.1", path = "../qx-datastruct" }
+qx-core = { version = "0.4.2", path = "../qx-core" }
+qx-datastruct = { version = "0.4.2", path = "../qx-datastruct" }
 ring = "0.17.14"
 serde = { workspace = true }
 serde_json = { workspace = true }

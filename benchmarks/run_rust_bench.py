@@ -185,6 +185,7 @@ def steady_state_tick_curve(records: list[dict]) -> dict:
             "ticks": int(row["ticks"]),
             "p50_ms_per_tick": float(row["median_ms"]),
             "p95_ms_per_tick": float(row["p95_ms"]),
+            "window_p50_ms": [float(value) for value in row["raw_ms"]],
         }
         for row in rows
     ]
@@ -223,7 +224,7 @@ def steady_state_tick_curve(records: list[dict]) -> dict:
             positive_knee = int(current["operations"])
         previous_slope = slope
     return {
-        "method": "adjacent p50 of single LiveEventPipeline::ingest calls; SQLite append + projection",
+        "method": "adjacent median of five independent window p50s for LiveEventPipeline::ingest; SQLite append + projection",
         "candidate_positive_knee_threshold_pct": MARGINAL_KNEE_THRESHOLD_PCT,
         "candidate_positive_knee_at_history_events": positive_knee,
         "not_a_statistical_claim": True,

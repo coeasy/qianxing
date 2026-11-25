@@ -111,7 +111,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON((github.event_name == 'pull_request' || inputs.public_profile == 'release') && '[{"exchange":"okx","instrument":"BTC/USDT:USDT.OKX","days":180},{"exchange":"bitget","instrument":"BTC/USDT:USDT.BITGET","days":52}]' || '[{"exchange":"okx","instrument":"BTC/USDT:USDT.OKX","days":180},{"exchange":"binance","instrument":"BTC/USDT:USDT.BINANCE","days":180},{"exchange":"bitget","instrument":"BTC/USDT:USDT.BITGET","days":52}]') }}
+        include: ${{ fromJSON((github.event_name == 'pull_request' || inputs.public_profile == 'release') && '[{"exchange":"okx","instrument":"BTC/USDT:USDT.OKX","days":180},{"exchange":"bitget","instrument":"BTC/USDT:USDT.BITGET","days":180}]' || '[{"exchange":"okx","instrument":"BTC/USDT:USDT.OKX","days":180},{"exchange":"binance","instrument":"BTC/USDT:USDT.BINANCE","days":180},{"exchange":"bitget","instrument":"BTC/USDT:USDT.BITGET","days":180}]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

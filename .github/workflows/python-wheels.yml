@@ -5,8 +5,8 @@
 # 身份字段清单与 maturity/baseline.yaml 的 artifact_identity 一致，由
 # tools/check_architecture.py 的 release_supply_chain_check 常驻核对（缺一项即红）。
 #
-# 触发：推送 `v*` tag（如 v0.1.0）。tag 必须与 Cargo.toml / python/pyproject.toml /
-# maturity/baseline.yaml 三处版本及 C++ SDK CMake project version 一致。
+# 触发：推送 `v*` tag，或从 main 手动续跑一个已存在的精确版本 tag。tag 必须与
+# Cargo.toml / python/pyproject.toml / maturity/baseline.yaml 及 C++ SDK 版本一致。
 
 name: release
 
@@ -14,6 +14,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Exact existing release tag to build and publish, for example v0.4.2"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -24,28 +30,64 @@ env:
   GIT_CONFIG_COUNT: 1
   GIT_CONFIG_KEY_0: core.longpaths
   GIT_CONFIG_VALUE_0: 'true'
+  QX_RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
 
 jobs:
   version-consistency:
     name: 版本三处一致
     runs-on: ubuntu-latest
+    outputs:
+      release_sha: ${{ steps.release_identity.outputs.release_sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
+          fetch-depth: 0
       - name: Verify tag matches the frozen release version
+        id: release_identity
         shell: bash
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME#v}"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$GITHUB_REF_NAME" != "main" ]]; then
+            echo "Manual release continuation must be dispatched from main." >&2
+            exit 1
+          fi
+          if [[ ! "$QX_RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "release tag must be an exact vX.Y.Z tag." >&2
+            exit 1
+          fi
+          tag="${QX_RELEASE_TAG#v}"
           cargo_v="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
           py_v="$(sed -n 's/^version = "\(.*\)"/\1/p' python/pyproject.toml | head -n1)"
           base_v="$(sed -n 's/^release_version: "\(.*\)"/\1/p' maturity/baseline.yaml)"
-          echo "tag=${tag} cargo=${cargo_v} pyproject=${py_v} baseline=${base_v}"
-          if [[ "${tag}" == "${cargo_v}" && "${tag}" == "${py_v}" && "${tag}" == "${base_v}" ]]; then
+          cpp_v="$(sed -n 's/^project(qianxing_strategy_sdk VERSION \([^ ]*\).*/\1/p' cpp/CMakeLists.txt)"
+          echo "tag=${tag} cargo=${cargo_v} pyproject=${py_v} baseline=${base_v} cpp=${cpp_v}"
+          if [[ "${tag}" == "${cargo_v}" && "${tag}" == "${py_v}" && "${tag}" == "${base_v}" && "${tag}" == "${cpp_v}" ]]; then
             echo "tag 与冻结版本一致"
           else
-            echo "tag 与冻结版本不一致：先同步三处再打 tag" >&2
+            echo "tag 与冻结版本不一致：拒绝发布" >&2
             exit 1
           fi
+          release_sha="$(git rev-parse HEAD)"
+          tagged_sha="$(git rev-parse "${QX_RELEASE_TAG}^{commit}")"
+          if [[ "$release_sha" != "$tagged_sha" ]]; then
+            echo "The checked-out release ref does not resolve to ${QX_RELEASE_TAG}." >&2
+            exit 1
+          fi
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            git fetch --no-tags origin main
+            main_sha="$(git rev-parse FETCH_HEAD)"
+            if ! git merge-base --is-ancestor "$release_sha" "$main_sha"; then
+              echo "The release tag must point to a commit contained in main." >&2
+              exit 1
+            fi
+            main_version="$(git show "$main_sha:Cargo.toml" | sed -n 's/^version = "\(.*\)"/\1/p' | head -n1)"
+            if [[ "$main_version" != "$tag" ]]; then
+              echo "Manual continuation is only allowed for main's current release version." >&2
+              exit 1
+            fi
+          fi
+          echo "release_sha=${release_sha}" >> "$GITHUB_OUTPUT"
 
       - name: Verify C++ SDK version matches the release tag
         shell: bash
@@ -57,7 +99,7 @@ jobs:
           line = next(line for line in Path("cpp/CMakeLists.txt").read_text().splitlines()
                       if line.startswith("project(qianxing_strategy_sdk VERSION "))
           cpp_version = line.split("VERSION ", 1)[1].split()[0]
-          tag_version = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+          tag_version = os.environ["QX_RELEASE_TAG"].removeprefix("v")
           if cpp_version != tag_version:
               raise SystemExit(f"C++ SDK version {cpp_version} does not match tag {tag_version}")
           PY
@@ -96,6 +138,8 @@ jobs:
         os: [ubuntu-22.04, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
       - uses: dtolnay/rust-toolchain@1.98.1
       - name: Build qx-cli (release, locked)
         run: cargo build --release --locked -p qx-cli
@@ -114,7 +158,7 @@ jobs:
           if [[ -f "${bin}.exe" ]]; then bin="${bin}.exe"; fi
           ext=""
           if [[ "${bin}" == *.exe ]]; then ext=".exe"; fi
-          out="qx-cli-${GITHUB_REF_NAME}-${{ runner.os }}-${{ runner.arch }}${ext}"
+          out="qx-cli-${QX_RELEASE_TAG}-${{ runner.os }}-${{ runner.arch }}${ext}"
           mkdir -p dist
           cp "${bin}" "dist/${out}"
           if command -v sha256sum >/dev/null 2>&1; then
@@ -148,6 +192,8 @@ jobs:
         python: ["3.10"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
@@ -237,6 +283,8 @@ jobs:
       attestations: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
       - name: Install C++ JSON dependency
         run: sudo apt-get update && sudo apt-get install -y nlohmann-json3-dev
       - name: Configure and build
@@ -255,7 +303,7 @@ jobs:
           ctest --test-dir build/cpp-consumer -C Release --output-on-failure
           python3 tools/package_cpp_sdk.py \
             --source dist/sdk \
-            --output "dist/qianxing-cpp-sdk-${GITHUB_REF_NAME}.tar.gz"
+            --output "dist/qianxing-cpp-sdk-${QX_RELEASE_TAG}.tar.gz"
           if command -v sha256sum >/dev/null 2>&1; then
             (cd dist && sha256sum qianxing-cpp-sdk-*.tar.gz > cpp-sdk.sha256)
           else
@@ -282,15 +330,17 @@ jobs:
       attestations: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
       - name: Package the versioned Web console
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist
           python3 tools/package_web_console.py \
-            --version "${GITHUB_REF_NAME#v}" \
-            --commit "${GITHUB_SHA}" \
-            --output "dist/qianxing-web-console-${GITHUB_REF_NAME}.tar.gz"
+            --version "${QX_RELEASE_TAG#v}" \
+            --commit "${{ needs.version-consistency.outputs.release_sha }}" \
+            --output "dist/qianxing-web-console-${QX_RELEASE_TAG}.tar.gz"
       - name: Attest Web console build provenance
         uses: actions/attest-build-provenance@v2
         with:
@@ -306,15 +356,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
       - uses: dtolnay/rust-toolchain@1.98.1
       - name: Emit SPDX 2.3 dependency SBOM from locked Cargo metadata
         run: |
           set -euo pipefail
           cargo metadata --format-version 1 --locked --all-features > sbom-cargo.json
-          SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$GITHUB_SHA")"
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct "${{ needs.version-consistency.outputs.release_sha }}")"
           python3 tools/generate_cargo_sbom.py \
             --metadata sbom-cargo.json \
-            --commit "$GITHUB_SHA" \
+            --commit "${{ needs.version-consistency.outputs.release_sha }}" \
             --created-epoch "$SOURCE_DATE_EPOCH" \
             --output sbom.json
           python3 -m unittest tools.test_generate_cargo_sbom
@@ -325,13 +377,15 @@ jobs:
 
   release:
     name: Assemble draft GitHub Release
-    needs: [quality-gates, binary, wheel, cpp-sdk, web-console, sbom]
+    needs: [version-consistency, quality-gates, binary, wheel, cpp-sdk, web-console, sbom]
     runs-on: ubuntu-latest
     permissions:
       actions: read
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -356,8 +410,8 @@ jobs:
           if not isinstance(registry_version, int) or registry_version < 1:
               raise SystemExit(f"invalid registry_version in {registry_path}")
           identity = {
-              "version": os.environ["GITHUB_REF_NAME"].lstrip("v"),
-              "git_commit": os.environ["GITHUB_SHA"],
+              "version": os.environ["QX_RELEASE_TAG"].lstrip("v"),
+              "git_commit": "${{ needs.version-consistency.outputs.release_sha }}",
               "target_triple": "multi",
               "profile": "release",
               "schema_registry_version": registry_version,
@@ -379,17 +433,17 @@ jobs:
             echo 'No release files were assembled.' >&2
             exit 1
           fi
-          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            is_draft="$(gh release view "${GITHUB_REF_NAME}" --json isDraft --jq '.isDraft')"
+          if gh release view "${QX_RELEASE_TAG}" >/dev/null 2>&1; then
+            is_draft="$(gh release view "${QX_RELEASE_TAG}" --json isDraft --jq '.isDraft')"
             if [[ "$is_draft" != true ]]; then
-              echo "Refusing to replace assets on published release ${GITHUB_REF_NAME}." >&2
+              echo "Refusing to replace assets on published release ${QX_RELEASE_TAG}." >&2
               exit 1
             fi
-            gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" --clobber
+            gh release upload "${QX_RELEASE_TAG}" "${assets[@]}" --clobber
           else
-            gh release create "${GITHUB_REF_NAME}" \
+            gh release create "${QX_RELEASE_TAG}" \
               --draft \
-              --title "牵星 ${GITHUB_REF_NAME}" \
+              --title "牵星 ${QX_RELEASE_TAG}" \
               --notes "可复现发布件：binary / wheel / C++ SDK / Web 控制台 + SHA256SUMS + sbom.json + release-identity.json（build provenance 见 Release 附件证明）。" \
               "${assets[@]}"
           fi
@@ -405,4 +459,4 @@ jobs:
       - name: Publish staged release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit "${GITHUB_REF_NAME}" --draft=false
+        run: gh release edit "${QX_RELEASE_TAG}" --draft=false

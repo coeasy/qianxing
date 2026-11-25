@@ -919,6 +919,38 @@ def _run_ccxt_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any] 
         report_path = (Path.cwd() / report_path).resolve(strict=False)
     if not report_path.is_file() or report_path.stat().st_size == 0:
         raise ValueError(f"Rust quickstart did not produce a non-empty HTML report: {report_path}")
+    evidence_path_text = next(
+        (
+            line.removeprefix("[Report] evidence=")
+            for line in completed.stdout.splitlines()
+            if line.startswith("[Report] evidence=")
+        ),
+        None,
+    )
+    if evidence_path_text is None:
+        raise ValueError("Rust quickstart exited successfully without reporting its EvidenceBundle path")
+    evidence_path = Path(evidence_path_text).expanduser()
+    if not evidence_path.is_absolute():
+        evidence_path = (Path.cwd() / evidence_path).resolve(strict=False)
+    if not evidence_path.is_file() or evidence_path.stat().st_size == 0:
+        raise ValueError(f"Rust quickstart did not produce a non-empty EvidenceBundle: {evidence_path}")
+    verification = None
+    for line in completed.stdout.splitlines():
+        if not line.startswith("{"):
+            continue
+        try:
+            candidate = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if candidate.get("operation") == "run-evidence-input-and-artifact-verified":
+            verification = candidate
+            break
+    if (
+        not isinstance(verification, dict)
+        or verification.get("ok") is not True
+        or verification.get("input_identity_recomputed") is not True
+    ):
+        raise ValueError("Rust quickstart exited successfully without a successful EvidenceBundle verification")
     return 0, {
         "status": "succeeded",
         "profile": "ccxt",
@@ -941,6 +973,14 @@ def _run_ccxt_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any] 
         "report_renderer": renderer,
         "report_format": "html",
         "report_html_path": str(report_path),
+        "run_evidence": {
+            "bundle_path": str(evidence_path),
+            "integrity_verified": True,
+            "input_identity_recomputed": True,
+            "result_recomputed": verification.get("result_recomputed") is True,
+            "run_id": verification.get("run_id"),
+            "result_hash": verification.get("result_hash"),
+        },
         "quickstart_output": completed.stdout,
         "quickstart_diagnostics": completed.stderr,
     }

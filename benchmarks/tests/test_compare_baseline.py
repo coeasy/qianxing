@@ -56,12 +56,68 @@ class CompareBaselineTests(unittest.TestCase):
 
     def test_registered_same_machine_regression_over_threshold_fails(self) -> None:
         result = self.compare(
-            [{"bars": 1000, "p50_ms": 10.0, "p95_ms": 20.0}],
-            [{"bars": 1000, "p50_ms": 11.1, "p95_ms": 20.0}],
+            [
+                {
+                    "bars": 1000,
+                    "p50_ms": 10.0,
+                    "p95_ms": 10.1,
+                    "min_ms": 9.9,
+                    "max_ms": 10.1,
+                    "repeats": 5,
+                }
+            ],
+            [
+                {
+                    "bars": 1000,
+                    "p50_ms": 11.5,
+                    "p95_ms": 11.8,
+                    "min_ms": 11.3,
+                    "max_ms": 11.8,
+                    "repeats": 5,
+                }
+            ],
             "benchmark_regression_thresholds:\n  end_to_end: 0.10\n",
         )
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("registered limit +10%", result.stdout)
+
+    def test_end_to_end_point_spike_with_overlapping_repeat_envelope_is_inconclusive(self) -> None:
+        result = self.compare(
+            [
+                {
+                    "bars": 1000,
+                    "p50_ms": 100.0,
+                    "p95_ms": 120.0,
+                    "min_ms": 80.0,
+                    "max_ms": 120.0,
+                    "repeats": 5,
+                }
+            ],
+            [
+                {
+                    "bars": 1000,
+                    "p50_ms": 112.0,
+                    "p95_ms": 130.0,
+                    "min_ms": 90.0,
+                    "max_ms": 130.0,
+                    "repeats": 5,
+                }
+            ],
+            "benchmark_regression_thresholds:\n  end_to_end: 0.10\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("[INCONCLUSIVE]", result.stdout)
+        self.assertIn("repeated timing envelopes", result.stdout)
+
+    def test_end_to_end_point_spike_without_repeat_bounds_is_inconclusive(self) -> None:
+        result = self.compare(
+            [{"bars": 1000, "p50_ms": 100.0, "p95_ms": 105.0}],
+            [{"bars": 1000, "p50_ms": 125.0, "p95_ms": 130.0}],
+            "benchmark_regression_thresholds:\n  end_to_end: 0.10\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("[INCONCLUSIVE]", result.stdout)
+        self.assertIn("repeat bounds are unavailable", result.stdout)
 
     def test_improvement_does_not_fail(self) -> None:
         result = self.compare(
@@ -82,12 +138,30 @@ class CompareBaselineTests(unittest.TestCase):
                 "physical_core_count": None,
                 "total_ram_bytes": 16_760_344_576,
             },
-            "rows": [{"bars": 1000, "p50_ms": 10.0, "p95_ms": 20.0}],
+            "rows": [
+                {
+                    "bars": 1000,
+                    "p50_ms": 10.0,
+                    "p95_ms": 10.1,
+                    "min_ms": 9.9,
+                    "max_ms": 10.1,
+                    "repeats": 5,
+                }
+            ],
         }
         new = {
             **old,
             "hardware": {**old["hardware"], "total_ram_bytes": 16_766_414_848},
-            "rows": [{"bars": 1000, "p50_ms": 11.1, "p95_ms": 20.0}],
+            "rows": [
+                {
+                    "bars": 1000,
+                    "p50_ms": 11.5,
+                    "p95_ms": 11.8,
+                    "min_ms": 11.3,
+                    "max_ms": 11.8,
+                    "repeats": 5,
+                }
+            ],
         }
         result = self.compare_reports(
             old,
@@ -260,19 +334,75 @@ class CompareBaselineTests(unittest.TestCase):
             {
                 **base,
                 "criterion_records": [
-                    {"benchmark": "qx_zhenlu_crypto_paper_lifecycle_v2/16", "median_ns": 1000}
+                    {
+                        "benchmark": "qx_zhenlu_crypto_paper_lifecycle_v2/16",
+                        "mean_ns": 1000,
+                        "mean_ci95_ns": [990, 1010],
+                    }
                 ],
             },
             {
                 **base,
                 "criterion_records": [
-                    {"benchmark": "qx_zhenlu_crypto_paper_lifecycle_v2/16", "median_ns": 1110}
+                    {
+                        "benchmark": "qx_zhenlu_crypto_paper_lifecycle_v2/16",
+                        "mean_ns": 1200,
+                        "mean_ci95_ns": [1180, 1220],
+                    }
                 ],
             },
             "benchmark_regression_thresholds:\n  criterion: 0.10\n",
         )
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("registered limit +10%", result.stdout)
+
+    def test_short_criterion_estimate_without_confidence_intervals_is_diagnostic(self) -> None:
+        base = {"schema_version": 1, "hardware": {"cpu": "same"}, "records": []}
+        result = self.compare_reports(
+            {
+                **base,
+                "criterion_records": [
+                    {"benchmark": "cash_lookup/64000", "mean_ns": 1000, "median_ns": 900}
+                ],
+            },
+            {
+                **base,
+                "criterion_records": [
+                    {"benchmark": "cash_lookup/64000", "mean_ns": 1500, "median_ns": 1400}
+                ],
+            },
+            "benchmark_regression_thresholds:\n  criterion: 0.10\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("[INCONCLUSIVE]", result.stdout)
+
+    def test_criterion_point_spike_with_overlapping_confidence_intervals_is_non_blocking(self) -> None:
+        base = {"schema_version": 1, "hardware": {"cpu": "same"}, "records": []}
+        result = self.compare_reports(
+            {
+                **base,
+                "criterion_records": [
+                    {
+                        "benchmark": "cash_lookup/64000",
+                        "mean_ns": 1000,
+                        "mean_ci95_ns": [800, 1200],
+                    }
+                ],
+            },
+            {
+                **base,
+                "criterion_records": [
+                    {
+                        "benchmark": "cash_lookup/64000",
+                        "mean_ns": 1500,
+                        "mean_ci95_ns": [1000, 1800],
+                    }
+                ],
+            },
+            "benchmark_regression_thresholds:\n  criterion: 0.10\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("do not establish a regression", result.stdout)
 
     def test_crypto_paper_worker_e2e_record_uses_blocking_end_to_end_threshold(self) -> None:
         base = {"schema_version": 1, "hardware": {"cpu": "same"}}
@@ -284,7 +414,9 @@ class CompareBaselineTests(unittest.TestCase):
                         "benchmark": "end_to_end",
                         "operations": "crypto-paper-worker-acceptance-v1",
                         "median_ms": 100.0,
-                        "p95_ms": 110.0,
+                        "p95_ms": 102.0,
+                        "samples": 3,
+                        "raw_ms": [98.0, 100.0, 102.0],
                     }
                 ],
             },
@@ -294,8 +426,10 @@ class CompareBaselineTests(unittest.TestCase):
                     {
                         "benchmark": "end_to_end",
                         "operations": "crypto-paper-worker-acceptance-v1",
-                        "median_ms": 111.0,
-                        "p95_ms": 110.0,
+                        "median_ms": 115.0,
+                        "p95_ms": 116.0,
+                        "samples": 3,
+                        "raw_ms": [114.0, 115.0, 116.0],
                     }
                 ],
             },
@@ -303,6 +437,137 @@ class CompareBaselineTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("registered limit +10%", result.stdout)
+
+    def test_crypto_paper_worker_point_spike_with_overlapping_samples_is_inconclusive(self) -> None:
+        base = {"schema_version": 1, "hardware": {"cpu": "same"}}
+        result = self.compare_reports(
+            {
+                **base,
+                "records": [{
+                    "benchmark": "end_to_end",
+                    "operations": "crypto-paper-worker-acceptance-v1",
+                    "median_ms": 100.0,
+                    "p95_ms": 120.0,
+                    "samples": 3,
+                    "raw_ms": [80.0, 100.0, 120.0],
+                }],
+            },
+            {
+                **base,
+                "records": [{
+                    "benchmark": "end_to_end",
+                    "operations": "crypto-paper-worker-acceptance-v1",
+                    "median_ms": 112.0,
+                    "p95_ms": 130.0,
+                    "samples": 3,
+                    "raw_ms": [110.0, 112.0, 130.0],
+                }],
+            },
+            "benchmark_regression_thresholds:\n  end_to_end: 0.10\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("[INCONCLUSIVE]", result.stdout)
+
+    def test_rust_micro_pipeline_ingest_blocks_only_beyond_window_repeat_envelope(self) -> None:
+        base = {"schema_version": 1, "hardware": {"cpu": "same"}}
+        result = self.compare_reports(
+            {
+                **base,
+                "records": [{
+                    "benchmark": "steady_state_pipeline_ingest",
+                    "operations": 8000,
+                    "samples": 5,
+                    "raw_ms": [3.2, 3.3, 3.4, 3.5, 3.6],
+                    "median_ms": 3.4,
+                    "p95_ms": 3.8,
+                    "operations_per_second": 294.118,
+                }],
+            },
+            {
+                **base,
+                "records": [{
+                    "benchmark": "steady_state_pipeline_ingest",
+                    "operations": 8000,
+                    "samples": 5,
+                    "raw_ms": [4.1, 4.2, 4.3, 4.4, 4.5],
+                    "median_ms": 4.3,
+                    "p95_ms": 4.7,
+                    "operations_per_second": 232.558,
+                }],
+            },
+            "benchmark_regression_thresholds:\n  rust_micro: 0.10\n",
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("baseline upper sample 3.600 ms", result.stdout)
+        self.assertIn("current lower sample 4.100 ms", result.stdout)
+
+    def test_rust_micro_pipeline_ingest_point_spike_with_overlapping_windows_is_inconclusive(self) -> None:
+        base = {"schema_version": 1, "hardware": {"cpu": "same"}}
+        result = self.compare_reports(
+            {
+                **base,
+                "records": [{
+                    "benchmark": "steady_state_pipeline_ingest",
+                    "operations": 8000,
+                    "samples": 5,
+                    "raw_ms": [3.3, 3.4, 3.5, 3.6, 3.7],
+                    "median_ms": 3.5,
+                    "p95_ms": 4.0,
+                    "operations_per_second": 285.714,
+                }],
+            },
+            {
+                **base,
+                "records": [{
+                    "benchmark": "steady_state_pipeline_ingest",
+                    "operations": 8000,
+                    "samples": 5,
+                    "raw_ms": [3.6, 3.8, 3.9, 4.0, 4.1],
+                    "median_ms": 3.9,
+                    "p95_ms": 4.6,
+                    "operations_per_second": 256.410,
+                }],
+            },
+            "benchmark_regression_thresholds:\n  rust_micro: 0.10\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("[INCONCLUSIVE]", result.stdout)
+        self.assertIn("repeated timing envelopes", result.stdout)
+        self.assertNotIn("operations_per_second", result.stdout)
+
+    def test_rust_micro_pipeline_ingest_legacy_baseline_without_windows_is_inconclusive(self) -> None:
+        base = {"schema_version": 1, "hardware": {"cpu": "same"}}
+        result = self.compare_reports(
+            {
+                **base,
+                "records": [{
+                    "benchmark": "steady_state_pipeline_ingest",
+                    "operations": 8000,
+                    "ticks": 105,
+                    "median_ms": 3.48,
+                    "p95_ms": 4.048,
+                    "operations_per_second": 287.356,
+                }],
+            },
+            {
+                **base,
+                "records": [{
+                    "benchmark": "steady_state_pipeline_ingest",
+                    "operations": 8000,
+                    "ticks": 105,
+                    "samples": 5,
+                    "raw_ms": [3.6, 3.8, 3.9, 4.0, 4.1],
+                    "median_ms": 3.865,
+                    "p95_ms": 4.572,
+                    "operations_per_second": 258.725,
+                }],
+            },
+            "benchmark_regression_thresholds:\n  rust_micro: 0.10\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("[INCONCLUSIVE]", result.stdout)
+        self.assertIn("repeat bounds are unavailable", result.stdout)
+        self.assertNotIn("operations_per_second", result.stdout)
 
 
 if __name__ == "__main__":

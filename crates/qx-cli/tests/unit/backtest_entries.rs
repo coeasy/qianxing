@@ -405,6 +405,7 @@ fn ccxt_builtin_rejects_missing_runtime_before_starting_external_worker() {
         end_ms: 1,
         spec_path: None,
         quantity: 1,
+        target_notional_raw: None,
         runtime_config_path: Some(&valid_runtime),
         use_public_default_fees: false,
     })
@@ -427,6 +428,7 @@ fn ccxt_builtin_rejects_missing_runtime_before_starting_external_worker() {
         end_ms: 1,
         spec_path: None,
         quantity: 1,
+        target_notional_raw: None,
         runtime_config_path: Some(&runtime),
         use_public_default_fees: false,
     })

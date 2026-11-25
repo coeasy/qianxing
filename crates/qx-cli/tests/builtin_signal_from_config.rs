@@ -175,10 +175,11 @@ fn declared_windows_change_the_builtin_result() {
     let root = temp_dir("windows");
     let config = signal_config(&root, |_| {});
     let (_, plain, plain_err) = builtin("ema_cross", "100", None);
+    let plain_signal = line_with(&plain, "[Strategy · Signal]");
     assert!(
-        line_with(&plain, "[Strategy · Signal]")
-            .contains("source=config fast_window=5 slow_window=20"),
-        "省略 --config 时仍读取统一默认运行时配置: {plain_err}"
+        plain_signal.contains("source=builtin-default fast_window=5 slow_window=20")
+            && plain.contains("declared_unused=none"),
+        "省略 --config 时应使用策略默认窗且不报告无效旋钮: {plain_err}; {plain_signal}"
     );
     assert_eq!(field(&plain, "[Strategy · Backtest]", "fills"), "0");
     let (code, bound, bound_err) = builtin("ema_cross", "100", Some(&config));

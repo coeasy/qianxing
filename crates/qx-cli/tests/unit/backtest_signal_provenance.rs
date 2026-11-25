@@ -206,7 +206,12 @@ fn the_list_names_the_kind_knobs_regardless_of_the_declaration() {
 fn depth_summary_declares_signal_params_with_raw_quantity() {
     const QUANTITY_UNITS: i64 = 3;
     let (deploy, _, template) = builtin_backtest_example_paths();
-    let config = read_runtime_config(&template).unwrap();
+    let mut config = read_runtime_config(&template).unwrap();
+    // The shared MACD template now omits inactive signal knobs. Declare the two
+    // SMA parameters this test intends to exercise instead of relying on unrelated
+    // values inherited from another strategy's example configuration.
+    config.strategy.builtin_fast_window = Some(3);
+    config.strategy.builtin_slow_window = Some(8);
     let (root, runtime) = isolated_backtest_runtime(&deploy, &config, "r4j-depth");
     let out = temp_cli_case_dir("r4j-depth-out");
     run_depth_backtest_with_quality_manifest(DepthBacktestCommand {
@@ -228,7 +233,7 @@ fn depth_summary_declares_signal_params_with_raw_quantity() {
         (QUANTITY_UNITS as i128 * qx_core::SCALE).to_string(),
         "下单数量必须按定点 raw 落盘，与 account/initial_cash_raw 同一口径"
     );
-    // 示例配置声明了那四项，深度链认它（V11 Q64 那条腿）：来源必须写 config，
+    // 深度链应识别本用例显式声明的 SMA 快慢窗（V11 Q64 那条腿）：来源必须写 config，
     // 否则摘要会把"读到了配置"说成"用了缺省值"。
     assert_eq!(signal_text(&summary, "source"), "config");
     assert_eq!(signal_text(&summary, "kind"), "sma_cross");

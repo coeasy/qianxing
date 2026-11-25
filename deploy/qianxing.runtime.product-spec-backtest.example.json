@@ -49,8 +49,6 @@
     "builtin_quantity": 1000000000,
     "builtin_fast_window": 3,
     "builtin_slow_window": 8,
-    "builtin_period": 14,
-    "builtin_threshold_bps": 100,
     "bars_snapshot_path": "qianxing.bar-frame.example.json",
     "dataset_bundle_path": "qianxing.dataset-bundle.bar-frame.example.json",
     "python_timeout_ms": 2000
