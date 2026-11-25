@@ -39,9 +39,12 @@ class CriterionPlanTests(unittest.TestCase):
     def test_pr_profile_covers_registered_performance_regression_families(self) -> None:
         required, commands = criterion_plan("cargo", "pr")
         expected_regressions = {
-            *(f"qx_core_append_batch/{size}" for size in (1_000, 8_000, 64_000)),
             *(
-                f"qx_core_event_log_validate/duplicate_tree_baseline/{size}"
+                f"qx_runtime_balance_snapshot_cursor/indexed/{size}"
+                for size in (1_000, 8_000, 64_000)
+            ),
+            *(
+                f"qx_runtime_latest_quote_lookup/indexed/{size}"
                 for size in (1_000, 8_000, 64_000)
             ),
             *(
@@ -49,23 +52,34 @@ class CriterionPlanTests(unittest.TestCase):
                 for mode in ("timeline_constructor", "preallocated_flatten_sort_with_indexes")
                 for markets in (2, 8, 32)
             ),
+            *(f"qx_zhenlu_crypto_paper_lifecycle_v2/{size}" for size in (1, 16, 256)),
         }
         core_required = {name for name in CRITERION_REQUIRED if name.startswith("qx_core_")}
-        self.assertEqual(len(required), 74)
+        self.assertEqual(len(required), 21)
         self.assertTrue(expected_regressions <= required)
-        self.assertTrue(core_required <= required)
+        self.assertFalse(core_required & required)
         self.assertLess(len(required), len(CRITERION_REQUIRED))
-        self.assertEqual(len(commands), 5)
+        self.assertEqual(len(commands), 4)
         self.assertEqual(
             {command[3] for command in commands},
-            {"qx-core", "qx-runtime", "qx-xingban", "qx-zhenlu"},
+            {"qx-runtime", "qx-xingban", "qx-zhenlu"},
         )
-        core_commands = [command for command in commands if command[3] == "qx-core"]
-        self.assertEqual(len(core_commands), 1)
-        self.assertEqual(core_commands[0][-2], "qx_core_")
         for command in commands:
             self.assertEqual(command[-1], "--noplot")
             self.assertIn("--bench", command)
+
+    def test_pr_core_profile_runs_complete_core_suite_in_one_process(self) -> None:
+        required, commands = criterion_plan("cargo", "pr-core")
+        core_required = {name for name in CRITERION_REQUIRED if name.startswith("qx_core_")}
+        self.assertEqual(len(required), 74)
+        self.assertTrue(core_required <= required)
+        core_commands = [command for command in commands if command[3] == "qx-core"]
+        self.assertEqual(len(core_commands), 1)
+        self.assertEqual(core_commands[0][-2], "qx_core_")
+        self.assertTrue(
+            {"qx-runtime", "qx-xingban", "qx-zhenlu"}
+            == {command[3] for command in commands if command[3] != "qx-core"}
+        )
 
     def test_full_profile_keeps_all_crates_and_all_registered_benchmarks(self) -> None:
         required, commands = criterion_plan("cargo", "full")

@@ -76,16 +76,17 @@ CRITERION_REQUIRED = {
     "scheduler_active_run_selection/indexed_active_ids",
 }
 PR_CRITERION_FILTERS = {
-    # Run the complete qx-core suite in one Criterion process. Main/full does this too;
-    # splitting groups across processes changes cache and allocator state enough to
-    # make even unchanged qx-core baselines look like regressions.
-    "qx-core": ("qx_core_",),
     "qx-runtime": (
         "qx_runtime_balance_snapshot_cursor",
         "qx_runtime_latest_quote_lookup",
     ),
     "qx-xingban": ("portfolio_bar_timeline_aligned_64k_bars",),
     "qx-zhenlu": ("qx_zhenlu_crypto_paper_lifecycle_v2",),
+}
+PR_CORE_CRITERION_FILTERS = {
+    # Run every qx-core group in one Criterion process when the PR changes core
+    # implementation, its benchmark harness, or shared Rust build inputs.
+    "qx-core": ("qx_core_",),
 }
 MARGINAL_KNEE_THRESHOLD_PCT = 20.0
 
@@ -112,8 +113,11 @@ def criterion_estimate_path(benchmark: str, criterion_root: Path | None = None) 
 
 
 def criterion_plan(cargo: str, profile: str) -> tuple[set[str], list[list[str]]]:
-    if profile not in {"full", "pr"}:
+    if profile not in {"full", "pr", "pr-core"}:
         raise ValueError(f"unsupported Criterion profile: {profile}")
+    profile_filters = PR_CRITERION_FILTERS
+    if profile == "pr-core":
+        profile_filters = {**PR_CORE_CRITERION_FILTERS, **PR_CRITERION_FILTERS}
     required = (
         CRITERION_REQUIRED
         if profile == "full"
@@ -122,7 +126,7 @@ def criterion_plan(cargo: str, profile: str) -> tuple[set[str], list[list[str]]]
             for benchmark in CRITERION_REQUIRED
             if any(
                 selected in benchmark
-                for filters in PR_CRITERION_FILTERS.values()
+                for filters in profile_filters.values()
                 for selected in filters
             )
         }
@@ -132,7 +136,7 @@ def criterion_plan(cargo: str, profile: str) -> tuple[set[str], list[list[str]]]
         selected_filters = (
             (None,)
             if profile == "full"
-            else PR_CRITERION_FILTERS.get(package, ())
+            else profile_filters.get(package, ())
         )
         for selected in selected_filters:
             command = [cargo, "bench", "-p", package, "--bench", "criterion_performance", "--"]
