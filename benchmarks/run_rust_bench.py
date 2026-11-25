@@ -76,13 +76,10 @@ CRITERION_REQUIRED = {
     "scheduler_active_run_selection/indexed_active_ids",
 }
 PR_CRITERION_FILTERS = {
-    "qx-core": (
-        "qx_core_append_batch",
-        "qx_core_event_log_validate/cached",
-        "qx_core_event_log_validate/duplicate_tree_baseline",
-        "qx_core_ledger_entry_lookup/indexed",
-        "qx_core_event_log_prefix_digest/cached_after_append",
-    ),
+    # Run the complete qx-core suite in one Criterion process. Main/full does this too;
+    # splitting groups across processes changes cache and allocator state enough to
+    # make even unchanged qx-core baselines look like regressions.
+    "qx-core": ("qx_core_",),
     "qx-runtime": (
         "qx_runtime_balance_snapshot_cursor",
         "qx_runtime_latest_quote_lookup",

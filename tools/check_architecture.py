@@ -16015,8 +16015,10 @@ def performance_baseline_check() -> None:
         and 'row.get("mean_ns", row.get("median_ns"))' in compare_source
         and 'row.get("mean_ci95_ns")' in compare_source
         and "new_interval[0] > threshold_bound" in compare_source
-        and 'key[0] == "steady_state_pipeline_ingest"' in compare_source,
-        "Criterion 使用 95% 置信区间，端到端和稳态 pipeline 仅在重复样本确认越过 targets.yaml 阈值时阻断",
+        and 'key[0] == "steady_state_pipeline_ingest"' not in compare_source
+        and "MIN_CRITERION_BLOCKING_MS = 0.001" in compare_source
+        and "single-run point estimate" in compare_source,
+        "Criterion 使用 95% 区间并跳过亚微秒噪声，单次 Rust 微基准不阻断；端到端和稳态 pipeline 依据重复样本阻断",
         "比较器缺少台账阈值、阻断退出或可靠重复样本回归判据",
     )
     targets_source = TARGETS_FILE.read_text(encoding="utf-8")
@@ -16036,6 +16038,8 @@ def performance_baseline_check() -> None:
         and "test_registered_paper_lifecycle_v2_regression_over_ten_percent_fails" in compare_tests_source
         and "test_short_criterion_estimate_without_confidence_intervals_is_diagnostic" in compare_tests_source
         and "test_criterion_point_spike_with_overlapping_confidence_intervals_is_non_blocking" in compare_tests_source
+        and "test_sub_microsecond_criterion_spike_is_diagnostic" in compare_tests_source
+        and "test_single_run_rust_micro_estimate_is_diagnostic" in compare_tests_source
         and "test_rust_micro_pipeline_ingest_blocks_only_beyond_window_repeat_envelope" in compare_tests_source
         and "test_rust_micro_pipeline_ingest_legacy_baseline_without_windows_is_inconclusive" in compare_tests_source
         and "test_end_to_end_point_spike_with_overlapping_repeat_envelope_is_inconclusive" in compare_tests_source
