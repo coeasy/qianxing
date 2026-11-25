@@ -376,6 +376,42 @@ class CompareBaselineTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("[INCONCLUSIVE]", result.stdout)
 
+    def test_sub_microsecond_criterion_spike_is_diagnostic(self) -> None:
+        base = {"schema_version": 1, "hardware": {"cpu": "same"}, "records": []}
+        result = self.compare_reports(
+            {
+                **base,
+                "criterion_records": [
+                    {"benchmark": "cached_lookup/1", "mean_ns": 5, "mean_ci95_ns": [4.9, 5.1]}
+                ],
+            },
+            {
+                **base,
+                "criterion_records": [
+                    {"benchmark": "cached_lookup/1", "mean_ns": 8, "mean_ci95_ns": [7.5, 8.5]}
+                ],
+            },
+            "benchmark_regression_thresholds:\n  criterion: 0.10\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("both 95% intervals are below 1 us", result.stdout)
+
+    def test_single_run_rust_micro_estimate_is_diagnostic(self) -> None:
+        base = {"schema_version": 1, "hardware": {"cpu": "same"}, "records": []}
+        result = self.compare_reports(
+            {
+                **base,
+                "records": [{"benchmark": "full_replay", "operations": 8000, "median_ms": 6.0}],
+            },
+            {
+                **base,
+                "records": [{"benchmark": "full_replay", "operations": 8000, "median_ms": 7.0}],
+            },
+            "benchmark_regression_thresholds:\n  rust_micro: 0.10\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("single-run point estimate", result.stdout)
+
     def test_criterion_point_spike_with_overlapping_confidence_intervals_is_non_blocking(self) -> None:
         base = {"schema_version": 1, "hardware": {"cpu": "same"}, "records": []}
         result = self.compare_reports(
