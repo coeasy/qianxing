@@ -260,19 +260,75 @@ class CompareBaselineTests(unittest.TestCase):
             {
                 **base,
                 "criterion_records": [
-                    {"benchmark": "qx_zhenlu_crypto_paper_lifecycle_v2/16", "median_ns": 1000}
+                    {
+                        "benchmark": "qx_zhenlu_crypto_paper_lifecycle_v2/16",
+                        "mean_ns": 1000,
+                        "mean_ci95_ns": [990, 1010],
+                    }
                 ],
             },
             {
                 **base,
                 "criterion_records": [
-                    {"benchmark": "qx_zhenlu_crypto_paper_lifecycle_v2/16", "median_ns": 1110}
+                    {
+                        "benchmark": "qx_zhenlu_crypto_paper_lifecycle_v2/16",
+                        "mean_ns": 1200,
+                        "mean_ci95_ns": [1180, 1220],
+                    }
                 ],
             },
             "benchmark_regression_thresholds:\n  criterion: 0.10\n",
         )
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("registered limit +10%", result.stdout)
+
+    def test_short_criterion_estimate_without_confidence_intervals_is_diagnostic(self) -> None:
+        base = {"schema_version": 1, "hardware": {"cpu": "same"}, "records": []}
+        result = self.compare_reports(
+            {
+                **base,
+                "criterion_records": [
+                    {"benchmark": "cash_lookup/64000", "mean_ns": 1000, "median_ns": 900}
+                ],
+            },
+            {
+                **base,
+                "criterion_records": [
+                    {"benchmark": "cash_lookup/64000", "mean_ns": 1500, "median_ns": 1400}
+                ],
+            },
+            "benchmark_regression_thresholds:\n  criterion: 0.10\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("[INCONCLUSIVE]", result.stdout)
+
+    def test_criterion_point_spike_with_overlapping_confidence_intervals_is_non_blocking(self) -> None:
+        base = {"schema_version": 1, "hardware": {"cpu": "same"}, "records": []}
+        result = self.compare_reports(
+            {
+                **base,
+                "criterion_records": [
+                    {
+                        "benchmark": "cash_lookup/64000",
+                        "mean_ns": 1000,
+                        "mean_ci95_ns": [800, 1200],
+                    }
+                ],
+            },
+            {
+                **base,
+                "criterion_records": [
+                    {
+                        "benchmark": "cash_lookup/64000",
+                        "mean_ns": 1500,
+                        "mean_ci95_ns": [1000, 1800],
+                    }
+                ],
+            },
+            "benchmark_regression_thresholds:\n  criterion: 0.10\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("do not establish a regression", result.stdout)
 
     def test_crypto_paper_worker_e2e_record_uses_blocking_end_to_end_threshold(self) -> None:
         base = {"schema_version": 1, "hardware": {"cpu": "same"}}

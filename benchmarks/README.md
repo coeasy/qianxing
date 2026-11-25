@@ -520,7 +520,9 @@ python benchmarks/compare_multi_market_visible_lookup.py \
 但该场景尚未测出端到端收益，也不代表生产多市场 profile。
 
 `compare_baseline.py` 只在 runner 形状一致且 workload size 重叠时比较 p50 与 median 延迟；
-吞吐指标按「数值下降为回归」处理。p95 保留在报告中作观察，不作为阻断指标：此前只有
+吞吐指标按「数值下降为回归」处理。Criterion 延迟使用其均值和 95% 置信区间，只有当前区间下界
+高于基线区间上界加登记阈值时才阻断；点估计超过阈值但区间不足以确认时标记为不确定，不阻断。
+p95 保留在报告中作观察，不作为阻断指标：此前只有
 5–7 次独立进程采样，nearest-rank p95 实际接近最大值，容易被一次 runner 抢占放大。
 CI 将端到端、A 股规则及 Crypto Paper E2E 提高到 21 次采样，以降低 p50/median 的采样波动。只有
 `maturity/targets.yaml` 登记的性能组参与阻断；回归超过登记阈值会输出 error annotation 并非零退出，

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -47,7 +48,7 @@ def same_benchmark_machine(baseline: dict, current: dict) -> bool:
     return abs(old_ram - new_ram) / max(old_ram, new_ram) <= 0.01
 
 
-def series(report: dict) -> dict[tuple[str, str], dict[str, float]]:
+def series(report: dict) -> dict[tuple[str, str], dict[str, float | list[float]]]:
     result = {}
     for row in report.get("rows", []):
         key = ("end_to_end", str(row["bars"]))
@@ -70,7 +71,13 @@ def series(report: dict) -> dict[tuple[str, str], dict[str, float]]:
         result[key] = metrics
     for row in report.get("criterion_records", []):
         key = (f"criterion:{row['benchmark']}", "criterion")
-        result[key] = {"median_ms": float(row["median_ns"]) / 1_000_000}
+        metrics: dict[str, float | list[float]] = {
+            "point_ms": float(row.get("mean_ns", row.get("median_ns"))) / 1_000_000
+        }
+        interval = row.get("mean_ci95_ns")
+        if isinstance(interval, list) and len(interval) == 2:
+            metrics["mean_ci95_ms"] = [float(value) / 1_000_000 for value in interval]
+        result[key] = metrics
     if report.get("evidence_kind") == "ashare_rules_on_cli_backtest_throughput":
         for row in report.get("workloads", []):
             key = ("ashare_rules_on_cli_backtest", str(row["bars"]))
@@ -162,12 +169,51 @@ def main() -> int:
             continue
         shared_metrics = old_rows[key].keys() & new_rows[key].keys()
         for metric in sorted(shared_metrics):
-            if metric == "p95_ms":
+            if metric == "p95_ms" or metric.endswith("_ci95_ms"):
                 # With 5–7 independent process runs, nearest-rank p95 is effectively
-                # the maximum and is too noisy to block a release candidate.
+                # the maximum and is too noisy to block a release candidate. CI bounds
+                # are compared with their estimate below, not as standalone metrics.
                 continue
             before = old_rows[key][metric]
             after = new_rows[key][metric]
+            if group == "criterion" and metric == "point_ms":
+                old_interval = old_rows[key].get("mean_ci95_ms")
+                new_interval = new_rows[key].get("mean_ci95_ms")
+                if (
+                    not isinstance(old_interval, list)
+                    or not isinstance(new_interval, list)
+                    or len(old_interval) != 2
+                    or len(new_interval) != 2
+                    or any(not math.isfinite(value) or value < 0 for value in old_interval + new_interval)
+                    or old_interval[0] > old_interval[1]
+                    or new_interval[0] > new_interval[1]
+                    or old_interval[1] <= 0
+                ):
+                    note = (
+                        f"[INCONCLUSIVE] {key[0]}: Criterion confidence interval is missing; "
+                        "point estimate is diagnostic only."
+                    )
+                    print(note)
+                    continue
+                threshold_bound = old_interval[1] * (1 + threshold)
+                if new_interval[0] > threshold_bound:
+                    failed = True
+                    change_pct = (new_interval[0] / old_interval[1] - 1) * 100
+                    note = (
+                        f"[FAIL] {key[0]}: baseline 95% CI upper "
+                        f"{old_interval[1]:.6f} ms, current 95% CI lower "
+                        f"{new_interval[0]:.6f} ms ({change_pct:+.1f}% beyond baseline "
+                        f"interval, registered limit +{threshold * 100:.0f}%)"
+                    )
+                    print(note)
+                    print(f"::error title=Qianxing benchmark regression::{note}")
+                elif before > 0 and after / before > 1 + threshold:
+                    print(
+                        f"[INCONCLUSIVE] {key[0]}: point estimate increased by "
+                        f"{(after / before - 1) * 100:+.1f}%, but the 95% confidence "
+                        "intervals do not establish a regression beyond the limit."
+                    )
+                continue
             if before <= 0:
                 continue
             ratio = after / before
