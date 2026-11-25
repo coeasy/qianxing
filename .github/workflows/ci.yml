@@ -187,8 +187,7 @@ jobs:
         with:
           name: host-capability-acceptance-linux
           path: |
-            maturity/strategy-run-acceptance-v1.json
-            maturity/acceptance-artifacts/
+            ${{ runner.temp }}/qianxing-acceptance-evidence/
           if-no-files-found: error
           retention-days: 30
       - name: Capability unverified register
@@ -793,9 +792,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: clean-install-acceptance-linux-py312
-          path: |
-            maturity/strategy-run-acceptance-v1.json
-            maturity/acceptance-artifacts/
+          path: ${{ runner.temp }}/qianxing-acceptance-evidence/
           if-no-files-found: error
           retention-days: 30
       - name: Upload Windows clean-install acceptance evidence
@@ -803,9 +800,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: clean-install-acceptance-windows-py312
-          path: |
-            maturity/strategy-run-acceptance-v1.json
-            maturity/acceptance-artifacts/
+          path: ${{ runner.temp }}/qianxing-acceptance-evidence/
           if-no-files-found: error
           retention-days: 30
       - name: Upload Linux process-tree acceptance evidence
@@ -814,8 +809,7 @@ jobs:
         with:
           name: process-tree-acceptance-linux-py312
           path: |
-            maturity/strategy-run-acceptance-v1.json
-            maturity/acceptance-artifacts/
+            ${{ runner.temp }}/qianxing-acceptance-evidence/
             maturity/evidence/strategy-preflight-process-tree-linux.json
           if-no-files-found: error
           retention-days: 30
@@ -825,8 +819,7 @@ jobs:
         with:
           name: process-identity-acceptance-linux-py312
           path: |
-            maturity/strategy-run-acceptance-v1.json
-            maturity/acceptance-artifacts/
+            ${{ runner.temp }}/qianxing-acceptance-evidence/
             maturity/evidence/project-run-identity-linux.json
           if-no-files-found: error
           retention-days: 30
@@ -836,8 +829,7 @@ jobs:
         with:
           name: process-identity-acceptance-macos-py312
           path: |
-            maturity/strategy-run-acceptance-v1.json
-            maturity/acceptance-artifacts/
+            ${{ runner.temp }}/qianxing-acceptance-evidence/
             maturity/evidence/project-run-identity-macos.json
           if-no-files-found: error
           retention-days: 30
@@ -1136,9 +1128,12 @@ jobs:
         with:
           name: strategy-storage-recovery-linux
           path: |
-            maturity/evidence/*-linux-*.json
-            maturity/strategy-run-acceptance-v1.json
-            maturity/acceptance-artifacts/
+            maturity/evidence/r13-strategy-deployment-lifecycle-linux-postgres.json
+            maturity/evidence/r13-strategy-deployment-lifecycle-linux-postgres-checkpoint-restart.json
+            maturity/evidence/job-queue-capacity-linux-*.json
+            maturity/evidence/control-command-queue-capacity-linux-*.json
+            maturity/evidence/strategy-worker-crash-recovery-linux-*.json
+            ${{ runner.temp }}/qianxing-acceptance-evidence/
           if-no-files-found: error
           retention-days: 30
 
