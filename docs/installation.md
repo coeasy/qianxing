@@ -6,14 +6,18 @@
 
 The 2026-10-29 record and the following v0.4.0 candidate checks are historical snapshots. They closed only the Windows leg at the time; the subsequent Linux Podman preflight, 33-job hosted CI run, and Linux clean-wheel acceptance are archived in the linked evidence. Those records do not describe the current release state.
 
-## Current release status (2026-11-22)
+## Current release status (2026-11-25)
 
 GitHub Release [`v0.4.1`](https://github.com/coeasy/qianxing/releases/tag/v0.4.1) provides Windows x64, Linux x64, and macOS Apple Silicon CLI binaries plus platform wheels. PyPI `qianxing==0.4.1` is published. All 14 Rust SDK crates, including `qx-sdk 0.4.1`, are published to crates.io and checksum-verified by workflow [45019067095](https://github.com/coeasy/qianxing/actions/runs/45019067095). The independent registry consumer matrix [45030066158](https://github.com/coeasy/qianxing/actions/runs/45030066158) passed on Ubuntu, Windows, and macOS from clean Cargo homes; each run completed the 70-bar quickstart with 1 fill and `Verified: true`. The project has not declared an MSRV, so this matrix is not an MSRV claim. Current capability and venue evidence is in [`maturity/capabilities.yaml`](../maturity/capabilities.yaml); package and consumer verification does not imply sandbox or production approval.
 
+
+## v0.4.2 release candidate (2026-11-25)
+
+The v0.4.2 candidate packages the Python `qianxing quickstart --profile ccxt` entry with its matching bundled Rust CLI. After the release is published, a clean Python environment can install `qianxing[ccxt]==0.4.2` and run the public-data-to-backtest-to-HTML-report flow without a separate Rust toolchain or CLI install. This is anonymous public market data only; it loads no account credentials and submits no orders. Hosted CI [#850](https://github.com/coeasy/qianxing/actions/runs/45466193593) passed all 30 jobs. Public-market acceptance [#140](https://github.com/coeasy/qianxing/actions/runs/45466194122) passed on OKX and Bitget: each fetched 180 days of 15-minute candles (17,280 bars, no missing intervals), completed the backtest with zero rejected orders, and produced HTML/SVG reports. PR [#40](https://github.com/coeasy/qianxing/pull/40) is merged and the `v0.4.2` tag exists, but its initial release run [#45515432971](https://github.com/coeasy/qianxing/actions/runs/45515432971) failed at the performance gate before wheel or GitHub Release publication. v0.4.1 remains the available stable package. PR [#41](https://github.com/coeasy/qianxing/pull/41) fixes the gate and adds a manual retry path for the existing tag; its CI passed 39/39 and it still awaits merge authorization.
 ## 安装
 
 Rust CLI 与 Python wheel 由 tag 发布流水线构建，并随 GitHub Release 提供。Python wheel 还会在全部发布门禁通过后通过 PyPI Trusted Publishing 发布。Rust CLI 提供平台二进制与源码安装路径；Rust SDK 的 14 包 crates.io 闭包现已全部发布，并通过逐包 checksum 与独立 crates.io consumer 验收，详见 [`qx-sdk` 发布说明](qx-sdk-migration.md#查看-rust-发布依赖)。
-只想要"装完跑第一轮"的人请先看[首跑：从安装到第一份报告](first-run.md) —— 那一页按安装方式分两支给可复制命令；本页讲的是每条路径的
+只想要"装完跑第一轮"的人请先看[首跑：从安装到第一份报告](first-run.md) —— 那一页覆盖 Rust CLI、Python wheel 与本机 Web Console 三种入口，并给出可复制命令；本页讲的是每条路径的
 前置、构建器契约与踩过的坑。每条路径写的是**行为**与它的核对者，
 不是某一轮的计时读数：能当场重跑的行为直接写行为，跑不了的整跑读数一律写明"本轮没有重跑"，
 并把当轮数字留在归档里。所谓"日志"是执行那一轮时在本机 `logs/` 目录留下的命令输出，`/logs/` 在
@@ -130,10 +134,11 @@ PYTHON=python/.venv/bin/python bash tools/build_python_wheel.sh
 ```bash
 uv venv .venv-qx --python 3.12
 # #276：基础安装零强制第三方依赖，离线也能装成，不再需要 --no-deps
-uv pip install --offline dist/qianxing-0.4.1-cp310-abi3-win_amd64.whl
+uv pip install --offline dist/qianxing-0.4.2-cp310-abi3-win_amd64.whl
 python -c "import qianxing as qx; print(qx.doctor())"
-# PyPI 安装（v0.4.1）
+# 当前稳定版 PyPI 安装
 python -m pip install "qianxing==0.4.1"
+# v0.4.2 发布后才可执行：python -m pip install "qianxing[ccxt]==0.4.2"
 # PyPI 可选 extras 示例
 python -m pip install "qianxing[a-share]"
 # 本地 wheel 已进入缓存时，也可离线安装可选 extras

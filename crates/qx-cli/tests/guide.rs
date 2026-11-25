@@ -185,7 +185,10 @@ fn researcher_guide_command_produces_a_report_that_can_be_read_back() {
     let first_text = String::from_utf8_lossy(&first_run.stdout);
     let first_error = String::from_utf8_lossy(&first_run.stderr);
     assert_eq!(first_run.status.code(), Some(0), "{first_error}");
-    assert!(first_text.contains("[完成] 读回摘要"), "{first_text}");
+    assert!(
+        first_text.contains("[完成] 复核摘要并生成 EvidenceBundle"),
+        "{first_text}"
+    );
     let result_hash = first_text
         .split("result_hash=")
         .nth(1)

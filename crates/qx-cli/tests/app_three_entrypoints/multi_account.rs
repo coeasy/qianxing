@@ -779,14 +779,12 @@ fn isolated_multi_account_backtest_is_shared_by_cli_http_and_python() {
     assert_ne!(rejected_trace.status.code(), Some(0));
     assert!(String::from_utf8_lossy(&rejected_trace.stderr).contains("事件追溯"));
 
-    let recompute_temp = root.with_file_name(format!(
-        "multi-account-recompute-temp-{}",
-        std::process::id()
-    ));
-    let relocated_package = root.with_file_name(format!(
-        "multi-account-recompute-package-{}",
-        std::process::id()
-    ));
+    let scratch_name = root
+        .file_name()
+        .expect("multi-account scratch root has a final path component")
+        .to_string_lossy();
+    let recompute_temp = root.with_file_name(format!("{scratch_name}-recompute-temp"));
+    let relocated_package = root.with_file_name(format!("{scratch_name}-recompute-package"));
     assert!(!recompute_temp.starts_with(&root));
     assert!(!relocated_package.starts_with(&root));
     assert!(!recompute_temp.exists());
@@ -958,12 +956,12 @@ fn partial_multi_account_package_recomputes_after_source_removal() {
         .contains("清单声明输入缺失，但包内文件仍存在"));
     std::fs::remove_file(unexpected_missing_input).expect("restore missing-input marker");
 
-    let relocated_package = root.with_file_name(format!(
-        "multi-account-partial-package-{}",
-        std::process::id()
-    ));
-    let recompute_temp =
-        root.with_file_name(format!("multi-account-partial-temp-{}", std::process::id()));
+    let scratch_name = root
+        .file_name()
+        .expect("partial multi-account scratch root has a final path component")
+        .to_string_lossy();
+    let relocated_package = root.with_file_name(format!("{scratch_name}-package"));
+    let recompute_temp = root.with_file_name(format!("{scratch_name}-temp"));
     assert!(!relocated_package.exists());
     assert!(!recompute_temp.exists());
     std::fs::create_dir_all(&recompute_temp).expect("create partial recompute temp directory");
@@ -1077,10 +1075,11 @@ fn all_failed_multi_account_package_relocates_and_verifies_without_claiming_reco
         .iter()
         .all(|input| { input["missing"] == true && input["sha256"].is_null() }));
 
-    let relocated = root.with_file_name(format!(
-        "multi-account-all-failed-package-{}",
-        std::process::id()
-    ));
+    let scratch_name = root
+        .file_name()
+        .expect("all-failed multi-account scratch root has a final path component")
+        .to_string_lossy();
+    let relocated = root.with_file_name(format!("{scratch_name}-package"));
     std::fs::rename(&package_dir, &relocated).expect("relocate all-failed evidence package");
     std::fs::remove_dir_all(&root).expect("remove all-failed source workspace");
     let verified = Command::new(env!("CARGO_BIN_EXE_qx-cli"))

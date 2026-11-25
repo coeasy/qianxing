@@ -50,7 +50,9 @@ pub struct CcxtProcessClient {
     child: Child,
     stdin: Option<ChildStdin>,
     responses: Receiver<Result<String, String>>,
-    timeout_ms: u64,
+    rpc_timeout_ms: u64,
+    historical_data_timeout_ms: u64,
+    stream_timeout_ms: u64,
 }
 
 impl CcxtProcessClient {
@@ -60,7 +62,9 @@ impl CcxtProcessClient {
         working_dir: Option<&str>,
     ) -> Result<Self, String> {
         let child_env = ccxt_worker_environment(config_path)?;
-        let timeout_ms = ccxt_worker_timeout_ms(config_path)?;
+        let worker_config = ccxt_worker_config(config_path)?;
+        let (stream_timeout_ms, rpc_timeout_ms, historical_data_timeout_ms) =
+            ccxt_worker_timeouts(&worker_config)?;
         let mut command = Command::new(python);
         command
             .args(["-m", "qianxing_ccxt.worker", "--config", config_path])
@@ -75,10 +79,22 @@ impl CcxtProcessClient {
         let child = command
             .spawn()
             .map_err(|error| format!("启动 CCXT Worker 失败: {python} 无法执行: {error}"))?;
-        Self::from_child(child, timeout_ms, python)
+        Self::from_child(
+            child,
+            rpc_timeout_ms,
+            historical_data_timeout_ms,
+            stream_timeout_ms,
+            python,
+        )
     }
 
-    fn from_child(mut child: Child, timeout_ms: u64, worker_program: &str) -> Result<Self, String> {
+    fn from_child(
+        mut child: Child,
+        rpc_timeout_ms: u64,
+        historical_data_timeout_ms: u64,
+        stream_timeout_ms: u64,
+        worker_program: &str,
+    ) -> Result<Self, String> {
         // `take()` 失败要先把子进程收掉再返回：`Stdio::piped()` 之后这两个 `Some` 是
         // 不变式，此路径今天走不到，但上游一旦把 worker 改成无管道模式，这条 `?`
         // 就会留下一个无人回收的孤儿进程。与 `strategy_host.rs` 的同一处防御对齐
@@ -134,14 +150,29 @@ impl CcxtProcessClient {
             child,
             stdin: Some(stdin),
             responses,
-            timeout_ms,
+            rpc_timeout_ms,
+            historical_data_timeout_ms,
+            stream_timeout_ms,
         })
     }
 
-    /// 这条 RPC 通道的读窗超时：`watch_*` 调用方据此给子进程一个更小的
-    /// `wait_ms`，让"这一窗没有事件"的回话先于读窗到期到达。
+    /// 用户流的单次请求超时：`watch_*` 调用方据此给子进程一个更小的
+    /// `wait_ms`，让"这一窗没有事件"的回话先于读窗到期到达。历史分页等 RPC
+    /// 可单独通过 `historical_data_timeout_ms` 使用更长的整段 worker 预算。
     pub fn timeout_ms(&self) -> u64 {
-        self.timeout_ms
+        self.stream_timeout_ms
+    }
+
+    fn timeout_for_request(
+        request: &Value,
+        rpc_timeout_ms: u64,
+        historical_data_timeout_ms: u64,
+    ) -> (u64, &'static str) {
+        if request.get("op").and_then(Value::as_str) == Some("fetch_ohlcv") {
+            (historical_data_timeout_ms, "historical_data_timeout_ms")
+        } else {
+            (rpc_timeout_ms, "rpc_timeout_ms")
+        }
     }
 
     /// Send one request while observing the owning worker's shutdown token during both IPC phases.
@@ -152,6 +183,11 @@ impl CcxtProcessClient {
         request: Value,
         mut should_cancel: impl FnMut() -> bool,
     ) -> Result<CcxtCallOutcome, String> {
+        let (timeout_ms, timeout_name) = Self::timeout_for_request(
+            &request,
+            self.rpc_timeout_ms,
+            self.historical_data_timeout_ms,
+        );
         let payload = serde_json::to_string(&request)
             .map_err(|error| format!("编码 CCXT Worker 请求失败: {error}"))?;
         let mut bytes = payload.into_bytes();
@@ -161,7 +197,7 @@ impl CcxtProcessClient {
             .take()
             .ok_or_else(|| "CCXT Worker stdin 不可用".to_string())?;
         let started = Instant::now();
-        let timeout = Duration::from_millis(self.timeout_ms);
+        let timeout = Duration::from_millis(timeout_ms);
         let written =
             write_all_within_cancellable(stdin, bytes, timeout, &mut should_cancel, || {
                 self.stop_child()
@@ -180,8 +216,7 @@ impl CcxtProcessClient {
             if remaining.is_zero() {
                 self.stop_child();
                 return Err(format!(
-                    "CCXT Worker 响应超时 timeout_ms={}，提交结果未知",
-                    self.timeout_ms
+                    "CCXT Worker RPC 超时 {timeout_name}={timeout_ms}，提交结果未知"
                 ));
             }
             match self
@@ -325,19 +360,64 @@ pub fn ccxt_idle_window_ms(timeout_ms: u64) -> u64 {
     timeout_ms.saturating_mul(4) / 5
 }
 
+#[cfg(test)]
 fn ccxt_worker_timeout_ms(config_path: &str) -> Result<u64, String> {
     let config = ccxt_worker_config(config_path)?;
-    let timeout_ms = config
-        .get("timeout_ms")
-        .and_then(Value::as_u64)
-        .unwrap_or(30_000);
-    if !(CCXT_WORKER_MIN_TIMEOUT_MS..=CCXT_WORKER_MAX_TIMEOUT_MS).contains(&timeout_ms) {
-        return Err(format!(
-            "CCXT timeout_ms 必须在 {}..={} 内",
-            CCXT_WORKER_MIN_TIMEOUT_MS, CCXT_WORKER_MAX_TIMEOUT_MS
-        ));
-    }
-    Ok(timeout_ms)
+    Ok(ccxt_worker_timeouts(&config)?.0)
+}
+
+#[cfg(test)]
+fn ccxt_worker_rpc_timeout_ms(config_path: &str) -> Result<u64, String> {
+    let config = ccxt_worker_config(config_path)?;
+    Ok(ccxt_worker_timeouts(&config)?.1)
+}
+
+#[cfg(test)]
+fn ccxt_worker_historical_data_timeout_ms(config_path: &str) -> Result<u64, String> {
+    let config = ccxt_worker_config(config_path)?;
+    Ok(ccxt_worker_timeouts(&config)?.2)
+}
+
+fn configured_timeout_ms(config: &Value, key: &str) -> u64 {
+    config
+        .get(key)
+        .map(|value| value.as_u64().unwrap_or(0))
+        .unwrap_or(30_000)
+}
+
+fn ccxt_worker_timeouts(config: &Value) -> Result<(u64, u64, u64), String> {
+    let timeout_value = |key: &str, fallback: u64| {
+        if config.get(key).is_some() {
+            configured_timeout_ms(config, key)
+        } else {
+            fallback
+        }
+    };
+    let checked = |key: &str, timeout_ms: u64| {
+        if !(CCXT_WORKER_MIN_TIMEOUT_MS..=CCXT_WORKER_MAX_TIMEOUT_MS).contains(&timeout_ms) {
+            Err(format!(
+                "CCXT {key} 必须在 {}..={} 内",
+                CCXT_WORKER_MIN_TIMEOUT_MS, CCXT_WORKER_MAX_TIMEOUT_MS
+            ))
+        } else {
+            Ok(timeout_ms)
+        }
+    };
+
+    let stream_timeout_ms = checked("timeout_ms", timeout_value("timeout_ms", 30_000))?;
+    let rpc_timeout_ms = checked(
+        "rpc_timeout_ms",
+        timeout_value("rpc_timeout_ms", stream_timeout_ms),
+    )?;
+    let historical_data_timeout_ms = checked(
+        "historical_data_timeout_ms",
+        timeout_value("historical_data_timeout_ms", rpc_timeout_ms),
+    )?;
+    Ok((
+        stream_timeout_ms,
+        rpc_timeout_ms,
+        historical_data_timeout_ms,
+    ))
 }
 
 fn ccxt_worker_config(config_path: &str) -> Result<Value, String> {
@@ -348,10 +428,15 @@ fn ccxt_worker_config(config_path: &str) -> Result<Value, String> {
 
 impl CcxtRpc for CcxtProcessClient {
     fn call(&mut self, request: Value) -> Result<Value, String> {
+        let (timeout_ms, timeout_name) = Self::timeout_for_request(
+            &request,
+            self.rpc_timeout_ms,
+            self.historical_data_timeout_ms,
+        );
         let payload = serde_json::to_string(&request)
             .map_err(|error| format!("编码 CCXT Worker 请求失败: {error}"))?;
-        // 写入必须与读取同受 timeout_ms 约束：子进程一旦"活着但不再读 stdin"，超出 OS 匿名管道
-        // 缓冲（~64KB）的那段 write_all 会永久阻塞，而 timeout_ms 只守着读侧 recv——本进程就此
+        // 写入必须与读取同受 rpc_timeout_ms 约束：子进程一旦"活着但不再读 stdin"，超出 OS 匿名管道
+        // 缓冲（~64KB）的那段 write_all 会永久阻塞，而 rpc_timeout_ms 只守着读侧 recv——本进程就此
         // 卡死，连关停令牌都读不到。三处同类缺陷共用同一条带预算的写入通道（qx-adapter::io_budget）。
         let mut bytes = payload.into_bytes();
         bytes.push(b'\n');
@@ -359,23 +444,28 @@ impl CcxtRpc for CcxtProcessClient {
             .stdin
             .take()
             .ok_or_else(|| "CCXT Worker stdin 不可用".to_string())?;
-        let written =
-            write_all_within(stdin, bytes, Duration::from_millis(self.timeout_ms), || {
-                let _ = self.child.kill();
-                let _ = self.child.wait();
-            });
+        let started = Instant::now();
+        let timeout = Duration::from_millis(timeout_ms);
+        let written = write_all_within(stdin, bytes, timeout, || {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        });
         self.stdin = Some(written.map_err(|error| format!("写入 CCXT Worker 失败: {error}"))?);
-        let line = match self
-            .responses
-            .recv_timeout(Duration::from_millis(self.timeout_ms))
-        {
+        let remaining = timeout.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            return Err(format!(
+                "CCXT Worker RPC 超时 {timeout_name}={timeout_ms}，提交结果未知"
+            ));
+        }
+        let line = match self.responses.recv_timeout(remaining) {
             Ok(result) => self.response_line(result)?,
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 let _ = self.child.kill();
                 let _ = self.child.wait();
                 return Err(format!(
-                    "CCXT Worker 响应超时 timeout_ms={}，提交结果未知",
-                    self.timeout_ms
+                    "CCXT Worker RPC 超时 {timeout_name}={timeout_ms}，提交结果未知"
                 ));
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {

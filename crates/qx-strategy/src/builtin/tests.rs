@@ -152,6 +152,7 @@ fn momentum_emits_a_target_order_after_warmup() {
         instrument: instrument.clone(),
         quantity: Quantity::from_i64(1),
         target_notional_raw: None,
+        market_spec: None,
         primary_market_spec: None,
         reference_market_spec: None,
         target_available_margin_bps: None,
@@ -493,6 +494,48 @@ fn fixed_notional_sizing_uses_visible_price_and_emits_scaled_quantity() {
 }
 
 #[test]
+fn fixed_notional_sizing_accounts_for_linear_contract_size_and_lot_step() {
+    let instrument = InstrumentId::parse("BTCUSDT.OKX").unwrap();
+    let notional_raw = 1_000 * qx_core::SCALE;
+    let mut config = BuiltinStrategyConfig::new(
+        BuiltinStrategyKind::Momentum,
+        "momentum-linear-contract-notional",
+        instrument.clone(),
+        Quantity::from_i64(1),
+    )
+    .unwrap();
+    config.target_notional_raw = Some(notional_raw);
+    config.market_spec = Some(qx_core::TradingInstrumentSpec {
+        instrument: instrument.clone(),
+        product: qx_core::TradingProduct::Perpetual,
+        base_currency: "BTC".into(),
+        quote_currency: "USDT".into(),
+        settlement_currency: "USDT".into(),
+        contract_size: qx_core::SCALE / 100,
+        linear: true,
+        inverse: false,
+        price_tick: qx_core::SCALE / 10,
+        qty_step: qx_core::SCALE / 100,
+        min_qty: qx_core::SCALE / 100,
+        min_notional_raw: 0,
+        max_leverage: 100,
+        maintenance_margin_bps: 40,
+        valid_from: 0,
+        valid_to: None,
+        exact_rules: None,
+    });
+    let strategy = BuiltinStrategy::new(config).unwrap();
+    let context = context(&instrument);
+
+    let quantity_raw = strategy
+        .target_quantity_raw(&instrument, 90_000 * qx_core::SCALE, 1, &context)
+        .unwrap();
+
+    assert_eq!(quantity_raw, 111 * qx_core::SCALE / 100);
+    assert_eq!(quantity_raw % (qx_core::SCALE / 100), 0);
+}
+
+#[test]
 fn available_margin_sizing_uses_a_fresh_context_snapshot() {
     let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
     let mut config = BuiltinStrategyConfig::new(
@@ -564,6 +607,7 @@ fn every_builtin_strategy_survives_a_warmup_and_signal_cycle() {
                 instrument: instrument.clone(),
                 quantity: Quantity::from_i64(1),
                 target_notional_raw: None,
+                market_spec: None,
                 primary_market_spec: None,
                 reference_market_spec: None,
                 target_available_margin_bps: None,

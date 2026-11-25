@@ -1,6 +1,6 @@
 # Qianxing Benchmarks
 
-性能基线与复现入口。CI 的短期回归门对独立进程负载采用 7 次重复；中位数用于阻断回归，尾延迟只记录、不以 7 个样本的近似最大值阻断发布。PR 运行保留原 Criterion 样本设置，只运行 12 个核心热路径基准；主分支与发布路径仍运行完整的 171 项台账。**本目录不是免责声明**：`run_baseline.py` 是真会跑的驱动器，读数落
+性能基线与复现入口。CI 对端到端独立进程负载默认采用 7 次重复；p50 展示趋势，只有候选最快样本相对基线最慢样本仍超过登记阈值才阻断。尾延迟只记录，Criterion 使用自己的 95% 置信区间。PR 运行保留原 Criterion 样本设置，只运行 12 个核心热路径基准；主分支与发布路径仍运行完整的 171 项台账。**本目录不是免责声明**：`run_baseline.py` 是真会跑的驱动器，读数落
 `benchmarks/results/baseline.json`。
 
 ## PreparedEvaluation 持久化批次与崩溃恢复
@@ -199,8 +199,10 @@ python benchmarks/run_crypto_paper_e2e.py \
 账簿/EventLog/审计、同目录幂等重跑和独立目录事实一致性。每个样本都必须先通过 acceptance，随后报告
 整轮 wall-clock p50/p95、主链订单/成交/账本计数、进程树峰值 RSS、CPU、I/O 和进程数；资源项按平台能力
 如实输出 `null`，不以缺少采样的 0 代替。它不拆解单笔订单延迟，也不覆盖真实 funding provider 或 8 小时结算调度。
-CI 把 workload `crypto-paper-worker-acceptance-v1` 作为已登记的 `end_to_end` 项比较，首次匹配仅记录，
-后续同硬件回退超过 targets.yaml 的 10% 阈值会阻断。它与 qx-zhenlu v2 microbenchmark 共同形成 Crypto Paper
+CI 把 workload `crypto-paper-worker-acceptance-v1` 作为已登记的 `end_to_end` 项比较，首次匹配仅记录。
+端到端计时保留每轮 wall-clock；只有当前最快样本仍比基线最慢样本慢过 `targets.yaml` 的阈值才阻断。
+p50 超阈值但重复样本范围重叠时记录为“证据不足”，避免一次 CI runner 速度差异误报成代码回归。
+它与 qx-zhenlu v2 microbenchmark 共同形成 Crypto Paper
 性能证据，但不单独声称完整 profile 已测量。
 
 ## Rust 微基准：Criterion + JSON 证据
@@ -285,7 +287,8 @@ python benchmarks/run_event_log_pipeline_tail_bench.py
 输出每档的单 tick p50/p95、相邻边际成本和候选拐点：SQLite EventLog 预置 N 条确定性历史，随后
 执行 5 个独立窗口，每窗口在同一 live pipeline 上逐笔 ingest 21 条新行情事实；每档共计 105 个
 计时样本，分别按 N=1k/8k/64k 报告单笔 p50/p95 与
-每秒 tick 数。历史只用于形成不同日志长度，计时覆盖真实 `LiveEventPipeline::ingest` 的刷新、
+每秒 tick 数，并保留 5 个窗口各自的单 tick p50。回归门槛使用窗口 p50 的重复范围判断，旧基线没有
+窗口样本时只报告点估计而不将单次涨幅判为已确认回归。历史只用于形成不同日志长度，计时覆盖真实 `LiveEventPipeline::ingest` 的刷新、
 事件校验/归约和 SQLite 追加。它是合成 `Settle` 历史 + QuoteTick 的工作负载，不代表某个交易
 profile；此曲线可观察 EventLog 变长时实际单次写侧 tick 是否继续线性增长。
 
@@ -520,7 +523,9 @@ python benchmarks/compare_multi_market_visible_lookup.py \
 但该场景尚未测出端到端收益，也不代表生产多市场 profile。
 
 `compare_baseline.py` 只在 runner 形状一致且 workload size 重叠时比较 p50 与 median 延迟；
-吞吐指标按「数值下降为回归」处理。p95 保留在报告中作观察，不作为阻断指标：此前只有
+吞吐指标按「数值下降为回归」处理。Criterion 延迟使用其均值和 95% 置信区间，只有当前区间下界
+高于基线区间上界加登记阈值时才阻断；点估计超过阈值但区间不足以确认时标记为不确定，不阻断。
+p95 保留在报告中作观察，不作为阻断指标：此前只有
 5–7 次独立进程采样，nearest-rank p95 实际接近最大值，容易被一次 runner 抢占放大。
 CI 将端到端、A 股规则及 Crypto Paper E2E 提高到 21 次采样，以降低 p50/median 的采样波动。只有
 `maturity/targets.yaml` 登记的性能组参与阻断；回归超过登记阈值会输出 error annotation 并非零退出，

@@ -9,10 +9,7 @@ use std::sync::{Arc, Mutex};
 
 #[test]
 fn ccxt_worker_environment_is_minimal_and_validates_credential_names() {
-    let path = std::env::current_dir()
-        .unwrap()
-        .join("target")
-        .join(format!("qianxing-ccxt-env-{}.json", std::process::id()));
+    let path = std::env::temp_dir().join(format!("qianxing-ccxt-env-{}.json", std::process::id()));
     std::fs::write(
         &path,
         r#"{"credential_env":{"api_key":"QX_TEST_API_KEY","secret":"QX_TEST_SECRET"}}"#,
@@ -84,10 +81,8 @@ fn ccxt_idle_window_keeps_real_pacing_at_the_timeout_floor() {
 /// #214：校验的两端都要真的挡 —— 下界以下与上界以上都拒绝，界内按值返回。
 #[test]
 fn ccxt_worker_timeout_bounds_are_enforced_from_config() {
-    let path = std::env::current_dir()
-        .unwrap()
-        .join("target")
-        .join(format!("qianxing-ccxt-timeout-{}.json", std::process::id()));
+    let path =
+        std::env::temp_dir().join(format!("qianxing-ccxt-timeout-{}.json", std::process::id()));
     let read = |payload: &str| {
         std::fs::write(&path, payload).unwrap();
         ccxt_worker_timeout_ms(&path.to_string_lossy())
@@ -104,7 +99,52 @@ fn ccxt_worker_timeout_bounds_are_enforced_from_config() {
     assert_eq!(read(r#"{"timeout_ms": 300000}"#).unwrap(), 300_000);
     // 不写字段时仍按默认 30 秒，不受下界改动影响。
     assert_eq!(read("{}").unwrap(), 30_000);
+
+    let read_rpc = |payload: &str| {
+        std::fs::write(&path, payload).unwrap();
+        ccxt_worker_rpc_timeout_ms(&path.to_string_lossy())
+    };
+    assert_eq!(read_rpc(r#"{"timeout_ms": 30000}"#).unwrap(), 30_000);
+    assert_eq!(
+        read_rpc(r#"{"timeout_ms": 30000, "rpc_timeout_ms": 300000}"#).unwrap(),
+        300_000
+    );
+    assert!(read_rpc(r#"{"timeout_ms": 30000, "rpc_timeout_ms": 300001}"#).is_err());
+
+    let read_historical = |payload: &str| {
+        std::fs::write(&path, payload).unwrap();
+        ccxt_worker_historical_data_timeout_ms(&path.to_string_lossy())
+    };
+    assert_eq!(
+        read_historical(r#"{"timeout_ms": 30000, "historical_data_timeout_ms": 300000}"#).unwrap(),
+        300_000
+    );
+    assert!(
+        read_historical(r#"{"timeout_ms": 30000, "historical_data_timeout_ms": 300001}"#).is_err()
+    );
     let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn ccxt_historical_fetch_uses_its_long_budget_without_extending_order_calls() {
+    let rpc_timeout_ms = 30_000;
+    let historical_timeout_ms = 300_000;
+    assert_eq!(
+        CcxtProcessClient::timeout_for_request(
+            &serde_json::json!({"op": "fetch_ohlcv"}),
+            rpc_timeout_ms,
+            historical_timeout_ms,
+        ),
+        (historical_timeout_ms, "historical_data_timeout_ms")
+    );
+    assert_eq!(
+        CcxtProcessClient::timeout_for_request(
+            &serde_json::json!({"op": "create_order"}),
+            rpc_timeout_ms,
+            historical_timeout_ms,
+        ),
+        (rpc_timeout_ms, "rpc_timeout_ms")
+    );
 }
 
 #[test]
@@ -345,8 +385,9 @@ fn ccxt_process_client_cancels_a_child_waiting_for_an_rpc_response() {
         .stderr(Stdio::null())
         .spawn()
         .expect("Python is required by the workspace test environment");
-    let mut client = CcxtProcessClient::from_child(child, 10_000, "ccxt-cancel-fixture")
-        .expect("piped child attaches to the bounded RPC bridge");
+    let mut client =
+        CcxtProcessClient::from_child(child, 10_000, 10_000, 10_000, "ccxt-cancel-fixture")
+            .expect("piped child attaches to the bounded RPC bridge");
     let started = Instant::now();
     let outcome = client
         .call_cancellable(json!({"op": "wait"}), || {
@@ -379,8 +420,9 @@ fn ccxt_process_client_reports_abnormal_worker_exit_status_on_eof() {
         .stderr(Stdio::null())
         .spawn()
         .expect("Python is required by the workspace test environment");
-    let mut client = CcxtProcessClient::from_child(child, 10_000, "ccxt-exit-fixture")
-        .expect("piped child attaches to the bounded RPC bridge");
+    let mut client =
+        CcxtProcessClient::from_child(child, 10_000, 10_000, 10_000, "ccxt-exit-fixture")
+            .expect("piped child attaches to the bounded RPC bridge");
 
     let error = client
         .call(json!({"op": "crash"}))

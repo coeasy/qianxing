@@ -27,6 +27,8 @@ from qianxing_bridge import BarFrame, native
 
 
 MAX_OHLCV_ROWS = 100_000
+BITGET_CLASSIC_OHLCV_RETENTION_MS = 52 * 24 * 60 * 60 * 1_000
+BITGET_UTA_OHLCV_PAGE_LIMIT = 100
 SUPPORTED_CCXT_VERSION = "4.5.89"
 LIVE_MARKET_METADATA_MAX_AGE_SECONDS = 60
 
@@ -1530,13 +1532,32 @@ class CcxtExchangeClient:
         if as_of_ms is not None and as_of_ms < 0:
             raise CcxtConnectorError(CcxtErrorClass.INVALID, "as_of_ms 必须为非负毫秒时间戳")
         market = self.resolve_market(instrument)
-        # CCXT 4.5.89's Bitget history-candles endpoint caps pages at 200. If a
-        # larger limit is passed, CCXT shortens the history window after deriving
-        # its end time from the original limit, which skips candles between pages.
-        page_limit = min(limit, 200) if self.config.exchange_id == "bitget" else limit
+        bitget = self.config.exchange_id == "bitget"
+        request_params = dict(params or {})
+        # Bitget's classic futures history endpoint only covers recent data.
+        # CCXT 4.5.89 exposes its UTA market-history route through `uta=True`;
+        # select it for windows outside the classic retention period. Respect an
+        # explicit caller choice so integrations can still force the legacy path.
+        bitget_uta = bitget and (
+            request_params.get("uta") is True
+            or (
+                "uta" not in request_params
+                and start_ms < time.time_ns() // 1_000_000 - BITGET_CLASSIC_OHLCV_RETENTION_MS
+            )
+        )
+        if bitget_uta:
+            request_params["uta"] = True
+        # The UTA history endpoint rejects pages above 100 rows. Classic
+        # history-candles caps at 200; larger limits can make CCXT shorten the
+        # requested window before deriving endTime and skip candles at a boundary.
+        page_limit = (
+            min(limit, BITGET_UTA_OHLCV_PAGE_LIMIT)
+            if bitget_uta
+            else min(limit, 200) if bitget else limit
+        )
         bitget_interval_ms = (
             _fixed_timeframe_interval_ms(timeframe)
-            if self.config.exchange_id == "bitget"
+            if bitget
             else None
         )
         rows: dict[int, Sequence[Any]] = {}
@@ -1550,7 +1571,7 @@ class CcxtExchangeClient:
                         timeframe,
                         since,
                         page_limit,
-                        dict(params or {}),
+                        request_params,
                     )
                     break
                 except CcxtConnectorError as error:
@@ -1602,7 +1623,7 @@ class CcxtExchangeClient:
                     # the boundary candle. Some API versions include the
                     # cursor candle, so accept one identical cross-page overlap.
                     if (
-                        self.config.exchange_id == "bitget"
+                        bitget
                         and timestamp == since
                         and timestamp not in page_timestamps
                         and rows[timestamp] == row

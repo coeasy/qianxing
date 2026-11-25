@@ -1232,9 +1232,45 @@ function selectResearchStrategy(kind) {
   const kindMatch = /"kind"\s*:\s*"[^"]+"/.exec(source.slice(strategyOffset));
   if (strategyOffset < 0 || !kindMatch) throw new Error("strategy.kind 字段缺失");
   const start = strategyOffset + kindMatch.index;
-  editor.value = source.slice(0, start)
+  let updated = source.slice(0, start)
     + kindMatch[0].replace(/"[^"]+"$/, JSON.stringify(kind))
     + source.slice(start + kindMatch[0].length);
+  if (kind !== spec.strategy.kind) {
+    const runId = createResearchRunId();
+    updated = replaceResearchRunId(updated, runId);
+  }
+  editor.value = updated;
+  return spec.strategy.kind === kind ? null : JSON.parse(updated).run_id;
+}
+
+function createResearchRunId() {
+  const cryptoApi = globalThis.crypto;
+  const suffix = cryptoApi && typeof cryptoApi.randomUUID === "function"
+    ? cryptoApi.randomUUID().replace(/-/g, "").slice(0, 12)
+    : `${Math.random().toString(36).slice(2, 8)}${Math.random().toString(36).slice(2, 8)}`;
+  return `console-${Date.now().toString(36)}-${suffix}`;
+}
+
+// Replace only the run_id string so large integer literals such as *_raw and
+// seed remain byte-for-byte intact instead of passing through JS Number.
+function replaceResearchRunId(source, runId) {
+  const spec = JSON.parse(source);
+  if (!spec || typeof spec !== "object" || Array.isArray(spec) || typeof spec.run_id !== "string") {
+    throw new Error("BacktestSpec 缺少字符串 run_id 字段");
+  }
+  const match = /"run_id"\s*:\s*"[^"]*"/.exec(source);
+  if (!match) throw new Error("无法安全定位 BacktestSpec.run_id");
+  const updated = source.slice(0, match.index)
+    + match[0].replace(/"[^"]*"$/, JSON.stringify(runId))
+    + source.slice(match.index + match[0].length);
+  return updated;
+}
+
+function createNewResearchRunId() {
+  const editor = $("research-spec");
+  const runId = createResearchRunId();
+  editor.value = replaceResearchRunId(editor.value, runId);
+  return runId;
 }
 
 function syncResearchStrategySelector() {
@@ -4282,11 +4318,20 @@ window.addEventListener("DOMContentLoaded", () => {
   $("strategy-operation-refresh").addEventListener("click", () => { void refreshStrategyDeploymentOperation(); });
   $("research-validate").addEventListener("click", () => runResearch(true));
   $("research-run").addEventListener("click", () => runResearch(false));
+  $("research-new-run-id").addEventListener("click", () => {
+    try {
+      const runId = createNewResearchRunId();
+      $("research-output").textContent = `已生成新运行 ID：${runId}。现在可以安全提交已修改的规格。`;
+    } catch (error) {
+      $("research-output").textContent = `无法生成运行 ID：${error.message}`;
+    }
+  });
   $("product-capability-load").addEventListener("click", loadProductCapabilityCatalog);
   $("product-capability-query").addEventListener("click", queryProductCapability);
   $("research-strategy").addEventListener("change", (event) => {
     try {
-      selectResearchStrategy(event.target.value);
+      const runId = selectResearchStrategy(event.target.value);
+      if (runId) $("research-output").textContent = `策略已切换，已生成新运行 ID：${runId}。`;
     } catch (error) {
       $("research-output").textContent = `无法选择策略：${error.message}`;
     }
