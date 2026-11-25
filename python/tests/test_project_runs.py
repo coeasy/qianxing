@@ -422,6 +422,7 @@ class ProjectRunTests(unittest.TestCase):
     def test_project_input_snapshot_preserves_strategy_parameters_named_path(self):
         bars = self.root / "bars.json"
         bars.write_text("{\"bars\":[]}", encoding="utf-8")
+        original_bars = bars.read_bytes()
         spec = self.root / "input.json"
         raw = {
             "bars_path": "bars.json",
@@ -457,7 +458,9 @@ class ProjectRunTests(unittest.TestCase):
         )
         frozen_bars = Path(frozen["bars_path"])
         self.assertNotEqual(frozen_bars.resolve(), bars.resolve())
-        self.assertEqual(frozen_bars.read_bytes(), bars.read_bytes())
+        self.assertEqual(frozen_bars.read_bytes(), original_bars)
+        bars.write_text("{\"bars\":[\"changed after snapshot\"]}", encoding="utf-8")
+        self.assertEqual(frozen_bars.read_bytes(), original_bars)
 
     def test_dependency_lock_snapshot_mutation_is_detected(self):
         version = importlib_metadata.version("pip")
