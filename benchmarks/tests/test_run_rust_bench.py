@@ -50,14 +50,19 @@ class CriterionPlanTests(unittest.TestCase):
                 for markets in (2, 8, 32)
             ),
         }
-        self.assertEqual(len(required), 36)
+        core_required = {name for name in CRITERION_REQUIRED if name.startswith("qx_core_")}
+        self.assertEqual(len(required), 74)
         self.assertTrue(expected_regressions <= required)
+        self.assertTrue(core_required <= required)
         self.assertLess(len(required), len(CRITERION_REQUIRED))
-        self.assertEqual(len(commands), 9)
+        self.assertEqual(len(commands), 5)
         self.assertEqual(
             {command[3] for command in commands},
             {"qx-core", "qx-runtime", "qx-xingban", "qx-zhenlu"},
         )
+        core_commands = [command for command in commands if command[3] == "qx-core"]
+        self.assertEqual(len(core_commands), 1)
+        self.assertEqual(core_commands[0][-2], "qx_core_")
         for command in commands:
             self.assertEqual(command[-1], "--noplot")
             self.assertIn("--bench", command)
