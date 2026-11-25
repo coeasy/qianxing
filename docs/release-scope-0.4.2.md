@@ -35,4 +35,6 @@ Rust SDK 14 包闭包已从不可变 `v0.4.2` tag 依赖拓扑发布；registry 
 
 v0.4.2 的 Windows x64、Linux x64 和 macOS ARM64 wheel 在 PyPI 与 GitHub Release 上使用相同文件名，两个渠道公布的 SHA-256 均不同。使用 pip 安装时可在 [PyPI 文件列表](https://pypi.org/project/qianxing/0.4.2/#files) 中核对摘要。手动下载 GitHub 附件时使用该 Release 附带的 [SHA256SUMS](https://github.com/coeasy/qianxing/releases/download/v0.4.2/SHA256SUMS)。
 
-在 Windows x64 的两个独立环境中，分别安装各渠道校验过的 wheel。两者均完成离线 quickstart、生成 HTML 并通过产物核验。PyPI wheel 内置 CLI 的构建提交为 `6e9e862`，与 v0.4.2 标签一致。GitHub Release 的同名 wheel 报告 `49ae18e`。需要复现标签构建时，在 Windows 上选用 PyPI wheel。Linux 和 macOS 此处只核对了渠道摘要。
+在 Windows x64 的两个独立环境中，分别安装各渠道校验过的 wheel。两者均完成离线 quickstart、生成 HTML 并通过产物核验。PyPI wheel 内置 CLI 的构建提交为 `6e9e862`，与 v0.4.2 标签一致。GitHub Release 的同名 wheel 报告 `49ae18e`。需要复现标签构建时，在 Windows 上选用 PyPI wheel。
+
+另在 Debian 12、CPython 3.13 的隔离 Linux 容器中，按 GitHub Release API SHA-256 校验并安装 Linux x86-64 Release wheel；容器断网运行 `qianxing quickstart --rows 80 --format html`，预检 ready、80 根明确标记为 synthetic sample 的 Bar、HTML 报告生成，来源产物复核通过。报告中的 bundled CLI 标识为 `qianxing 0.4.2 (build 49ae18e, target x86_64-unknown-linux-gnu)`。这只验证 GitHub Release Linux wheel；PyPI Linux wheel 的 SHA-256 是 `3f599f612b410581c3fa4f37fc1e6124c8afcd1315a4572c03c3c1fba53dfc45`，GitHub Release Linux wheel 为 `2d46e1418b686d107660d362c64e0ee7a73a38c8f4ac88fb24fe8ac156eb50f7`，两者字节不同，不能把此次验收转述为 PyPI Linux wheel 验收。
