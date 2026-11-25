@@ -77,6 +77,7 @@ pub(super) fn dispatch(
             timeframe,
             spec,
             quantity,
+            target_notional_raw,
             config,
             use_public_default_fees,
         }) => {
@@ -89,6 +90,7 @@ pub(super) fn dispatch(
                 end_ms,
                 spec_path: spec.as_deref(),
                 quantity: quantity.unwrap_or(1),
+                target_notional_raw,
                 runtime_config_path: config.as_deref(),
                 use_public_default_fees,
             }) {

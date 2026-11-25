@@ -8,7 +8,7 @@ fn assert_same_process_contract(first: &Observation, second: &Observation) {
 }
 
 #[test]
-fn quickstart_replays_the_same_five_step_backtest_contract() {
+fn quickstart_replays_the_same_six_step_backtest_contract() {
     // Reuse one absolute project path across clean replays. `init` binds storage to that path,
     // and its config fingerprint correctly contributes to the run identity.
     let cwd = temp_dir("quickstart", 1);
@@ -26,8 +26,14 @@ fn quickstart_replays_the_same_five_step_backtest_contract() {
     );
     assert_same_process_contract(&first, &second);
 
-    for step in ["建项目", "静态检查", "跑一轮回测", "读回摘要", "看安全状态"]
-    {
+    for step in [
+        "建项目",
+        "静态检查",
+        "跑一轮回测",
+        "复核摘要并生成 EvidenceBundle",
+        "离线核验证据包",
+        "看安全状态",
+    ] {
         assert!(
             first.stdout.contains(step),
             "missing quickstart step {step}: {first:?}"
@@ -48,6 +54,13 @@ fn quickstart_replays_the_same_five_step_backtest_contract() {
             .iter()
             .any(|path| path.ends_with(".summary.json")),
         "quickstart must persist the backtest summary: {first:?}"
+    );
+    assert!(
+        first
+            .artifacts
+            .iter()
+            .any(|path| path.ends_with(".evidence.json")),
+        "quickstart must persist a verified run EvidenceBundle: {first:?}"
     );
 }
 

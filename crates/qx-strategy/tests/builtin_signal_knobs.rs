@@ -91,6 +91,7 @@ fn run(
         instrument: instrument.clone(),
         quantity: Quantity::from_i64(1),
         target_notional_raw: None,
+        market_spec: None,
         primary_market_spec: None,
         reference_market_spec: None,
         target_available_margin_bps: None,

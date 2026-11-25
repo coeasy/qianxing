@@ -1,6 +1,7 @@
 import asyncio
 import os
 import sys
+import time
 import unittest
 from fractions import Fraction
 from pathlib import Path
@@ -1180,15 +1181,17 @@ class CcxtTest(unittest.TestCase):
 
     def test_bitget_history_ohlcv_uses_capped_aligned_pages(self):
         interval_ms = 15 * 60 * 1000
+        start_ms = time.time_ns() // 1_000_000 - 10 * 24 * 60 * 60 * 1_000
+        start_ms -= start_ms % interval_ms
 
         class BitgetHistoryExchange(FakeExchange):
             def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
                 self.calls.append(("fetch_ohlcv", symbol, timeframe, since, limit, params))
-                if since == interval_ms:
-                    timestamps = (interval_ms, 2 * interval_ms)
+                if since == start_ms:
+                    timestamps = (start_ms, start_ms + interval_ms)
                 else:
                     # Bitget history-candles treats startTime as exclusive.
-                    timestamps = (3 * interval_ms,)
+                    timestamps = (start_ms + 2 * interval_ms,)
                 return [[timestamp, 100, 101, 99, 100, 1] for timestamp in timestamps]
 
         exchange = BitgetHistoryExchange()
@@ -1196,26 +1199,29 @@ class CcxtTest(unittest.TestCase):
         frame = client.fetch_ohlcv(
             "BTC/USDT:USDT.BITGET",
             timeframe="15m",
-            start_ms=interval_ms,
-            end_ms=3 * interval_ms,
+            start_ms=start_ms,
+            end_ms=start_ms + 2 * interval_ms,
             limit=1_000,
         )
 
-        self.assertEqual(frame.ts, (interval_ms, 2 * interval_ms, 3 * interval_ms))
+        self.assertEqual(frame.ts, (start_ms, start_ms + interval_ms, start_ms + 2 * interval_ms))
         fetch_calls = [call for call in exchange.calls if call[0] == "fetch_ohlcv"]
-        self.assertEqual([call[3] for call in fetch_calls], [interval_ms, 2 * interval_ms])
+        self.assertEqual([call[3] for call in fetch_calls], [start_ms, start_ms + interval_ms])
         self.assertEqual([call[4] for call in fetch_calls], [200, 200])
+        self.assertTrue(all(call[5] == {} for call in fetch_calls))
 
     def test_bitget_history_ohlcv_accepts_identical_inclusive_page_overlap(self):
         interval_ms = 15 * 60 * 1000
+        start_ms = time.time_ns() // 1_000_000 - 10 * 24 * 60 * 60 * 1_000
+        start_ms -= start_ms % interval_ms
 
         class InclusiveBitgetHistoryExchange(FakeExchange):
             def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
                 self.calls.append(("fetch_ohlcv", symbol, timeframe, since, limit, params))
-                if since == interval_ms:
-                    timestamps = (interval_ms, 2 * interval_ms)
+                if since == start_ms:
+                    timestamps = (start_ms, start_ms + interval_ms)
                 else:
-                    timestamps = (2 * interval_ms, 3 * interval_ms)
+                    timestamps = (start_ms + interval_ms, start_ms + 2 * interval_ms)
                 return [[timestamp, 100, 101, 99, 100, 1] for timestamp in timestamps]
 
         exchange = InclusiveBitgetHistoryExchange()
@@ -1223,12 +1229,45 @@ class CcxtTest(unittest.TestCase):
         frame = client.fetch_ohlcv(
             "BTC/USDT:USDT.BITGET",
             timeframe="15m",
-            start_ms=interval_ms,
-            end_ms=3 * interval_ms,
+            start_ms=start_ms,
+            end_ms=start_ms + 2 * interval_ms,
             limit=1_000,
         )
 
-        self.assertEqual(frame.ts, (interval_ms, 2 * interval_ms, 3 * interval_ms))
+        self.assertEqual(frame.ts, (start_ms, start_ms + interval_ms, start_ms + 2 * interval_ms))
+
+    def test_bitget_uses_uta_100_row_pages_for_history_beyond_classic_retention(self):
+        interval_ms = 15 * 60 * 1000
+        start_ms = time.time_ns() // 1_000_000 - 180 * 24 * 60 * 60 * 1_000
+        start_ms -= start_ms % interval_ms
+        timestamps = [start_ms + index * interval_ms for index in range(103)]
+
+        class UtaHistoryExchange(FakeExchange):
+            def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
+                self.calls.append(("fetch_ohlcv", symbol, timeframe, since, limit, params))
+                if since == start_ms:
+                    selected = timestamps[:100]
+                else:
+                    # The next query overlaps the previous cursor; Bitget's
+                    # exclusive startTime response begins with the next bar.
+                    selected = timestamps[100:]
+                return [[timestamp, 100, 101, 99, 100, 1] for timestamp in selected]
+
+        exchange = UtaHistoryExchange()
+        client = CcxtExchangeClient(CcxtConfig(exchange_id="bitget"), exchange=exchange)
+        frame = client.fetch_ohlcv(
+            "BTC/USDT:USDT.BITGET",
+            timeframe="15m",
+            start_ms=start_ms,
+            end_ms=timestamps[-1],
+            limit=1_000,
+        )
+
+        self.assertEqual(frame.ts, tuple(timestamps))
+        fetch_calls = [call for call in exchange.calls if call[0] == "fetch_ohlcv"]
+        self.assertEqual(len(fetch_calls), 2)
+        self.assertEqual([call[4] for call in fetch_calls], [100, 100])
+        self.assertTrue(all(call[5] == {"uta": True} for call in fetch_calls))
 
     def test_ohlcv_duplicate_timestamps_fail_closed_instead_of_silently_overwriting(self):
         class DuplicateTimestampExchange(FakeExchange):

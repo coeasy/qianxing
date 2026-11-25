@@ -155,8 +155,10 @@ pub struct BuiltinStrategyConfig {
     /// converts it to a quantity at the visible close; order/risk rules still
     /// validate the resulting quantity before execution.
     pub target_notional_raw: Option<i128>,
-    /// Frozen leg specs required to convert fixed quote notional into contract
-    /// quantities for two-leg derivative strategies.
+    /// Frozen instrument market spec used to convert notional sizing into venue-valid units.
+    pub market_spec: Option<TradingInstrumentSpec>,
+    /// Frozen active-leg market spec used to convert quote notional into venue-sized
+    /// quantities. For pair arbitrage this describes the primary leg.
     pub primary_market_spec: Option<TradingInstrumentSpec>,
     pub reference_market_spec: Option<TradingInstrumentSpec>,
     /// Optional fraction of the current available margin to target (basis points).
@@ -229,6 +231,7 @@ impl BuiltinStrategyConfig {
             instrument,
             quantity,
             target_notional_raw: None,
+            market_spec: None,
             primary_market_spec: None,
             reference_market_spec: None,
             target_available_margin_bps: None,
@@ -363,10 +366,19 @@ impl BuiltinStrategyConfig {
                 }
             }
         }
-        if !self.kind.needs_reference_leg()
-            && (self.primary_market_spec.is_some() || self.reference_market_spec.is_some())
-        {
-            return Err("单腿策略不能配置双腿 market spec".into());
+        if let Some(market) = self.market_spec.as_ref() {
+            market
+                .validate()
+                .map_err(|error| format!("market spec 非法: {error}"))?;
+            if market.instrument != self.instrument {
+                return Err("market spec instrument 不匹配".into());
+            }
+        }
+        if self.kind.needs_reference_leg() && self.market_spec.is_some() {
+            return Err("双腿策略必须使用 primary_market_spec/reference_market_spec".into());
+        }
+        if !self.kind.needs_reference_leg() && self.reference_market_spec.is_some() {
+            return Err("单腿策略不能配置 reference_market_spec".into());
         }
         if (uses(BuiltinSignalKnob::FastWindow) || uses(BuiltinSignalKnob::SlowWindow))
             && (self.fast_window == 0

@@ -102,6 +102,7 @@ fn ccxt_builtin_process_preserves_fetch_and_backtest_contract() {
         .args(["sma_cross", "BTCUSDT.BINANCE", "1000", "70000", "1s"])
         .arg("--config")
         .arg(&runtime_path)
+        .args(["--target-notional", "1000"])
         .output()
         .expect("run backtest ccxt-builtin process");
 
@@ -123,7 +124,7 @@ fn ccxt_builtin_process_preserves_fetch_and_backtest_contract() {
         "instrument=BTCUSDT.BINANCE",
         "bars=70",
         "fills=",
-        "result_hash=c3d92708bceb2ecb",
+        "result_hash=ae3ebd2ee27f9304",
     ] {
         assert!(metrics.contains(field), "missing {field} in {metrics}");
     }
@@ -166,6 +167,20 @@ fn ccxt_builtin_process_preserves_fetch_and_backtest_contract() {
     assert!(quality["manifest"]["source_lineage"]["primary_source"]
         .as_str()
         .is_some_and(|source| source.contains("requested_range=1000..70000")));
+    let effective_runtime_path = root.join(
+        summary["runtime_config"]
+            .as_str()
+            .expect("CCXT summary names its effective runtime snapshot"),
+    );
+    let effective_runtime: Value = serde_json::from_slice(
+        &std::fs::read(&effective_runtime_path).expect("read effective runtime snapshot"),
+    )
+    .expect("effective runtime snapshot is JSON");
+    assert_eq!(
+        effective_runtime["strategy"]["builtin_target_notional_raw"],
+        json!(1_000_000_000_000_i128),
+        "the exact target notional must survive immutable runtime snapshot preparation"
+    );
 
     let xlsx_path = case.join("ccxt.report.xlsx");
     let report = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
