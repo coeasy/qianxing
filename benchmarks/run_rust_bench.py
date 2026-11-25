@@ -77,7 +77,9 @@ CRITERION_REQUIRED = {
 }
 PR_CRITERION_FILTERS = {
     "qx-core": (
+        "qx_core_append_batch",
         "qx_core_event_log_validate/cached",
+        "qx_core_event_log_validate/duplicate_tree_baseline",
         "qx_core_ledger_entry_lookup/indexed",
         "qx_core_event_log_prefix_digest/cached_after_append",
     ),
@@ -85,6 +87,7 @@ PR_CRITERION_FILTERS = {
         "qx_runtime_balance_snapshot_cursor",
         "qx_runtime_latest_quote_lookup",
     ),
+    "qx-xingban": ("portfolio_bar_timeline_aligned_64k_bars",),
     "qx-zhenlu": ("qx_zhenlu_crypto_paper_lifecycle_v2",),
 }
 MARGINAL_KNEE_THRESHOLD_PCT = 20.0

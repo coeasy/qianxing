@@ -36,13 +36,27 @@ class CriterionEstimatePathTests(unittest.TestCase):
 
 
 class CriterionPlanTests(unittest.TestCase):
-    def test_pr_profile_runs_representative_hot_paths_with_full_sample_settings(self) -> None:
+    def test_pr_profile_covers_registered_performance_regression_families(self) -> None:
         required, commands = criterion_plan("cargo", "pr")
-        self.assertEqual(len(required), 24)
+        expected_regressions = {
+            *(f"qx_core_append_batch/{size}" for size in (1_000, 8_000, 64_000)),
+            *(
+                f"qx_core_event_log_validate/duplicate_tree_baseline/{size}"
+                for size in (1_000, 8_000, 64_000)
+            ),
+            *(
+                f"portfolio_bar_timeline_aligned_64k_bars/{mode}/{markets}"
+                for mode in ("timeline_constructor", "preallocated_flatten_sort_with_indexes")
+                for markets in (2, 8, 32)
+            ),
+        }
+        self.assertEqual(len(required), 36)
+        self.assertTrue(expected_regressions <= required)
         self.assertLess(len(required), len(CRITERION_REQUIRED))
-        self.assertEqual(len(commands), 6)
+        self.assertEqual(len(commands), 9)
         self.assertEqual(
-            {command[3] for command in commands}, {"qx-core", "qx-runtime", "qx-zhenlu"}
+            {command[3] for command in commands},
+            {"qx-core", "qx-runtime", "qx-xingban", "qx-zhenlu"},
         )
         for command in commands:
             self.assertEqual(command[-1], "--noplot")
