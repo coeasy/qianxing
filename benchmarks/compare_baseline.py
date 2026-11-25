@@ -213,6 +213,9 @@ def main() -> int:
             continue
         shared_metrics = old_rows[key].keys() & new_rows[key].keys()
         for metric in sorted(shared_metrics):
+            if key[0] == "steady_state_pipeline_ingest" and metric == "operations_per_second":
+                # This is the inverse of median_ms, not independent evidence.
+                continue
             if metric in {"p95_ms", "min_ms", "max_ms", "raw_ms", "sample_count"} or (
                 metric.endswith("_ci95_ms")
             ):
@@ -222,7 +225,14 @@ def main() -> int:
                 continue
             before = old_rows[key][metric]
             after = new_rows[key][metric]
-            if group in {"end_to_end", "ashare_rules_on"} and metric in {"p50_ms", "median_ms"}:
+            repeat_comparable = (
+                group in {"end_to_end", "ashare_rules_on"} and metric in {"p50_ms", "median_ms"}
+            ) or (
+                key[0] == "steady_state_pipeline_ingest"
+                and metric == "median_ms"
+                and ("raw_ms" in old_rows[key] or "raw_ms" in new_rows[key])
+            )
+            if repeat_comparable:
                 baseline_upper = repeat_bound(old_rows[key], upper=True)
                 current_lower = repeat_bound(new_rows[key], upper=False)
                 if baseline_upper is not None and current_lower is not None and baseline_upper > 0:

@@ -7,7 +7,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from run_rust_bench import CRITERION_REQUIRED, criterion_estimate_path, criterion_plan
+from run_rust_bench import (
+    CRITERION_REQUIRED,
+    criterion_estimate_path,
+    criterion_plan,
+    steady_state_tick_curve,
+)
 
 
 class CriterionEstimatePathTests(unittest.TestCase):
@@ -51,6 +56,29 @@ class CriterionPlanTests(unittest.TestCase):
             [command[3] for command in commands],
             ["qx-core", "qx-runtime", "qx-scheduler", "qx-xingban", "qx-zhenlu", "qx-cli"],
         )
+
+
+class SteadyStateTickCurveTests(unittest.TestCase):
+    def test_curve_retains_independent_window_medians(self) -> None:
+        records = [
+            {
+                "benchmark": "steady_state_pipeline_ingest",
+                "operations": size,
+                "ticks": 105,
+                "median_ms": median,
+                "p95_ms": p95,
+                "raw_ms": samples,
+            }
+            for size, median, p95, samples in (
+                (1000, 1.8, 2.1, [1.7, 1.8, 1.8, 1.9, 1.8]),
+                (8000, 3.5, 4.1, [3.4, 3.5, 3.6, 3.5, 3.5]),
+            )
+        ]
+
+        curve = steady_state_tick_curve(records)
+
+        self.assertEqual(curve["points"][0]["window_p50_ms"], records[0]["raw_ms"])
+        self.assertIn("five independent window p50s", curve["method"])
 
 
 if __name__ == "__main__":

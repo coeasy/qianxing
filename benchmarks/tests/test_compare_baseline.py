@@ -468,6 +468,107 @@ class CompareBaselineTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("[INCONCLUSIVE]", result.stdout)
 
+    def test_rust_micro_pipeline_ingest_blocks_only_beyond_window_repeat_envelope(self) -> None:
+        base = {"schema_version": 1, "hardware": {"cpu": "same"}}
+        result = self.compare_reports(
+            {
+                **base,
+                "records": [{
+                    "benchmark": "steady_state_pipeline_ingest",
+                    "operations": 8000,
+                    "samples": 5,
+                    "raw_ms": [3.2, 3.3, 3.4, 3.5, 3.6],
+                    "median_ms": 3.4,
+                    "p95_ms": 3.8,
+                    "operations_per_second": 294.118,
+                }],
+            },
+            {
+                **base,
+                "records": [{
+                    "benchmark": "steady_state_pipeline_ingest",
+                    "operations": 8000,
+                    "samples": 5,
+                    "raw_ms": [4.1, 4.2, 4.3, 4.4, 4.5],
+                    "median_ms": 4.3,
+                    "p95_ms": 4.7,
+                    "operations_per_second": 232.558,
+                }],
+            },
+            "benchmark_regression_thresholds:\n  rust_micro: 0.10\n",
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("baseline upper sample 3.600 ms", result.stdout)
+        self.assertIn("current lower sample 4.100 ms", result.stdout)
+
+    def test_rust_micro_pipeline_ingest_point_spike_with_overlapping_windows_is_inconclusive(self) -> None:
+        base = {"schema_version": 1, "hardware": {"cpu": "same"}}
+        result = self.compare_reports(
+            {
+                **base,
+                "records": [{
+                    "benchmark": "steady_state_pipeline_ingest",
+                    "operations": 8000,
+                    "samples": 5,
+                    "raw_ms": [3.3, 3.4, 3.5, 3.6, 3.7],
+                    "median_ms": 3.5,
+                    "p95_ms": 4.0,
+                    "operations_per_second": 285.714,
+                }],
+            },
+            {
+                **base,
+                "records": [{
+                    "benchmark": "steady_state_pipeline_ingest",
+                    "operations": 8000,
+                    "samples": 5,
+                    "raw_ms": [3.6, 3.8, 3.9, 4.0, 4.1],
+                    "median_ms": 3.9,
+                    "p95_ms": 4.6,
+                    "operations_per_second": 256.410,
+                }],
+            },
+            "benchmark_regression_thresholds:\n  rust_micro: 0.10\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("[INCONCLUSIVE]", result.stdout)
+        self.assertIn("repeated timing envelopes", result.stdout)
+        self.assertNotIn("operations_per_second", result.stdout)
+
+    def test_rust_micro_pipeline_ingest_legacy_baseline_without_windows_is_inconclusive(self) -> None:
+        base = {"schema_version": 1, "hardware": {"cpu": "same"}}
+        result = self.compare_reports(
+            {
+                **base,
+                "records": [{
+                    "benchmark": "steady_state_pipeline_ingest",
+                    "operations": 8000,
+                    "ticks": 105,
+                    "median_ms": 3.48,
+                    "p95_ms": 4.048,
+                    "operations_per_second": 287.356,
+                }],
+            },
+            {
+                **base,
+                "records": [{
+                    "benchmark": "steady_state_pipeline_ingest",
+                    "operations": 8000,
+                    "ticks": 105,
+                    "samples": 5,
+                    "raw_ms": [3.6, 3.8, 3.9, 4.0, 4.1],
+                    "median_ms": 3.865,
+                    "p95_ms": 4.572,
+                    "operations_per_second": 258.725,
+                }],
+            },
+            "benchmark_regression_thresholds:\n  rust_micro: 0.10\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("[INCONCLUSIVE]", result.stdout)
+        self.assertIn("repeat bounds are unavailable", result.stdout)
+        self.assertNotIn("operations_per_second", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

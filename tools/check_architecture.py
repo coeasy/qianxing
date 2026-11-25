@@ -15995,11 +15995,13 @@ def performance_baseline_check() -> None:
     )
     check(
         "steady_state_pipeline_ingest" in bench_source
+        and "raw_ms" in bench_source
         and "steady_state_pipeline_ingest" in micro_driver_source
         and "steady_state_tick_curve" in micro_driver_source
+        and "window_p50_ms" in micro_driver_source
         and "candidate_positive_knee_at_history_events" in micro_driver_source,
-        "Rust 基准测量并输出 1k/8k/64k 单次 pipeline ingest 的边际成本曲线",
-        "缺少真实单 tick 工作负载、证据生成或正向拐点判定",
+        "Rust 基准测量 1k/8k/64k 单次 pipeline ingest，并输出窗口重复样本和边际成本曲线",
+        "缺少真实单 tick 工作负载、窗口重复样本、证据生成或正向拐点判定",
     )
     compare = ROOT / "benchmarks/compare_baseline.py"
     compare_source = compare.read_text(encoding="utf-8") if compare.is_file() else ""
@@ -16012,9 +16014,10 @@ def performance_baseline_check() -> None:
         and 'report.get("criterion_records", [])' in compare_source
         and 'row.get("mean_ns", row.get("median_ns"))' in compare_source
         and 'row.get("mean_ci95_ns")' in compare_source
-        and "new_interval[0] > threshold_bound" in compare_source,
-        "Criterion 使用 95% 置信区间，端到端使用重复样本边界确认超过 targets.yaml 阈值才阻断",
-        "比较器缺少台账阈值、阻断退出或仅识别回归方向的判据",
+        and "new_interval[0] > threshold_bound" in compare_source
+        and 'key[0] == "steady_state_pipeline_ingest"' in compare_source,
+        "Criterion 使用 95% 置信区间，端到端和稳态 pipeline 仅在重复样本确认越过 targets.yaml 阈值时阻断",
+        "比较器缺少台账阈值、阻断退出或可靠重复样本回归判据",
     )
     targets_source = TARGETS_FILE.read_text(encoding="utf-8")
     threshold_block = _block_lines(targets_source, "benchmark_regression_thresholds")
@@ -16033,6 +16036,8 @@ def performance_baseline_check() -> None:
         and "test_registered_paper_lifecycle_v2_regression_over_ten_percent_fails" in compare_tests_source
         and "test_short_criterion_estimate_without_confidence_intervals_is_diagnostic" in compare_tests_source
         and "test_criterion_point_spike_with_overlapping_confidence_intervals_is_non_blocking" in compare_tests_source
+        and "test_rust_micro_pipeline_ingest_blocks_only_beyond_window_repeat_envelope" in compare_tests_source
+        and "test_rust_micro_pipeline_ingest_legacy_baseline_without_windows_is_inconclusive" in compare_tests_source
         and "test_end_to_end_point_spike_with_overlapping_repeat_envelope_is_inconclusive" in compare_tests_source
         and "test_crypto_paper_worker_e2e_record_uses_blocking_end_to_end_threshold" in compare_tests_source,
         "性能阈值在目标台账登记且重复样本边界、Criterion 区间、改善、首样本和版本化 workload 各有行为用例",

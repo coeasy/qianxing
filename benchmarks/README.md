@@ -287,7 +287,8 @@ python benchmarks/run_event_log_pipeline_tail_bench.py
 输出每档的单 tick p50/p95、相邻边际成本和候选拐点：SQLite EventLog 预置 N 条确定性历史，随后
 执行 5 个独立窗口，每窗口在同一 live pipeline 上逐笔 ingest 21 条新行情事实；每档共计 105 个
 计时样本，分别按 N=1k/8k/64k 报告单笔 p50/p95 与
-每秒 tick 数。历史只用于形成不同日志长度，计时覆盖真实 `LiveEventPipeline::ingest` 的刷新、
+每秒 tick 数，并保留 5 个窗口各自的单 tick p50。回归门槛使用窗口 p50 的重复范围判断，旧基线没有
+窗口样本时只报告点估计而不将单次涨幅判为已确认回归。历史只用于形成不同日志长度，计时覆盖真实 `LiveEventPipeline::ingest` 的刷新、
 事件校验/归约和 SQLite 追加。它是合成 `Settle` 历史 + QuoteTick 的工作负载，不代表某个交易
 profile；此曲线可观察 EventLog 变长时实际单次写侧 tick 是否继续线性增长。
 
