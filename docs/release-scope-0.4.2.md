@@ -30,3 +30,7 @@ Rust SDK 14 包闭包已从不可变 `v0.4.2` tag 依赖拓扑发布；registry 
 - Paper 撮合结果不等价于交易所撮合，不证明真实流动性、排队位置、市场冲击或策略盈利能力。
 
 发布资产包括三平台 CLI 和 wheel、C++ SDK、Web Console、SBOM、release-identity.json 与 SHA256SUMS。下载文件后可对照 [SHA256SUMS](https://github.com/coeasy/qianxing/releases/download/v0.4.2/SHA256SUMS) 核验。
+
+### Python 安装包校验
+
+v0.4.2 的 Windows x64、Linux x64 和 macOS ARM64 wheel 在 PyPI 与 GitHub Release 上使用相同文件名，两个渠道公布的 SHA-256 均不同。使用 pip 安装时可在 [PyPI 文件列表](https://pypi.org/project/qianxing/0.4.2/#files) 中核对摘要。手动下载 GitHub 附件时使用该 Release 附带的 [SHA256SUMS](https://github.com/coeasy/qianxing/releases/download/v0.4.2/SHA256SUMS)。
