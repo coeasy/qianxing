@@ -77,10 +77,12 @@ pub(crate) fn print_cli_help() {
       按场景创建自包含项目；会自动改写 deploy/ 样例路径并复制依赖文件。
   init [runtime.json] --strategy <name> [--force]
       创建绑定内置策略和样例 BarFrame 的可直接回测项目。
-  quickstart [项目目录] [--strategy <name>] [--profile <builtin|ashare|ccxt>] [--days N] [--timeframe TF] [--as-of-ms UTC_MS] [--html] [--force]
-      一条命令跑完首跑链条：建内置策略项目 → doctor → backtest → report → status；
+  quickstart [项目目录] [--strategy <name>] [--profile <builtin|ashare|ccxt|paper>] [--days N] [--timeframe TF] [--as-of-ms UTC_MS] [--html] [--force]
+      默认一条命令跑完首跑链条：建内置策略项目 → doctor → backtest → report → status；
       --strategy 可选 sma_cross、ema_cross、macd、rsi、bollinger、donchian_breakout、momentum、mean_reversion、grid、atr_trend、keltner_trend、vwap_reversion 或 volatility_breakout；
       --profile ccxt 默认使用 OKX BTC 永续合约最近 30 天 1h 真实公开行情；--exchange 切换 OKX/Binance/Bitget 时自动选择对应 BTC 永续合约，--instrument 可显式覆盖；--days/--timeframe 调整窗口；--as-of-ms 固定窗口上限以复现同一结束 K 线；只读，不加载密钥或提交订单。
+      --profile paper 在新目录运行 Scheduler → Strategy → 本地 Paper Execution → Ledger；报价为本地合成 L1，不联网、不读取密钥、不提交实盘订单，且不支持 --force。
+      --profile paper 使用独立的四步 Paper 链，不生成历史回测报告；已有目录、--html、--strategy 和 --force 都会在写入前拒绝。
       CCXT 专属参数只能与 --profile ccxt 组合；最多 365 天、100000 根 Bar，月份周期不支持。
       --html 可额外生成自包含 HTML 报告与 SVG 图表；只写指定目录，任一步失败只回显那一步的命令原文并以 2 退出。
   guide [researcher|strategy-author|operator|integrator] [--json]
