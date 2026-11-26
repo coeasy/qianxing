@@ -44,3 +44,5 @@ Windows workspace 验收之外，已用本地 Podman 启动 Linux Rust 1.98.1 �
 ## crates.io 发布顺序预检
 
 候选上的 `python tools/cargo_publish_plan.py qx-sdk` 已解析出 14 个 crate 的保守发布顺序：`qx-core` → `qx-control` → `qx-guanxing` → `qx-datastruct` → `qx-data` → `qx-provider` → `qx-risk` → `qx-spec` → `qx-strategy` → `qx-zhenlu` → `qx-xingban` → `qx-app` → `qx-execution` → `qx-sdk`。当前 29 个 `qx-*` workspace crate 版本均为 `0.5.0`。该计划会计入可选及目标平台依赖，但不查询 crates.io 上的名称/版本可用性；发布前仍须对每个版本做注册表预检并按顺序发布。
+
+已于 2026-11-26 UTC 查询官方 [crates.io sparse index](https://index.crates.io/config.json)：上述 14 个 crate 均已登记，当前最新版本均为 `0.4.2`，尚无 `0.5.0` 记录。原始响应摘要保存在[注册表预检证据](../maturity/evidence/crates-io-v0.5.0-availability-2026-11-27.json)。这证明检查时目标版本尚未发布；实际发布前仍需立即复查，不能视为版本预留或上传权限证明。

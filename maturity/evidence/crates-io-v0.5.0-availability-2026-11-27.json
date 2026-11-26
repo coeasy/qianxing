@@ -1,0 +1,119 @@
+{
+  "checked_at_utc": "2026-11-26T22:57:51.9900286Z",
+  "source": "https://index.crates.io",
+  "scope": "qx-sdk 0.5.0 registry availability",
+  "crates": [
+    {
+      "crate": "qx-core",
+      "index_path": "qx/-c/qx-core",
+      "status": "indexed",
+      "latest": "0.4.2",
+      "v0_5_0": false,
+      "http_status": 200
+    },
+    {
+      "crate": "qx-control",
+      "index_path": "qx/-c/qx-control",
+      "status": "indexed",
+      "latest": "0.4.2",
+      "v0_5_0": false,
+      "http_status": 200
+    },
+    {
+      "crate": "qx-guanxing",
+      "index_path": "qx/-g/qx-guanxing",
+      "status": "indexed",
+      "latest": "0.4.2",
+      "v0_5_0": false,
+      "http_status": 200
+    },
+    {
+      "crate": "qx-datastruct",
+      "index_path": "qx/-d/qx-datastruct",
+      "status": "indexed",
+      "latest": "0.4.2",
+      "v0_5_0": false,
+      "http_status": 200
+    },
+    {
+      "crate": "qx-data",
+      "index_path": "qx/-d/qx-data",
+      "status": "indexed",
+      "latest": "0.4.2",
+      "v0_5_0": false,
+      "http_status": 200
+    },
+    {
+      "crate": "qx-provider",
+      "index_path": "qx/-p/qx-provider",
+      "status": "indexed",
+      "latest": "0.4.2",
+      "v0_5_0": false,
+      "http_status": 200
+    },
+    {
+      "crate": "qx-risk",
+      "index_path": "qx/-r/qx-risk",
+      "status": "indexed",
+      "latest": "0.4.2",
+      "v0_5_0": false,
+      "http_status": 200
+    },
+    {
+      "crate": "qx-spec",
+      "index_path": "qx/-s/qx-spec",
+      "status": "indexed",
+      "latest": "0.4.2",
+      "v0_5_0": false,
+      "http_status": 200
+    },
+    {
+      "crate": "qx-strategy",
+      "index_path": "qx/-s/qx-strategy",
+      "status": "indexed",
+      "latest": "0.4.2",
+      "v0_5_0": false,
+      "http_status": 200
+    },
+    {
+      "crate": "qx-zhenlu",
+      "index_path": "qx/-z/qx-zhenlu",
+      "status": "indexed",
+      "latest": "0.4.2",
+      "v0_5_0": false,
+      "http_status": 200
+    },
+    {
+      "crate": "qx-xingban",
+      "index_path": "qx/-x/qx-xingban",
+      "status": "indexed",
+      "latest": "0.4.2",
+      "v0_5_0": false,
+      "http_status": 200
+    },
+    {
+      "crate": "qx-app",
+      "index_path": "qx/-a/qx-app",
+      "status": "indexed",
+      "latest": "0.4.2",
+      "v0_5_0": false,
+      "http_status": 200
+    },
+    {
+      "crate": "qx-execution",
+      "index_path": "qx/-e/qx-execution",
+      "status": "indexed",
+      "latest": "0.4.2",
+      "v0_5_0": false,
+      "http_status": 200
+    },
+    {
+      "crate": "qx-sdk",
+      "index_path": "qx/-s/qx-sdk",
+      "status": "indexed",
+      "latest": "0.4.2",
+      "v0_5_0": false,
+      "http_status": 200
+    }
+  ]
+}
