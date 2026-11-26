@@ -1,6 +1,6 @@
 # Qianxing 0.5.0 发布候选范围（未发布）
 
-状态（2026-11-27）：这是隔离候选树中的版本准备，不是正式发行。`0.5.0` 尚无 Git tag、PyPI 版本或 crates.io 包；候选包含尚未合并的集成 PR，且工作树为 dirty。不要把本页的本机验收结果当成干净 tag 的发布证据。正式构建必须在获准合并后的精确 tag 上重新运行。
+状态（2026-11-27）：这是隔离候选树中的版本准备，不是正式发行。`0.5.0` 尚无 Git tag、PyPI 版本或 crates.io 包；候选树包含尚未合并到 `main` 的集成改动，验收源码提交为 `0ebd503e`。本页随后仅补充验证记录。这里的本机验收不等同于干净 tag 的发布证据；正式构建必须在获准合并后的精确 tag 上重新运行。
 
 ## 版本边界
 
@@ -16,12 +16,12 @@
 
 ## 本机候选验证
 
-- Windows：`cargo test --workspace --all-targets --locked --offline` 通过。
-- Python：从仓库根目录以候选原生扩展运行 `python -m unittest discover -s python/tests -q`，687 项运行、7 项跳过、无失败。
-- 前后端契约：Console Node 测试 24/24 通过；`cargo test --locked --offline -p qx-api --all-targets -j 2` 通过，覆盖 130 项 API 单元测试和全部集成测试。旧部署观察缺少 `trading_enabled`/`freshest_age_ms` 时分别显示“未评估”/“—”；显式 null 不显示成文本 `undefined`，明确 `false` 仍保持为 false。
+- Windows 候选 HEAD `0ebd503e`：`cargo test --workspace --all-targets --locked --offline -j 2` 通过；workspace 单元/集成测试及 Criterion 基准冒烟目标均完成，无失败。
+- Python：以候选原生扩展运行 `python -m unittest discover -s python/tests -q`，687 项运行、7 项跳过、无失败。执行时从测试子进程清理不完整的 `GIT_CONFIG_*` 注入变量；原始环境下唯一失败的隔离 `git init` 用例在清理后通过。
+- 前后端契约：Console 全部 Node 测试 25/25 通过；`cargo test --locked --offline -p qx-api --all-targets -j 2` 通过，覆盖 130 项 API 单元测试和全部集成测试。旧部署观察缺少 `trading_enabled`/`freshest_age_ms` 时分别显示“未评估”/“—”；显式 null 不显示成文本 `undefined`，明确 `false` 仍保持为 false。
 - 该状态兼容性验收已单独登记为 R18-AC02，并绑定[运行日志](../maturity/acceptance-artifacts/7afe03aa-1755-48ef-9198-7e056067609c.log)和[源码清单](../maturity/acceptance-artifacts/7afe03aa-1755-48ef-9198-7e056067609c.source-tree.json)。它只验旧字段的 UI 呈现，R18 仍等待权威部署/venue 授权来源。
 - 读模型摘要已修复数组响应计数和 HTTP 错误优先级，验收记为 R18-AC03，见[运行日志](../maturity/acceptance-artifacts/8e5f0e55-9ad9-43fe-a422-ba60a7a9aacc.log)及[源码清单](../maturity/acceptance-artifacts/8e5f0e55-9ad9-43fe-a422-ba60a7a9aacc.source-tree.json)。
-- `python tools/check_architecture.py` 通过。
+- `python tools/check_architecture.py --fast` 在候选 HEAD 通过：4 个分片完整覆盖 378 项具名检查且无重复；策略重构台账 26 个验收场景、382 条 artifact-bound 运行记录有效；Markdown 链接校验覆盖 106 个文件及 4,960 个路径引用。
 - `python tools/check_rust_sdk_packages.py qx-sdk --offline --allow-dirty` 验证 14 个归档包，并从这些归档编译、运行独立 quickstart；结果 `Verified: true`。
 - Python wheel 在隔离环境离线安装；内置 renderer 报告版本、平台和 schema 匹配。样例 quickstart 产生 HTML 与 EvidenceBundle，`result_recomputed=false`，所以这里只证明输入身份及产物完整性，没有声称重新计算回测结果。
 
