@@ -24,6 +24,57 @@ from test_ccxt import FakeExchange, FakeProExchange
 
 
 class CcxtWorkerTest(unittest.TestCase):
+    def test_binance_spot_public_profile_blocks_worker_writes_and_streams(self):
+        class PublicSpotExchange(FakeExchange):
+            def __init__(self):
+                super().__init__()
+                self.urls = {"api": {
+                    "public": "https://api.binance.com/api/v3",
+                    "private": "https://api.binance.com/api/v3",
+                }}
+
+            def request(self, path, api="public", method="GET", params=None):
+                self.calls.append(("request", path, api, method, params))
+                return {}
+
+        exchange = PublicSpotExchange()
+        worker = CcxtJsonWorker(CcxtExchangeClient(
+            CcxtConfig(
+                exchange_id="binance",
+                default_type="spot",
+                public_market_data_endpoint="binance_spot_data_api",
+            ),
+            exchange=exchange,
+        ))
+
+        write = json.loads(worker.handle_line(json.dumps({
+            "op": "create_order", "instrument": "BTC/USDT.BINANCE", "side": "buy",
+            "order_type": "market", "amount_exact": "0.001",
+        })))
+        stream = json.loads(asyncio.run(worker.handle_line_async(json.dumps({
+            "op": "watch_ticker", "instrument": "BTC/USDT.BINANCE", "wait_ms": 10,
+        }))))
+
+        self.assertFalse(write["ok"])
+        self.assertFalse(stream["ok"])
+        self.assertEqual(write["error"]["class"], "unsupported")
+        self.assertEqual(stream["error"]["class"], "unsupported")
+        self.assertEqual(exchange.calls, [])
+
+    def test_binance_spot_public_profile_rejects_credentials_loaded_from_environment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps({
+                "exchange_id": "binance",
+                "default_type": "spot",
+                "public_market_data_endpoint": "binance_spot_data_api",
+                "credential_env": {"api_key": "QX_TEST_BINANCE_KEY"},
+            }), encoding="utf-8")
+            with patch.dict(os.environ, {"QX_TEST_BINANCE_KEY": "configured"}):
+                with self.assertRaises(CcxtConnectorError) as raised:
+                    CcxtExchangeClient(_config_from_file(path), exchange=FakeExchange())
+        self.assertEqual(raised.exception.error_class, CcxtErrorClass.INVALID)
+
     def test_jsonl_bracket_shortcut_fails_closed_before_exchange_call(self):
         exchange = FakeExchange()
         worker = CcxtJsonWorker(

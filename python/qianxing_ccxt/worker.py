@@ -68,8 +68,25 @@ class CcxtJsonWorker:
         self.pro_exchange = pro_exchange
         self._pending_stream_reconnects = 0
 
+    def _require_operation_allowed(self, operation: str) -> None:
+        if self.client.config.public_market_data_endpoint:
+            public_operations = {
+                "load_markets",
+                "resolve_market",
+                "fetch_ohlcv",
+                "fetch_ticker",
+                "fetch_order_book",
+                "validate_market_spec",
+            }
+            if operation not in public_operations:
+                raise CcxtConnectorError(
+                    CcxtErrorClass.UNSUPPORTED,
+                    "Binance Spot 公共行情配置仅开放公开市场读取操作",
+                )
+
     def handle(self, request: dict[str, Any]) -> dict[str, Any]:
         operation = str(request.get("op", "")).strip()
+        self._require_operation_allowed(operation)
         if operation == "load_markets":
             markets = self.client.load_markets(reload=bool(request.get("reload", False)))
             return {"markets": list(markets.values())}
@@ -515,6 +532,7 @@ class CcxtJsonWorker:
 
     async def handle_async(self, request: dict[str, Any]) -> dict[str, Any]:
         operation = str(request.get("op", "")).strip()
+        self._require_operation_allowed(operation)
         if not operation.startswith("watch_"):
             return self.handle(request)
         stream = operation.removeprefix("watch_")
@@ -658,6 +676,7 @@ def _config_from_file(path: Path) -> CcxtConfig:
         ),
         ws_max_retries=int(value.get("ws_max_retries", 3)),
         ws_retry_backoff_ms=int(value.get("ws_retry_backoff_ms", 250)),
+        public_market_data_endpoint=str(value.get("public_market_data_endpoint", "")),
     )
 
 

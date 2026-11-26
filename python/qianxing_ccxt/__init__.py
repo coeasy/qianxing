@@ -31,6 +31,8 @@ BITGET_CLASSIC_OHLCV_RETENTION_MS = 52 * 24 * 60 * 60 * 1_000
 BITGET_UTA_OHLCV_PAGE_LIMIT = 100
 SUPPORTED_CCXT_VERSION = "4.5.89"
 LIVE_MARKET_METADATA_MAX_AGE_SECONDS = 60
+BINANCE_SPOT_DATA_API_BASE_URL = "https://data-api.binance.vision/api/v3"
+BINANCE_SPOT_DATA_API_PROFILE = "binance_spot_data_api"
 
 
 def __getattr__(name: str) -> Any:
@@ -351,6 +353,7 @@ class CcxtConfig:
     ws_max_retries: int = 3
     ws_retry_backoff_ms: int = 250
     account_model: str = ""
+    public_market_data_endpoint: str = ""
 
     def validate(self) -> None:
         if not self.exchange_id.strip() or not self.exchange_id.replace("_", "").isalnum():
@@ -370,6 +373,34 @@ class CcxtConfig:
             )
         if not self.default_type.strip():
             raise CcxtConnectorError(CcxtErrorClass.INVALID, "default_type 不能为空")
+        if self.public_market_data_endpoint:
+            if self.public_market_data_endpoint != BINANCE_SPOT_DATA_API_PROFILE:
+                raise CcxtConnectorError(
+                    CcxtErrorClass.INVALID,
+                    "public_market_data_endpoint 仅支持已登记的 Binance Spot 公共行情配置",
+                )
+            if (
+                self.exchange_id.lower() != "binance"
+                or self.default_type.lower() != "spot"
+                or self.sandbox
+                or any((self.api_key, self.secret, self.password, self.uid))
+            ):
+                raise CcxtConnectorError(
+                    CcxtErrorClass.INVALID,
+                    "Binance 公共行情端点仅适用于无凭据、非 sandbox 的 Spot 只读连接",
+                )
+            options = self.options or {}
+            if not isinstance(options, Mapping):
+                raise CcxtConnectorError(
+                    CcxtErrorClass.INVALID,
+                    "Binance Spot 公共行情 options 必须是对象",
+                )
+            option_default_type = options.get("defaultType")
+            if option_default_type is not None and str(option_default_type).lower() != "spot":
+                raise CcxtConnectorError(
+                    CcxtErrorClass.INVALID,
+                    "Binance Spot 公共行情 options.defaultType 只能是 spot",
+                )
         if not 0 <= self.market_data_rate_limit_retries <= 5:
             raise CcxtConnectorError(
                 CcxtErrorClass.INVALID,
@@ -826,7 +857,54 @@ class CcxtExchangeClient:
                 "timeout": config.timeout_ms,
                 "options": {"defaultType": config.default_type, **dict(config.options or {})},
             }
+            if config.public_market_data_endpoint == BINANCE_SPOT_DATA_API_PROFILE:
+                exchange_options = params["options"]
+                exchange_options["defaultType"] = "spot"
+                fetch_markets = exchange_options.get("fetchMarkets", {})
+                if not isinstance(fetch_markets, Mapping):
+                    raise CcxtConnectorError(
+                        CcxtErrorClass.INVALID,
+                        "Binance Spot 公共行情 options.fetchMarkets 必须是对象",
+                    )
+                fetch_market_types = fetch_markets.get("types")
+                if fetch_market_types is not None and list(fetch_market_types) != ["spot"]:
+                    raise CcxtConnectorError(
+                        CcxtErrorClass.INVALID,
+                        "Binance Spot 公共行情只允许加载 spot 市场类型",
+                    )
+                exchange_options["fetchMarkets"] = {**dict(fetch_markets), "types": ["spot"]}
             self.exchange = exchange_type(params)
+        if config.public_market_data_endpoint == BINANCE_SPOT_DATA_API_PROFILE:
+            urls = getattr(self.exchange, "urls", None)
+            api_urls = urls.get("api") if isinstance(urls, Mapping) else None
+            if not isinstance(api_urls, dict) or not isinstance(api_urls.get("public"), str):
+                raise CcxtConnectorError(
+                    CcxtErrorClass.UNSUPPORTED,
+                    "当前 CCXT Binance 实例不支持隔离配置 Spot 公共行情端点",
+                )
+            # Keep all private, derivatives, and websocket URLs untouched. This profile is a
+            # read-only public Spot data path; Binance documents this host for NONE-security
+            # market-data endpoints.
+            api_urls["public"] = BINANCE_SPOT_DATA_API_BASE_URL
+            original_request = getattr(self.exchange, "request", None)
+            if not callable(original_request):
+                raise CcxtConnectorError(
+                    CcxtErrorClass.UNSUPPORTED,
+                    "当前 CCXT Binance 实例不支持公开行情只读请求限制",
+                )
+
+            def public_market_data_request(*args: Any, **kwargs: Any) -> Any:
+                api = kwargs.get("api", args[1] if len(args) > 1 else "public")
+                method = kwargs.get("method", args[2] if len(args) > 2 else "GET")
+                public_route = api == "public" or api in (["public"], ("public",))
+                if not public_route or str(method).upper() not in {"GET", "HEAD"}:
+                    raise CcxtConnectorError(
+                        CcxtErrorClass.UNSUPPORTED,
+                        "Binance Spot 公共行情配置拒绝私有或写入请求",
+                    )
+                return original_request(*args, **kwargs)
+
+            self.exchange.request = public_market_data_request
         if config.use_environment_proxy:
             session = getattr(self.exchange, "session", None)
             proxies = getattr(session, "proxies", None) if session is not None else None

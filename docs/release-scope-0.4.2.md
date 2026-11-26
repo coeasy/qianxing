@@ -2,6 +2,8 @@
 
 v0.4.2 回测 / Paper 正式版已发布。Python 使用 [PyPI 的 qianxing 0.4.2](https://pypi.org/project/qianxing/0.4.2/)，Rust 工程使用 [crates.io 的 qx-sdk 0.4.2](https://crates.io/crates/qx-sdk/0.4.2)，CLI 与 Web Console 从 [GitHub Release v0.4.2](https://github.com/coeasy/qianxing/releases/tag/v0.4.2) 下载。 [正式发布运行](https://github.com/coeasy/qianxing/actions/runs/45554760818)
 
+发布边界补记（2026-11-26）：Binance Spot `--market-type spot` quickstart 在现存 `v0.4.2` tag 创建后开发；该 tag 不含此入口。若合入并发布，须进入后续新版本，不可把它记作 `v0.4.2` 已有能力。
+
 ## 面向用户的新增体验
 
 - PyPI wheel 提供 `qianxing quickstart --profile ccxt`，从 Python 入口完成匿名公开行情读取、回测和 HTML 报告。wheel 调用同版本自带的 `qx-cli`，并使用当前 Python 解释器启动行情 worker；用户无需单独安装 Rust 工具链或 CLI。
