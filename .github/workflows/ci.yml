@@ -282,6 +282,7 @@ jobs:
           python3 -m unittest
           benchmarks.tests.test_source_fingerprint
           benchmarks.tests.test_compare_baseline
+          benchmarks.tests.test_run_rust_bench
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -312,6 +313,7 @@ jobs:
             --json --repeats 7
           python3 benchmarks/run_rust_bench.py \
             --workspace-root "$base_dir" \
+            --target-dir "$CARGO_TARGET_DIR" \
             --out "$GITHUB_WORKSPACE/benchmarks/results/previous/rust-micro.json" \
             --profile "${{ github.event_name == 'pull_request' && 'pr' || 'full' }}"
           python3 "$base_dir/benchmarks/run_ashare_profile_backtest.py" \
@@ -372,6 +374,7 @@ jobs:
             --binary target/release/qx-cli \
             --out benchmarks/results/end-to-end.json --json --repeats 7
           python3 benchmarks/run_rust_bench.py \
+            --target-dir "$CARGO_TARGET_DIR" \
             --profile "${{ github.event_name == 'pull_request' && 'pr' || 'full' }}" \
             --out benchmarks/results/rust-micro.json
           python3 benchmarks/run_ashare_profile_backtest.py \

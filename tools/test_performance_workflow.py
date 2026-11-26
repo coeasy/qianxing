@@ -19,8 +19,17 @@ class PerformanceWorkflowTests(unittest.TestCase):
             "- name: Measure frozen real-data backtest under Linux resource quotas",
             candidate_start,
         )
+        candidate_benchmark_start = workflow.index(
+            "- name: Measure candidate end-to-end and kernel performance",
+            candidate_build_end,
+        )
+        candidate_benchmark_end = workflow.index(
+            "- name: Block registered regressions above ledger thresholds",
+            candidate_benchmark_start,
+        )
         baseline_step = workflow[baseline_start:candidate_start]
         candidate_step = workflow[candidate_start:candidate_build_end]
+        candidate_benchmark = workflow[candidate_benchmark_start:candidate_benchmark_end]
 
         self.assertIn(
             "CARGO_TARGET_DIR: ${{ runner.temp }}/qianxing-performance-baseline-target",
@@ -30,6 +39,8 @@ class PerformanceWorkflowTests(unittest.TestCase):
             "CARGO_TARGET_DIR: ${{ github.workspace }}/target",
             candidate_step,
         )
+        self.assertIn('--target-dir "$CARGO_TARGET_DIR"', baseline_step)
+        self.assertIn('--target-dir "$CARGO_TARGET_DIR"', candidate_benchmark)
         self.assertNotIn('ln -s "$GITHUB_WORKSPACE/target" "$base_dir/target"', baseline_step)
 
 

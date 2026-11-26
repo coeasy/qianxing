@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from run_rust_bench import (
     CRITERION_REQUIRED,
+    cargo_target_root,
     criterion_estimate_path,
     criterion_plan,
     steady_state_tick_curve,
@@ -33,6 +34,13 @@ class CriterionEstimatePathTests(unittest.TestCase):
             expected.touch()
 
             self.assertEqual(criterion_estimate_path("Group/Linear/Buy/16", root), expected)
+
+    def test_explicit_cargo_target_dir_is_used_for_benchmark_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "workspace"
+            target = Path(directory) / "isolated-target"
+            self.assertEqual(cargo_target_root(root, target), target.resolve())
+            self.assertEqual(cargo_target_root(root), (root / "target").resolve())
 
 
 class CriterionPlanTests(unittest.TestCase):

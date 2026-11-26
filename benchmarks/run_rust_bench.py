@@ -111,6 +111,11 @@ def criterion_estimate_path(benchmark: str, criterion_root: Path | None = None) 
     return nested
 
 
+def cargo_target_root(workspace_root: Path, target_dir: Path | None = None) -> Path:
+    """Resolve Cargo's output directory for source-specific benchmark artifacts."""
+    return (target_dir or workspace_root / "target").resolve()
+
+
 def criterion_plan(cargo: str, profile: str) -> tuple[set[str], list[list[str]]]:
     if profile not in {"full", "pr"}:
         raise ValueError(f"unsupported Criterion profile: {profile}")
@@ -244,6 +249,11 @@ def main() -> int:
         default=ROOT,
         help="workspace whose source and benchmark targets are measured",
     )
+    parser.add_argument(
+        "--target-dir",
+        type=Path,
+        help="Cargo output directory when it differs from <workspace-root>/target",
+    )
     parser.add_argument("--cargo", default="cargo")
     parser.add_argument(
         "--skip-criterion",
@@ -258,7 +268,7 @@ def main() -> int:
     )
     args = parser.parse_args()
     workspace_root = args.workspace_root.resolve()
-    criterion_root = workspace_root / "target" / "criterion"
+    criterion_root = cargo_target_root(workspace_root, args.target_dir) / "criterion"
     output_path = args.out or workspace_root / "benchmarks" / "results" / "rust-micro.json"
     required_criterion, criterion_commands = criterion_plan(args.cargo, args.profile)
     for criterion_command in (() if args.skip_criterion else criterion_commands):
