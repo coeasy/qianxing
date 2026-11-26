@@ -45,7 +45,7 @@ pub fn rejection_count(rejections: &[(String, usize)]) -> usize {
 /// Preserve a bounded, per-order readout for report consumers. Older venue events can contain
 /// only an order ID and reason, so the payload also states how many events lack a request snapshot.
 pub fn rejection_detail_readout(event_log: &qx_core::EventLog) -> serde_json::Value {
-    const MAX_DETAILS: usize = 100;
+    const MAX_DETAILS: usize = qx_core::MAX_REJECTION_DETAIL_SNAPSHOTS;
 
     let mut total = 0usize;
     let mut available = 0usize;
