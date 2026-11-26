@@ -111,13 +111,15 @@ def criterion_profile_for_changed_files(changed_files: Iterable[str]) -> str:
     ):
         return "pr-core"
 
-    changed_packages = {
-        package
-        for package in PR_CRITERION_FILTERS
-        if any(path.startswith(f"crates/{package}/") for path in paths)
+    changed_crates = {
+        parts[1]
+        for path in paths
+        if len(parts := path.split("/")) >= 3 and parts[0] == "crates"
     }
-    if len(changed_packages) == 1:
-        package = next(iter(changed_packages))
+    if len(changed_crates) == 1:
+        package = next(iter(changed_crates))
+        if package not in PACKAGE_CRITERION_PROFILES.values():
+            return "pr"
         profile = next(
             profile for profile, selected_package in PACKAGE_CRITERION_PROFILES.items()
             if selected_package == package
