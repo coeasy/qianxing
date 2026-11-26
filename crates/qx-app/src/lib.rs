@@ -106,7 +106,7 @@ pub use cases::BACKTEST_PREFLIGHT_SCHEMA_VERSION_V1;
 pub use cases::{
     bind_ashare_backtest_rules, compare_runs, paper_available_margin_raw, plan_algo_execution,
     plan_capital_allocation, plan_risk_parity, preflight_backtest_v1,
-    preflight_backtest_v1_with_frame, prepare_multi_leg_experiment_artifacts,
+    preflight_backtest_v1_with_verified_manifest, prepare_multi_leg_experiment_artifacts,
     prepare_quick_research_spec_v1, publish_dataset_snapshot, run_backtest, run_depth_backtest,
     run_depth_backtest_with_strategy, run_depth_backtest_with_strategy_slots, run_depth_experiment,
     run_experiment, run_multi_account_backtest, run_multi_account_depth_backtest,

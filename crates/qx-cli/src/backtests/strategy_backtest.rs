@@ -98,6 +98,7 @@ pub(crate) fn run_strategy_backtest_with_quality_manifest(
                 bundle_fingerprint,
                 component_fingerprints: &binding.dataset_component_fingerprints,
             }),
+            dataset_manifest: &manifest,
             run_manifest_root: &data_root,
             input: input.clone(),
             dataset_quality: dataset_quality.clone(),
