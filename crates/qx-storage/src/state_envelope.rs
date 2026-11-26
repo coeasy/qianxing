@@ -336,6 +336,27 @@ fn atomic_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
         fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
     }
 
+    fn canonicalize_parent(path: &Path) -> std::io::Result<std::path::PathBuf> {
+        let parent = path.parent().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "atomic replace path has no parent",
+            )
+        })?;
+        let name = path.file_name().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "atomic replace path has no file name",
+            )
+        })?;
+        Ok(parent.canonicalize()?.join(name))
+    }
+
+    // MoveFileExW can fail with ERROR_PATH_NOT_FOUND when callers pass a valid
+    // relative storage path containing `..`. Resolve existing parent directories
+    // first while leaving the final file name untouched (it may not exist yet).
+    let source = canonicalize_parent(source)?;
+    let destination = canonicalize_parent(destination)?;
     let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
     let destination: Vec<u16> = destination
         .as_os_str()
@@ -425,6 +446,22 @@ mod tests {
             std::process::id(),
             TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
+        let path = root.join("state.json");
+        write_atomic_path(&path, &root, "first").unwrap();
+        write_atomic_path(&path, &root, "second").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "second");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn atomic_file_write_replaces_destination_when_parent_contains_parent_segments() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target")
+            .join(format!(
+                "qx-atomic-parent-segments-{}-{}",
+                std::process::id(),
+                TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+            ));
         let path = root.join("state.json");
         write_atomic_path(&path, &root, "first").unwrap();
         write_atomic_path(&path, &root, "second").unwrap();
