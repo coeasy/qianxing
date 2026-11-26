@@ -302,12 +302,12 @@ def _parser() -> argparse.ArgumentParser:
                           help="run directory for bars/spec/artifacts (default: runs/<strategy>)")
     quickstart = commands.add_parser(
         "quickstart",
-        help="create a sample or public-CCXT project, run a backtest, and render a report",
+        help="create a sample, public-CCXT, or local Paper project and run its first workflow",
     )
     quickstart.add_argument("directory", help="new project directory; must not contain an existing project")
     quickstart.add_argument(
-        "--profile", choices=("sample", "ccxt"), default="sample",
-        help="sample: offline synthetic bars; ccxt: real public exchange candles, read-only",
+        "--profile", choices=("sample", "ccxt", "paper"), default="sample",
+        help="sample: offline backtest; ccxt: real public candles, read-only; paper: local Paper order and ledger flow",
     )
     quickstart.add_argument("--rows", type=int, default=None, help="sample bars to generate (default: 600)")
     quickstart.add_argument(
@@ -326,7 +326,11 @@ def _parser() -> argparse.ArgumentParser:
     quickstart.add_argument("--timeframe", help="candle interval (default: 1h)")
     quickstart.add_argument("--as-of-ms", type=int, help="exclusive UTC cutoff in Unix milliseconds (ccxt only)")
     quickstart.add_argument("--strategy", help="built-in single-market strategy (ccxt defaults to ema_cross)")
-    quickstart.add_argument("--force", action="store_true", help="replace generated files in an existing project")
+    quickstart.add_argument(
+        "--force",
+        action="store_true",
+        help="replace generated files in an existing project (not supported by Paper, which preserves its ledger)",
+    )
     project = commands.add_parser(
         "project",
         help="initialize, inspect, and run a versioned local strategy project",
@@ -779,6 +783,8 @@ def _run_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any] | Non
     """Create a deterministic offline demo and carry it through verified reporting."""
     if args.profile == "ccxt":
         return _run_ccxt_quickstart(args)
+    if args.profile == "paper":
+        return _run_paper_quickstart(args)
     if any(
         value is not None
         for value in (
@@ -981,6 +987,103 @@ def _run_ccxt_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any] 
             "run_id": verification.get("run_id"),
             "result_hash": verification.get("result_hash"),
         },
+        "quickstart_output": completed.stdout,
+        "quickstart_diagnostics": completed.stderr,
+    }
+
+
+def _run_paper_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any] | None]:
+    """Run the installed Rust CLI's local Paper flow without touching exchange credentials."""
+    unsupported = {
+        "--rows": args.rows,
+        "--format": args.format,
+        "--report-output": args.report_output,
+        "--exchange": args.exchange,
+        "--instrument": args.instrument,
+        "--days": args.days,
+        "--timeframe": args.timeframe,
+        "--as-of-ms": args.as_of_ms,
+        "--strategy": args.strategy,
+    }
+    supplied = [name for name, value in unsupported.items() if value is not None]
+    if supplied:
+        raise ValueError(
+            f"paper profile 不接受 {', '.join(supplied)}；它运行本地合成报价的 Paper 生命周期，不是历史回测"
+        )
+    if args.force:
+        raise ValueError("Paper 订单与 Ledger 是持久状态；不支持 --force，请为每次首跑使用新的项目目录")
+
+    from .report_renderer import require_report_renderer
+
+    renderer = require_report_renderer(args.cli)
+    executable = renderer["path"]
+    if not executable:
+        raise ValueError("匹配当前 Python wheel 的 qx-cli 不可用；请重新安装 qianxing wheel 或传入 --cli PATH")
+
+    # Keep the final path component lexical so the Rust CLI can reject a symlink
+    # project root before it writes persistent Paper order/ledger state.
+    project = Path(os.path.abspath(Path(args.directory).expanduser()))
+    command = [executable, "quickstart", str(project), "--profile", "paper"]
+    environment = os.environ.copy()
+    environment["QX_PYTHON"] = sys.executable
+    completed = subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=environment,
+    )
+    if completed.returncode != 0:
+        if completed.stdout:
+            print(completed.stdout, file=sys.stderr, end="" if completed.stdout.endswith("\n") else "\n")
+        if completed.stderr:
+            print(completed.stderr, file=sys.stderr, end="" if completed.stderr.endswith("\n") else "\n")
+        return completed.returncode or 2, None
+
+    result_line = next(
+        (line.removeprefix("[QuickstartPaperResult] ") for line in completed.stdout.splitlines()
+         if line.startswith("[QuickstartPaperResult] ")),
+        None,
+    )
+    if result_line is None:
+        raise ValueError("Rust Paper quickstart exited successfully without a machine-readable Paper result")
+    try:
+        paper_result = json.loads(result_line)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Rust Paper quickstart returned invalid result JSON: {exc}") from exc
+    if (
+        not isinstance(paper_result, dict)
+        or paper_result.get("profile") != "paper"
+        or paper_result.get("quote_source") != "local_synthetic_l1"
+        or not isinstance(paper_result.get("new_orders"), int)
+        or isinstance(paper_result.get("new_orders"), bool)
+        or paper_result["new_orders"] < 1
+        or not isinstance(paper_result.get("new_ledger_entries"), int)
+        or isinstance(paper_result.get("new_ledger_entries"), bool)
+        or paper_result["new_ledger_entries"] < 1
+        or paper_result.get("network_accessed") is not False
+        or paper_result.get("credentials_loaded") is not False
+        or paper_result.get("live_orders_submitted") is not False
+    ):
+        raise ValueError("Rust Paper quickstart did not prove a new local Paper order with no exchange access")
+    runtime_path = project / "qianxing.runtime.json"
+    if not runtime_path.is_file():
+        raise ValueError(f"Rust Paper quickstart did not create the expected runtime configuration: {runtime_path}")
+    return 0, {
+        "status": "succeeded",
+        "profile": "paper",
+        "project_root": str(project),
+        "data": {
+            "source": "local_synthetic_l1",
+            "is_sample": True,
+            "network_accessed": False,
+            "credentials_loaded": False,
+            "live_orders_submitted": False,
+        },
+        "paper": paper_result,
+        "report_renderer": renderer,
         "quickstart_output": completed.stdout,
         "quickstart_diagnostics": completed.stderr,
     }
