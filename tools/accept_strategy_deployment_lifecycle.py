@@ -263,7 +263,12 @@ def main() -> int:
     )
     first_job = json.loads(json.dumps(jobs[0]))
     first_job.update({"job_id": first_job_id, "owner": worker_id, "concurrency_key": first_job_id})
-    first_due = datetime.now(timezone.utc) + timedelta(minutes=1)
+    # Cron has minute precision. Scheduling one minute ahead can round down to
+    # the current minute boundary, letting the baseline worker persist a
+    # checkpoint before revision 1 switches it to the immutable bundle path.
+    # Two minutes guarantees at least one full minute for console bootstrap and
+    # deployment before the first checkpoint job is eligible.
+    first_due = datetime.now(timezone.utc) + timedelta(minutes=2)
     first_job["trigger"] = {
         "Cron": (
             f"{first_due.minute} {first_due.hour} {first_due.day} "
@@ -520,7 +525,7 @@ def main() -> int:
 
         checkpoint_before_restart: dict[str, Any] | None = None
         last_checkpoint_projection: dict[str, Any] | None = None
-        checkpoint_deadline = time.monotonic() + 90
+        checkpoint_deadline = time.monotonic() + 130
         while time.monotonic() < checkpoint_deadline:
             if supervisor.poll() is not None:
                 raise RuntimeError(

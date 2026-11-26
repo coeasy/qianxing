@@ -60,21 +60,22 @@ cargo install --git https://github.com/coeasy/qianxing --tag v0.4.2 --locked qx-
 qx-cli quickstart my-qx                          # 建项目 → 静态检查 → 回测 → 生成/核验证据包 → 安全状态
 qx-cli quickstart my-rsi --strategy rsi           # 同一条链路直接运行 RSI 内置策略
 qx-cli quickstart my-ashare --profile ashare     # A 股样例 → 静态检查 → 回测 → 生成/核验证据包 → 安全状态
+qx-cli quickstart my-paper --profile paper        # 本地合成报价 → Scheduler → Strategy → Paper Execution → Ledger
 qx-cli quickstart my-okx --profile ccxt --days 30 --timeframe 1h --html  # 真实公开行情 → 回测 → HTML/SVG 与证据包
 ```
 
 已在仓库内开发时可用 `cargo install --path crates/qx-cli --locked`；该方式需要完整源码和 Rust 工具链。Release 二进制没有
 仓库相对路径依赖，可从任意工作目录运行。
 
-`quickstart` 内部执行六步：`init → doctor → backtest → report --evidence → evidence verify-run → status`；
-它只写 `my-qx/` 这一个目录，产物落项目内 `data/`。EvidenceBundle 校验报告引用的产物摘要、RunManifest 身份和输入数据指纹；
-默认不重跑策略，因此公共 CCXT 首跑不会为了验包再下载一遍行情。
+`builtin`、`ashare` 与 `ccxt` 回测 quickstart 内部执行六步：`init → doctor → backtest → report --evidence → evidence verify-run → status`；
+它只写项目目录，产物落项目内 `data/`。EvidenceBundle 校验报告引用的产物摘要、RunManifest 身份和输入数据指纹；默认不重跑策略，因此公共 CCXT 首跑不会为了验包再下载一遍行情。
+`--profile paper` 则单独执行四步：`init --profile paper → doctor → Scheduler/Strategy/Paper Execution/Ledger → status`，不把 Paper 订单与历史回测报告混在同一项目链里。
 任一步失败就停下，只回显**那一步**的命令原文，以退出码 2 结束：
 
 内置策略的 Bar 回测会在运行前复用 qx-app 只读预检，显示标的、数据根数和内容指纹；预检阻断时会列出失败项，
 不会开始执行该轮策略。实际回测仍会重新读取数据并做自己的完整校验。自定义策略的 warmup 由策略运行时契约检查。
 
-`--profile` 支持 `builtin`（默认）、`ashare` 与 `ccxt`。A 股首跑使用仓库附带的 6 根样例 Bar 和冻结规格，
+`--profile` 支持 `builtin`（默认）、`ashare`、`ccxt` 与 `paper`。A 股首跑使用仓库附带的 6 根样例 Bar 和冻结规格，
 完成一笔本地回测；不会连接外部行情源或发送订单。`ccxt` 首跑默认从 OKX 获取最近 30 天 BTC/USDT 永续 1h 公共 K 线，
 使用市场公开默认费率并冻结成本文件，生成可复核的回测报告；它不读取密钥、不启用执行 worker，也不提交订单。
 支持 `okx`、`binance` 和 `bitget` 公共行情；指定 `--exchange` 后会自动选择该交易所的 BTC/USDT 永续标的，需要其他标的时再传 `--instrument`；`--days`、`--timeframe` 可调整窗口，上限为 365 天且最多获取 100000 根 Bar。
@@ -82,6 +83,16 @@ qx-cli quickstart my-okx --profile ccxt --days 30 --timeframe 1h --html  # 真�
 此真实行情 quickstart 需要安装 `qianxing[ccxt]` 对应的 CCXT 依赖并可访问所选交易所的公共行情 API。单独的 CCXT sandbox/实盘下单仍需凭据、权限和逐交易所外部验收。
 若只安装了 Rust CLI，可在同一 Python 环境补装行情 worker：`python -m pip install "qianxing[ccxt]"`；运行时用 `QX_PYTHON` 指向该环境的解释器。
 双腿套利策略需要两份行情，quickstart 会拒绝它们并提示使用 `multi-builtin` 入口。
+
+Paper 有独立的首跑入口：
+
+```bash
+qx-cli quickstart ./paper-demo --profile paper
+```
+
+它会在新目录生成 `paper` 运行配置，完成静态检查、Scheduler → Strategy → Paper Execution → Ledger 主链路和状态检查。成交来自本地合成 L1 报价，
+不会联网、读取交易凭据或发送实盘订单；它证明的是本机 Paper 管道可执行，不代表真实交易所撮合或收益。该流程保护已有持久账本，不支持 `--force`；
+每次新的首跑请使用新的项目目录。Paper 与回测 quickstart 分开运行，避免把合成 Paper 成交混进历史回测结果。
 
 ```bash
 cd my-qx
@@ -157,6 +168,17 @@ qianxing quickstart ./demo --format html,xlsx,json --report-output reports/first
 `source=sample`、`is_sample=true`，命令不会联网取行情，也不代表真实行情或策略收益。目标目录若已有项目，命令会停止并保留原文件；
 可改用新目录，或继续按下方 `project init` / `project run` / `project report` 分步操作。`--cli` 可显式指定报告渲染器，
 默认优先使用 wheel 内的 `qx-cli`，再查找 PATH。
+
+#### 本地 Paper 生命周期
+
+安装包含 Paper quickstart 的 wheel 后，Python 入口复用 wheel 内匹配版本的 Rust CLI：
+
+```bash
+qianxing quickstart ./paper-demo --profile paper
+```
+
+返回 JSON 的 `paper` 对象包含本轮新订单与 Ledger 分录数，`data` 明确标记报价为 `local_synthetic_l1`、没有网络、没有读取凭据、没有实盘订单。
+目标目录必须是新的，Paper 的持久订单与账本不会由 quickstart 自动清空；此入口不需要安装 `ccxt` extra。
 
 ```bash
 qianxing quickstart ./demo --rows 120 --cli qx-cli

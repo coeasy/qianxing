@@ -3,12 +3,12 @@
   "kind": "qianxing-capability-catalog",
   "source_updated_at": {
     "matrix": "2026-11-11",
-    "maturity": "2026-11-10",
+    "maturity": "2026-11-26",
     "crosswalk": "2026-10-24"
   },
   "source_sha256": {
     "maturity/capability-matrix.yaml": "60aea21929b5751fd228c81c211fd1a14161d01ddfe62243c793174bae4fd03e",
-    "maturity/capabilities.yaml": "32ce6d08e0f5a20ed72fa2740f16d45c46c55542191cd5fcbd62ca1c7333559b",
+    "maturity/capabilities.yaml": "37493a6e42fe3a5a636c2fe21a3bb2a575c3d3ead5c0665c761a39a46e0e7e51",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
   "product_levels": [
@@ -231,7 +231,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 97,
+      "evidence_path_count": 98,
       "limitation_count": 4
     },
     {
@@ -431,7 +431,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 32,
+      "evidence_path_count": 33,
       "limitation_count": 1
     }
   ],
@@ -2006,6 +2006,7 @@
             "crates/qx-cli/tests/unit/cli_json_surface.rs three cases hold the --json promise: the config subcommands that never delivered a parseable body refuse the flag, config explain and config doctor do emit machine-readable JSON, and config validate keeps its human-readable PASS line (V12 R4-f)",
             "tools/check_architecture.py control_plane_honesty_check 钉住那三处相等，删掉接受集合里的一格会同时打死门禁和 init_onboarding 的两条用例 (V11 S5)",
             "docs/工业化易用性收口指南-V1.md",
+            "maturity/evidence/paper-quickstart-ci-2026-11-26.json",
             "crates/qx-cli/tests/unit/deploy_template_coverage.rs 三条用例覆盖 `deploy/` 顶层全部 53 份模板：登记表与磁盘清单逐名相等、每份按它登记的那一类**生产读法**真读一遍（15 类读取器，含 runtime 配置的 `config validate` 引用体检）、每一类各喂一份坏内容必须被拒（V13 R1-A6）",
             "crates/qx-cli/tests/unit/deploy_template_coverage.rs 的 Expected 只有 `Ok` 与 `Refuses(点名关键字)` 两档：`qianxing.runtime.production.example.json` 里 `/var/lib/qianxing` 的占位路径按 3 项关键字被拒并原样印进日志，而不是把这条预期删掉换绿（V13 R1-A6）",
             "tools/check_architecture.py deploy_template_coverage_check 的 9 颗：登记表三列逐条对齐 / 与磁盘逐名相等 / Reader 变体清点 / 变体⊆已使用 / 变体⊆坏内容探针 / 每类读取落在生产读点 / 三条用例与模块挂载 / 预期结果口径 / 配对来源仍在册；GA–GF 六发文本变异各自打红（V13 R1-A6）",
@@ -5170,6 +5171,7 @@
             "crates/qx-cli/tests/unit/cli_json_surface.rs three cases hold the --json promise: the config subcommands that never delivered a parseable body refuse the flag, config explain and config doctor do emit machine-readable JSON, and config validate keeps its human-readable PASS line (V12 R4-f)",
             "tools/check_architecture.py control_plane_honesty_check 钉住那三处相等，删掉接受集合里的一格会同时打死门禁和 init_onboarding 的两条用例 (V11 S5)",
             "docs/工业化易用性收口指南-V1.md",
+            "maturity/evidence/paper-quickstart-ci-2026-11-26.json",
             "crates/qx-cli/tests/unit/deploy_template_coverage.rs 三条用例覆盖 `deploy/` 顶层全部 53 份模板：登记表与磁盘清单逐名相等、每份按它登记的那一类**生产读法**真读一遍（15 类读取器，含 runtime 配置的 `config validate` 引用体检）、每一类各喂一份坏内容必须被拒（V13 R1-A6）",
             "crates/qx-cli/tests/unit/deploy_template_coverage.rs 的 Expected 只有 `Ok` 与 `Refuses(点名关键字)` 两档：`qianxing.runtime.production.example.json` 里 `/var/lib/qianxing` 的占位路径按 3 项关键字被拒并原样印进日志，而不是把这条预期删掉换绿（V13 R1-A6）",
             "tools/check_architecture.py deploy_template_coverage_check 的 9 颗：登记表三列逐条对齐 / 与磁盘逐名相等 / Reader 变体清点 / 变体⊆已使用 / 变体⊆坏内容探针 / 每类读取落在生产读点 / 三条用例与模块挂载 / 预期结果口径 / 配对来源仍在册；GA–GF 六发文本变异各自打红（V13 R1-A6）",
