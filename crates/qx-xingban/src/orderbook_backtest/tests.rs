@@ -1385,14 +1385,15 @@ fn derivative_orders_share_one_projected_portfolio_margin_budget() {
             EventKind::Rejected {
                 client_order_id: 102,
                 reason,
-                reference_price_exact: None,
-                order_snapshot: None,
-            } => Some(reason),
+                order_snapshot: Some(order),
+                ..
+            } => Some((reason, order.client_id)),
             _ => None,
         })
         .collect::<Vec<_>>();
     assert_eq!(rejected.len(), 1);
-    assert!(rejected[0].contains("初始保证金超过账户可用保证金"));
+    assert_eq!(rejected[0].1, 102);
+    assert!(rejected[0].0.contains("初始保证金超过账户可用保证金"));
 }
 
 /// 小额合约乘数的盘口回测必须按真实名义额计费：Ledger 用

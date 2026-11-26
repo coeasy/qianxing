@@ -288,6 +288,25 @@ fn multi_market_orderbook_shares_cash_oms_and_replay() {
         qx_core::EventKind::Rejected { reason, .. }
             if reason.contains("可用现金")
     )));
+    let rejected_order = report
+        .event_log
+        .events()
+        .iter()
+        .find_map(|event| match &event.kind {
+            qx_core::EventKind::Rejected {
+                client_order_id,
+                reason,
+                order_snapshot: Some(order),
+                ..
+            } if reason.contains("可用现金") => Some((*client_order_id, order)),
+            _ => None,
+        });
+    assert_eq!(
+        rejected_order.map(|(client_order_id, order)| {
+            client_order_id == order.client_id && order.instrument == btc
+        }),
+        Some(true)
+    );
     report.verify().unwrap();
 }
 
