@@ -40,3 +40,7 @@ Windows workspace 验收之外，已用本地 Podman 启动 Linux Rust 1.98.1 �
 4. Linux/PostgreSQL 与跨平台 wheel/CLI 验收以最终 tag 的 hosted CI 为准。私有账户、testnet 和生产下单不在此 Backtest/Paper 候选的验收声明内。
 
 已有 `v0.4.2` Release、PyPI wheel 和 crates.io 包均不可原位替换；如果正式候选遇到差异或发布失败，应修复后另建新版本，不移动旧 tag。
+
+## crates.io 发布顺序预检
+
+候选上的 `python tools/cargo_publish_plan.py qx-sdk` 已解析出 14 个 crate 的保守发布顺序：`qx-core` → `qx-control` → `qx-guanxing` → `qx-datastruct` → `qx-data` → `qx-provider` → `qx-risk` → `qx-spec` → `qx-strategy` → `qx-zhenlu` → `qx-xingban` → `qx-app` → `qx-execution` → `qx-sdk`。当前 29 个 `qx-*` workspace crate 版本均为 `0.5.0`。该计划会计入可选及目标平台依赖，但不查询 crates.io 上的名称/版本可用性；发布前仍须对每个版本做注册表预检并按顺序发布。
