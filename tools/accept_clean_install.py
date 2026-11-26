@@ -6,12 +6,16 @@ and sample-project output is kept in a caller-provided directory outside the rep
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
+import time
+import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 from typing import TextIO
 
@@ -19,6 +23,15 @@ import tomllib
 
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 300
 BUILD_COMMAND_TIMEOUT_SECONDS = 2_400
+QUICKSTART_COMPLETION_STEPS = (
+    "建项目",
+    "静态检查",
+    "跑一轮回测",
+    "复核摘要并生成 EvidenceBundle",
+    "离线核验证据包",
+    "看安全状态",
+)
+QUICKSTART_REPORT_ASSETS = ("html", "equity_svg", "fills_svg", "monthly_svg", "evidence")
 
 
 def run(
@@ -82,6 +95,107 @@ def ensure_cli_install(repo: Path, cli_root: Path, env: dict[str, str]) -> Path:
 def configure_utf8_output(stream: TextIO) -> None:
     if hasattr(stream, "reconfigure"):
         stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
+def _verified_artifact(path: Path, project: Path) -> dict[str, str | int]:
+    resolved = path.expanduser().resolve()
+    project_root = project.resolve()
+    if not resolved.is_relative_to(project_root):
+        raise RuntimeError(f"quickstart artifact escaped its project directory: {resolved}")
+    if not resolved.is_file() or resolved.stat().st_size == 0:
+        raise RuntimeError(f"quickstart artifact is missing or empty: {resolved}")
+    size = resolved.stat().st_size
+    digest = hashlib.sha256()
+    with resolved.open("rb") as artifact:
+        for chunk in iter(lambda: artifact.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return {"path": str(resolved), "bytes": size, "sha256": digest.hexdigest()}
+
+
+def verify_quickstart_acceptance(
+    output: str, *, project: Path, elapsed_ms: float
+) -> dict[str, object]:
+    """Fail closed unless one visible CLI command completes the verified report path."""
+    completed = [
+        line.removeprefix("[完成] ").split("：", 1)[0]
+        for line in output.splitlines()
+        if line.startswith("[完成] ")
+    ]
+    if tuple(completed) != QUICKSTART_COMPLETION_STEPS:
+        raise RuntimeError(
+            "quickstart did not complete the six documented steps in order: "
+            f"expected {QUICKSTART_COMPLETION_STEPS}, got {tuple(completed)}"
+        )
+    if "EvidenceBundle 已离线核验：" not in output:
+        raise RuntimeError("quickstart did not report the verified EvidenceBundle path")
+
+    verification = None
+    for line in output.splitlines():
+        try:
+            candidate = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict) and candidate.get("operation") == (
+            "run-evidence-input-and-artifact-verified"
+        ):
+            verification = candidate
+            break
+    if (
+        verification is None
+        or verification.get("ok") is not True
+        or verification.get("input_identity_recomputed") is not True
+    ):
+        raise RuntimeError("quickstart did not perform successful offline EvidenceBundle verification")
+
+    reported_paths: dict[str, Path] = {}
+    for line in output.splitlines():
+        for asset in QUICKSTART_REPORT_ASSETS:
+            prefix = f"[Report] {asset}="
+            if line.startswith(prefix):
+                reported_paths[asset] = Path(line.removeprefix(prefix).strip())
+    missing = set(QUICKSTART_REPORT_ASSETS) - reported_paths.keys()
+    if missing:
+        raise RuntimeError(f"quickstart omitted report assets: {sorted(missing)}")
+
+    result_hashes = set(re.findall(r"\bresult_hash=([0-9a-f]{16,64})\b", output))
+    if len(result_hashes) != 1:
+        raise RuntimeError(
+            "quickstart must expose exactly one stable result_hash; "
+            f"found {sorted(result_hashes)}"
+        )
+    result_hash = next(iter(result_hashes))
+    if verification.get("result_hash") != result_hash:
+        raise RuntimeError("quickstart EvidenceBundle result identity does not match the backtest")
+    evidence_line = next(
+        line.removeprefix("EvidenceBundle 已离线核验：").strip()
+        for line in output.splitlines()
+        if line.startswith("EvidenceBundle 已离线核验：")
+    )
+    if Path(evidence_line).resolve() != reported_paths["evidence"].resolve():
+        raise RuntimeError("quickstart's verified EvidenceBundle path does not match the report")
+    assets = {name: _verified_artifact(path, project) for name, path in reported_paths.items()}
+    html_path = Path(str(assets["html"]["path"]))
+    html_source = html_path.read_text(encoding="utf-8")
+    if "<!doctype html>" not in html_source.lower() or "<body" not in html_source.lower():
+        raise RuntimeError(f"quickstart HTML report is not a complete document: {html_path}")
+    for name in ("equity_svg", "fills_svg", "monthly_svg"):
+        svg_path = Path(str(assets[name]["path"]))
+        try:
+            svg_root = ElementTree.parse(svg_path).getroot()
+        except ElementTree.ParseError as error:
+            raise RuntimeError(f"quickstart SVG report is invalid: {svg_path}: {error}") from error
+        if svg_root.tag.rsplit("}", 1)[-1] != "svg":
+            raise RuntimeError(f"quickstart report asset is not an SVG: {svg_path}")
+    return {
+        "profile": "builtin",
+        "command_count_to_verified_report": 1,
+        "completed_steps": completed,
+        "result_hash": result_hash,
+        "result_recomputed": verification.get("result_recomputed") is True,
+        "evidence_verified_artifact_count": verification.get("verified_artifact_count"),
+        "quickstart_elapsed_ms": round(elapsed_ms, 3),
+        "report_artifacts": assets,
+    }
 
 
 def main() -> int:
@@ -154,14 +268,18 @@ def main() -> int:
     run([str(build_python), "-m", "venv", str(install_env_dir)], cwd=repo, env=env)
     scripts = install_env_dir / ("Scripts" if os.name == "nt" else "bin")
     python = scripts / ("python.exe" if os.name == "nt" else "python")
+    wheel_install_started = time.perf_counter()
     run(
         [str(python), "-m", "pip", "install", "--no-index", str(wheels[0])],
         cwd=work,
         env=env,
     )
+    wheel_install_elapsed_ms = round((time.perf_counter() - wheel_install_started) * 1000, 3)
 
     cli_root = Path(args.cli_root).resolve() if args.cli_root else work / "installed-cli"
+    cli_setup_started = time.perf_counter()
     cli = ensure_cli_install(repo, cli_root, env)
+    cli_setup_elapsed_ms = round((time.perf_counter() - cli_setup_started) * 1000, 3)
     cli_bin = cli.parent
     cli_env = env.copy()
     cli_env["PATH"] = str(cli_bin) + os.pathsep + str(scripts) + os.pathsep + cli_env.get("PATH", "")
@@ -170,10 +288,17 @@ def main() -> int:
     run([str(cli), "help"], cwd=work, env=cli_env)
     sample_parent = work / "quickstart"
     sample_parent.mkdir()
-    quickstart = run([str(cli), "quickstart", "sample-project"], cwd=sample_parent, env=cli_env)
+    quickstart_started = time.perf_counter()
+    quickstart = run(
+        [str(cli), "quickstart", "sample-project", "--html"], cwd=sample_parent, env=cli_env
+    )
+    quickstart_elapsed_ms = (time.perf_counter() - quickstart_started) * 1000
     project = sample_parent / "sample-project"
     if not (project / "qianxing.runtime.json").is_file():
         raise RuntimeError("quickstart did not create its runtime configuration")
+    first_run = verify_quickstart_acceptance(
+        quickstart.stdout, project=project, elapsed_ms=quickstart_elapsed_ms
+    )
 
     smoke = r'''import json, pathlib, sys
 import qianxing, qianxing.core, qianxing.strategy, qianxing.reports
@@ -226,6 +351,17 @@ print(json.dumps({"version": report["version"], "schema_catalog_sha256": report[
         "cli_identity": identity,
         "quickstart_exit": quickstart.returncode,
         "quickstart_project": str(project),
+        "first_run": first_run,
+        "quickstart_user_command_count": first_run["command_count_to_verified_report"],
+        "wheel_install_elapsed_ms": wheel_install_elapsed_ms,
+        "cli_setup_elapsed_ms": cli_setup_elapsed_ms,
+        "measured_install_to_verified_report_ms": round(
+            wheel_install_elapsed_ms + cli_setup_elapsed_ms + quickstart_elapsed_ms, 3
+        ),
+        "measured_install_to_report_scope": (
+            "local wheel pip install + CLI setup/availability + one qx-cli quickstart --html; "
+            "excludes venv creation and package build"
+        ),
         "python_example_modules_compiled": len(examples),
         "python_strategy_example_invoked": True,
         "native_extension_target": smoke_report["native_extension_target"],
