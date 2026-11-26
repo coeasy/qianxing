@@ -38,6 +38,7 @@ class PerformanceWorkflowTests(unittest.TestCase):
         self.assertIn('--workspace-root "$base_dir"', baseline_step)
         self.assertIn('--target-dir "$CARGO_TARGET_DIR"', baseline_step)
         self.assertIn('--target-dir "$CARGO_TARGET_DIR"', candidate_benchmark)
+        self.assertIn("paired reports remain available in the uploaded artifact", workflow)
 
     def test_regression_gate_runs_only_when_measured_inputs_changed(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
@@ -56,7 +57,13 @@ class PerformanceWorkflowTests(unittest.TestCase):
             '"${{ steps.measured_source.outputs.changed }}" == "true" ]]; then',
             comparison_step,
         )
+<<<<<<< HEAD
         self.assertIn("paired reports remain available in the uploaded artifact", comparison_step)
+=======
+        self.assertIn('--target-dir "$CARGO_TARGET_DIR"', baseline_step)
+        self.assertIn('--target-dir "$CARGO_TARGET_DIR"', candidate_benchmark)
+        self.assertNotIn('ln -s "$GITHUB_WORKSPACE/target" "$base_dir/target"', baseline_step)
+>>>>>>> 2ed4bfa8 (ci: route benchmarks to isolated cargo targets)
 
 
 if __name__ == "__main__":
