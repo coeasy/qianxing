@@ -21114,6 +21114,76 @@
         }
       ],
       "notes": "R23 scope and source-tree-bound evidence contract verified at the benchmark timing precision revision; all recorded inputs are present in the bound source manifest."
+    },
+    {
+      "run_id": "058f92cc-8ef6-456e-bd7f-d2a47bb15a81",
+      "acceptance_id": "R12-AC01",
+      "recorded_at_utc": "2026-11-26T22:33:40.305527Z",
+      "source_revision": "faf0d8db7d7ad0bc7f62116db405d46763d5f9e6",
+      "source_tree_sha256": "73b32a7811c3c66f71c7f61084e3de9235031153e12548ee29f095b12b715c6d",
+      "source_manifest": "maturity/acceptance-artifacts/058f92cc-8ef6-456e-bd7f-d2a47bb15a81.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "podman",
+        "run",
+        "--rm",
+        "--network",
+        "qx-pr39-acceptance-20261127",
+        "--volume",
+        "D:\\aex_work\\qianxing-release-0.5.0-prep:/workspace",
+        "--volume",
+        "qx-pr39-cargo-registry-20261127:/usr/local/cargo/registry",
+        "--volume",
+        "qx-pr39-cargo-target-20261127:/tmp/qx-target",
+        "-e",
+        "CARGO_TARGET_DIR=/tmp/qx-target",
+        "-e",
+        "QX_TEST_POSTGRES_DSN=<redacted>",
+        "mirror.gcr.io/library/rust:1.98.1-bookworm",
+        "sh",
+        "-c",
+        "cd /workspace && cargo test --locked -j 2 -p qx-cli --features sqlite,postgres --bin qx-cli workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts -- --nocapture"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-cli/src/workers/strategy_worker/prepared_command_replay.rs",
+          "sha256": "b85cc3d7f20f6ed80c03af0d1fc7e256d95403f102076cdb237ba907497e5da1"
+        },
+        {
+          "path": "crates/qx-service/src/configured_backends.rs",
+          "sha256": "9a6d164612b7617938c2f1a7dbb3d82c97a97d507cd690480292d4865773592c"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "5fdd00fab4e99fcb6aa8b5b9552039eee3b9afe939d23ac44840ea53062bdd13"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres/schema_migrations.rs",
+          "sha256": "91d175f8f64c2f04bd6c965c8abceaa0de970989bdd94a6ce667e4986cf23ba6"
+        },
+        {
+          "path": "crates/qx-storage/tests/postgres_event_log_atomicity.rs",
+          "sha256": "760ac15882202385670e90763964480935f5ca191d13782a17d4d26b81ef3f96"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/058f92cc-8ef6-456e-bd7f-d2a47bb15a81.log",
+          "sha256": "a21de074d6a81f8ddcb034c82713566bd021bc3e4b9e3b620cf1385b0b22e770"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/058f92cc-8ef6-456e-bd7f-d2a47bb15a81.source-tree.json",
+          "sha256": "55a626bfd34451339942f71ef7c958e1042447eb16e14ff5d94b85e32e165bcf"
+        }
+      ],
+      "notes": "Local Podman acceptance: Linux Rust 1.98.1 container plus PostgreSQL 16; fixture venue only, no exchange network, private credentials, or orders. Covers Unknown recovery across file, SQLite, and PostgreSQL process restarts; this run alone does not complete the full R12 acceptance matrix."
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"

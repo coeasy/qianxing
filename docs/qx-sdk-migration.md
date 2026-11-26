@@ -11,6 +11,34 @@
 需要连接运行中的 API，可参考源码工作区内的[可选 HTTP 适配器](../crates/qx-sdk-http/README.md)；
 该适配器尚未发布，必须使用包含它的源码版本。
 
+## 0.5.0 候选 API 迁移说明（未发布）
+
+候选 `0.5.0` 在 `qx_core::EventKind::Rejected` 中新增两个公开字段，用于保存拒单时的参考价和原始订单快照。这是 Rust 源码 API 变更；影响直接依赖 `qx-core` 并构造或穷尽匹配该枚举的下游代码。只通过 `qx-sdk` 高层门面使用 SDK 的消费者不需要为此改代码，因为门面不重导出 `EventKind`。当前公开版仍是 `0.4.2`，在候选正式发布前继续使用下方的 `0.4.2` 安装命令。
+
+直接构造该变体的下游代码需要提供新字段：
+
+```rust
+use qx_core::EventKind;
+
+let rejected = EventKind::Rejected {
+    client_order_id: 7,
+    reason: "minimum notional".into(),
+    reference_price_exact: None,
+    order_snapshot: None,
+};
+```
+
+只读取旧字段的匹配可使用 `..`：
+
+```rust
+match kind {
+    EventKind::Rejected { client_order_id, reason, .. } => { /* handle rejection */ }
+    _ => {}
+}
+```
+
+两个字段在 serde 中带有默认值，旧 JSON 缺字段时会读取为 `None`。当字段包含值时，它们进入 EventLog 摘要，因此写入新拒单事实后，不应再让旧版本运行时接管并验证同一日志。升级前应先停止旧进程并保留数据备份；不要混用 0.4.2 与 0.5.0 写同一运行目录。
+
 ## 要不要迁
 
 **要迁**，如果你属于下面任一种：

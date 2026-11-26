@@ -9,6 +9,7 @@ import json
 import os
 import platform
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -35,6 +36,62 @@ TEXT_SUFFIXES = {
     ".typed", ".txt", ".yaml", ".yml",
 }
 TEXT_FILENAMES = {".gitattributes", ".gitignore"}
+_SENSITIVE_ASSIGNMENT = re.compile(
+    r"(?i)(?P<key>[\"']?\b[A-Z0-9_.-]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API[_-]?KEY|"
+    r"ACCESS[_-]?KEY|AUTH(?:ORIZATION)?|CREDENTIALS?|DSN|DATABASE[_-]?URL)"
+    r"[A-Z0-9_.-]*[\"']?\s*[:=]\s*)(?P<value>\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s&;,}\"]+)"
+)
+_SENSITIVE_URL_CREDENTIALS = re.compile(
+    r"(?i)(\b[a-z][a-z0-9+.-]*://[^:/@\s]+:)[^@\s]+(@)"
+)
+_AUTH_HEADER = re.compile(
+    r"(?i)(?P<key>\b(?:proxy-)?authorization\s*[\"']?\s*[:=]\s*)"
+    r"(?P<value>\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\r\n,}]+)"
+)
+_AUTH_SCHEME = re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/-]+=*")
+_SENSITIVE_OPTION = re.compile(
+    r"(?i)^--?(?:token|secret|password|passwd|api[-_]?key|access[-_]?key|"
+    r"authorization|auth|credential|dsn|database[-_]?url)$"
+)
+
+
+def redact_text(value: str) -> str:
+    """Redact common credentials before commands, notes, or process output are persisted."""
+    def replacement(match: re.Match[str]) -> str:
+        raw = match.group("value")
+        if raw.startswith('"') and raw.endswith('"'):
+            raw = '"<redacted>"'
+        elif raw.startswith("'") and raw.endswith("'"):
+            raw = "'<redacted>'"
+        else:
+            raw = "<redacted>"
+        return f"{match.group('key')}{raw}"
+
+    value = _AUTH_HEADER.sub(replacement, value)
+    value = _SENSITIVE_ASSIGNMENT.sub(replacement, value)
+    value = _SENSITIVE_URL_CREDENTIALS.sub(r"\1<redacted>\2", value)
+    return _AUTH_SCHEME.sub(r"\1 <redacted>", value)
+
+
+def redact_command(command: list[str]) -> list[str]:
+    """Keep the exact argv private while preserving a safe, inspectable command record."""
+    redacted: list[str] = []
+    redact_next = False
+    for argument in command:
+        if redact_next:
+            redacted.append("<redacted>")
+            redact_next = False
+            continue
+        redacted.append(redact_text(argument))
+        redact_next = bool(_SENSITIVE_OPTION.fullmatch(argument))
+    return redacted
+
+
+def redact_bytes(value: bytes) -> bytes:
+    """Redact text-like secrets in captured output without corrupting other bytes."""
+    return redact_text(value.decode("utf-8", errors="surrogateescape")).encode(
+        "utf-8", errors="surrogateescape"
+    )
 
 
 def is_excluded_source_path(relative: str) -> bool:
@@ -172,6 +229,7 @@ def main() -> int:
     run_id = str(uuid.uuid4())
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     log_path = ARTIFACT_DIR / f"{run_id}.log"
+    recorded_command = redact_command(command)
     source_manifest = tracked_source_manifest(log_path)
     source_paths = {
         item["path"]
@@ -191,9 +249,10 @@ def main() -> int:
     ).stdout.strip()
     completed = subprocess.run(command, cwd=ROOT, capture_output=True, check=False)
     log_path.write_bytes(
-        b"$ " + " ".join(command).encode("utf-8", errors="replace") + b"\n"
+        b"$ " + " ".join(recorded_command).encode("utf-8", errors="replace") + b"\n"
         + b"exit_code=" + str(completed.returncode).encode("ascii") + b"\n\n"
-        + b"[stdout]\n" + completed.stdout + b"\n[stderr]\n" + completed.stderr
+        + b"[stdout]\n" + redact_bytes(completed.stdout)
+        + b"\n[stderr]\n" + redact_bytes(completed.stderr)
     )
     source_manifest_path = ARTIFACT_DIR / f"{run_id}.source-tree.json"
     with source_manifest_path.open("w", encoding="utf-8", newline="\n") as stream:
@@ -212,7 +271,7 @@ def main() -> int:
             "python_version": platform.python_version(),
             "python_executable": sys.executable,
         },
-        "command": command,
+        "command": recorded_command,
         "inputs": inputs,
         "outcome": "passed" if completed.returncode == 0 else "failed",
         "artifacts": [
@@ -221,7 +280,7 @@ def main() -> int:
         ],
     }
     if args.notes:
-        record["notes"] = args.notes
+        record["notes"] = redact_text(args.notes)
     with catalog_lock():
         catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
         if not any(

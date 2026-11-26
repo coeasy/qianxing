@@ -9,5 +9,5 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-qx-sdk = { version = "0.4.2", path = "../qx-sdk" }
-qx-adapter = { version = "0.4.2", path = "../qx-adapter" }
+qx-sdk = { version = "0.5.0", path = "../qx-sdk" }
+qx-adapter = { version = "0.5.0", path = "../qx-adapter" }

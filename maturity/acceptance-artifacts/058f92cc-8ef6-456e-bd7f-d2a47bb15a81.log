@@ -1,0 +1,53 @@
+$ podman run --rm --network qx-pr39-acceptance-20261127 --volume D:\aex_work\qianxing-release-0.5.0-prep:/workspace --volume qx-pr39-cargo-registry-20261127:/usr/local/cargo/registry --volume qx-pr39-cargo-target-20261127:/tmp/qx-target -e CARGO_TARGET_DIR=/tmp/qx-target -e QX_TEST_POSTGRES_DSN=<redacted> mirror.gcr.io/library/rust:1.98.1-bookworm sh -c cd /workspace && cargo test --locked -j 2 -p qx-cli --features sqlite,postgres --bin qx-cli workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts -- --nocapture
+exit_code=0
+
+[stdout]
+
+running 1 test
+
+running 1 test
+
+running 1 test
+
+running 1 test
+test workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts has been running for over 60 seconds
+
+running 1 test
+
+running 1 test
+
+running 1 test
+test workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 528 filtered out; finished in 147.82s
+
+
+[stderr]
+   Compiling qx-core v0.5.0 (/workspace/crates/qx-core)
+   Compiling qx-app v0.5.0 (/workspace/crates/qx-app)
+   Compiling qx-process-io v0.5.0 (/workspace/crates/qx-process-io)
+   Compiling qx-cli v0.5.0 (/workspace/crates/qx-cli)
+   Compiling qx-guanxing v0.5.0 (/workspace/crates/qx-guanxing)
+   Compiling qx-datastruct v0.5.0 (/workspace/crates/qx-datastruct)
+   Compiling qx-data v0.5.0 (/workspace/crates/qx-data)
+   Compiling qx-risk v0.5.0 (/workspace/crates/qx-risk)
+   Compiling qx-control v0.5.0 (/workspace/crates/qx-control)
+   Compiling qx-zhenlu v0.5.0 (/workspace/crates/qx-zhenlu)
+   Compiling qx-strategy v0.5.0 (/workspace/crates/qx-strategy)
+   Compiling qx-spec v0.5.0 (/workspace/crates/qx-spec)
+   Compiling qx-protocol v0.5.0 (/workspace/crates/qx-protocol)
+   Compiling qx-scheduler v0.5.0 (/workspace/crates/qx-scheduler)
+   Compiling qx-storage v0.5.0 (/workspace/crates/qx-storage)
+   Compiling qx-execution v0.5.0 (/workspace/crates/qx-execution)
+   Compiling qx-provider v0.5.0 (/workspace/crates/qx-provider)
+   Compiling qx-factor v0.5.0 (/workspace/crates/qx-factor)
+   Compiling qx-runtime v0.5.0 (/workspace/crates/qx-runtime)
+   Compiling qx-xingban v0.5.0 (/workspace/crates/qx-xingban)
+   Compiling qx-genglu v0.5.0 (/workspace/crates/qx-genglu)
+   Compiling qx-adapter v0.5.0 (/workspace/crates/qx-adapter)
+   Compiling qx-orchestrator v0.5.0 (/workspace/crates/qx-orchestrator)
+   Compiling qx-plugin v0.5.0 (/workspace/crates/qx-plugin)
+   Compiling qx-api v0.5.0 (/workspace/crates/qx-api)
+   Compiling qx-service v0.5.0 (/workspace/crates/qx-service)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 25s
+     Running unittests src/main.rs (/tmp/qx-target/debug/deps/qx_cli-350a890a48b80dfc)

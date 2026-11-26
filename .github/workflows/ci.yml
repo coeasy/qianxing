@@ -43,6 +43,7 @@ jobs:
           python3 -m unittest
           tools.test_performance_workflow
           benchmarks.tests.test_measurement_source_changes
+          tools.test_record_strategy_acceptance
       - name: Validate Prometheus alert expressions
         run: >-
           docker run --rm --entrypoint=/bin/promtool

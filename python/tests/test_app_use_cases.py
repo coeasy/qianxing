@@ -407,7 +407,7 @@ class AppUseCaseTests(unittest.TestCase):
 
         schema_digest = "a" * 64
         identity = (
-            "qianxing 0.4.2 (build 1234567, target riscv64-unknown-none, "
+            "qianxing 0.5.0 (build 1234567, target riscv64-unknown-none, "
             f"profile release, schemas {schema_digest})"
         )
         completed = SimpleNamespace(returncode=0, stdout=identity, stderr="")
@@ -416,7 +416,7 @@ class AppUseCaseTests(unittest.TestCase):
             patch("qianxing.sdk_diagnostics.platform.machine", return_value="AMD64"),
             patch("qianxing.sdk_diagnostics.subprocess.run", return_value=completed) as run,
         ):
-            report = app._probe_qx_cli("0.4.2", schema_digest)
+            report = app._probe_qx_cli("0.5.0", schema_digest)
 
         run.assert_called_once_with(
             ["C:/tools/qx-cli.exe", "version"],
@@ -440,14 +440,14 @@ class AppUseCaseTests(unittest.TestCase):
                 ),
             ),
         ):
-            mismatch = app._probe_qx_cli("0.4.2", schema_digest)
+            mismatch = app._probe_qx_cli("0.5.0", schema_digest)
         self.assertEqual(mismatch["schema_catalog_compatibility"], "mismatch")
 
     def test_doctor_uses_source_project_version_when_old_metadata_shadows_checkout(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         from qianxing import app
 
-        self.assertEqual(app._sdk_package_version(), "0.4.2")
+        self.assertEqual(app._sdk_package_version(), "0.5.0")
 
     def test_paper_and_live_clients_submit_the_shared_rust_control_contract(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
