@@ -436,6 +436,21 @@
       ]
     },
     {
+      "acceptance_id": "R18-AC02",
+      "work_package": "R18",
+      "status": "accepted",
+      "acceptance_criteria": [
+        "The packaged console renders missing or null trading_enabled as unevaluated, preserves explicit false, and renders missing or null freshest_age_ms as unknown rather than undefined text."
+      ],
+      "required_artifacts": [
+        ".github/workflows/ci.yml",
+        "web/console/app.js",
+        "web/console/reconciliation_observability.test.cjs",
+        "maturity/acceptance-artifacts/7afe03aa-1755-48ef-9198-7e056067609c.log",
+        "maturity/acceptance-artifacts/7afe03aa-1755-48ef-9198-7e056067609c.source-tree.json"
+      ]
+    },
+    {
       "acceptance_id": "R19-AC01",
       "work_package": "R19",
       "status": "accepted",
@@ -21184,6 +21199,53 @@
         }
       ],
       "notes": "Local Podman acceptance: Linux Rust 1.98.1 container plus PostgreSQL 16; fixture venue only, no exchange network, private credentials, or orders. Covers Unknown recovery across file, SQLite, and PostgreSQL process restarts; this run alone does not complete the full R12 acceptance matrix."
+    },
+    {
+      "run_id": "7afe03aa-1755-48ef-9198-7e056067609c",
+      "acceptance_id": "R18-AC02",
+      "recorded_at_utc": "2026-11-26T23:12:52.799460Z",
+      "source_revision": "52aebaf70c47f8bc31d8b371178a2cba982c16a4",
+      "source_tree_sha256": "9af1f7326c4f8deb0d6a7d0e449ad0b285be7f133a40ec5e9925470655b5e3e4",
+      "source_manifest": "maturity/acceptance-artifacts/7afe03aa-1755-48ef-9198-7e056067609c.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "node",
+        "--test",
+        "web/console/*.test.js",
+        "web/console/*.test.cjs"
+      ],
+      "inputs": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "sha256": "8672ab9de0f6d21200faa1c7bc2f62ae518e47f474b2e71986b8ddb47586d7f4"
+        },
+        {
+          "path": "web/console/app.js",
+          "sha256": "067329c4667ffbbe312088f51752db2e5c0222fefffc976ac42a637dc8b6189d"
+        },
+        {
+          "path": "web/console/reconciliation_observability.test.cjs",
+          "sha256": "ef6eb2224874b9e3051315f96b487c1573bdecc06ddc31fcdfdad4eb586139cd"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/7afe03aa-1755-48ef-9198-7e056067609c.log",
+          "sha256": "3a958408a48b9d56adfc974f62f849cc8f75480be7a576883f1b6e13a74faf1a"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/7afe03aa-1755-48ef-9198-7e056067609c.source-tree.json",
+          "sha256": "11df9d56ddefcd94ac8d3191427b03d823c80fcbac851bce4d1dafb9f9c4ea2e"
+        }
+      ],
+      "notes": "Focused Console compatibility contract only; does not close R18 live-readiness gaps."
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"

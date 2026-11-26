@@ -837,7 +837,8 @@
         "tools/accept_console_bff.py",
         "tools/check_console_browser_evidence.py",
         "crates/qx-cli/src/workers/strategy_worker.rs",
-        "crates/qx-service/src/strategy_deployments.rs"
+        "crates/qx-service/src/strategy_deployments.rs",
+        "web/console/reconciliation_observability.test.cjs"
       ],
       "evidence_paths": [
         "docs/strategy-deployment-observations.md",
@@ -859,7 +860,10 @@
         "crates/qx-service/src/strategy_deployments.rs",
         "maturity/acceptance-artifacts/f053dd0e-bf2e-4972-8b72-30124a623289.log",
         "maturity/acceptance-artifacts/f053dd0e-bf2e-4972-8b72-30124a623289.source-tree.json",
-        "maturity/evidence/r18-packaged-console-human-review-2026-11-05.json"
+        "maturity/evidence/r18-packaged-console-human-review-2026-11-05.json",
+        "web/console/reconciliation_observability.test.cjs",
+        "maturity/acceptance-artifacts/7afe03aa-1755-48ef-9198-7e056067609c.log",
+        "maturity/acceptance-artifacts/7afe03aa-1755-48ef-9198-7e056067609c.source-tree.json"
       ]
     },
     {

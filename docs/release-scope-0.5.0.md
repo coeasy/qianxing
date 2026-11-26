@@ -19,6 +19,7 @@
 - Windows：`cargo test --workspace --all-targets --locked --offline` 通过。
 - Python：从仓库根目录以候选原生扩展运行 `python -m unittest discover -s python/tests -q`，687 项运行、7 项跳过、无失败。
 - 前后端契约：Console Node 测试 24/24 通过；`cargo test --locked --offline -p qx-api --all-targets -j 2` 通过，覆盖 130 项 API 单元测试和全部集成测试。旧部署观察缺少 `trading_enabled`/`freshest_age_ms` 时分别显示“未评估”/“—”；显式 null 不显示成文本 `undefined`，明确 `false` 仍保持为 false。
+- 该状态兼容性验收已单独登记为 R18-AC02，并绑定[运行日志](../maturity/acceptance-artifacts/7afe03aa-1755-48ef-9198-7e056067609c.log)和[源码清单](../maturity/acceptance-artifacts/7afe03aa-1755-48ef-9198-7e056067609c.source-tree.json)。它只验旧字段的 UI 呈现，R18 仍等待权威部署/venue 授权来源。
 - `python tools/check_architecture.py` 通过。
 - `python tools/check_rust_sdk_packages.py qx-sdk --offline --allow-dirty` 验证 14 个归档包，并从这些归档编译、运行独立 quickstart；结果 `Verified: true`。
 - Python wheel 在隔离环境离线安装；内置 renderer 报告版本、平台和 schema 匹配。样例 quickstart 产生 HTML 与 EvidenceBundle，`result_recomputed=false`，所以这里只证明输入身份及产物完整性，没有声称重新计算回测结果。
