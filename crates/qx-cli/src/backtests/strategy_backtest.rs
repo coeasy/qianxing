@@ -1,9 +1,9 @@
 //! 跨语言策略回测链：`run_strategy_backtest`（含 L1/L2 归因装配）。
 
 use super::{
-    barframe_dataset_identity, read_bar_frame_for_backtest, read_runtime_config,
-    run_single_strategy_backtest, verify_strategy_artifact, DatasetRunBinding, JsonDatasetRegistry,
-    SingleStrategyBacktestInput,
+    barframe_dataset_identity, read_bar_frame_for_backtest_with_content_sha256,
+    read_runtime_config, run_single_strategy_backtest, verify_strategy_artifact, BarFrame,
+    DatasetRunBinding, JsonDatasetRegistry, SingleStrategyBacktestInput,
 };
 use std::path::Path;
 
@@ -22,15 +22,35 @@ pub(crate) fn run_strategy_backtest_with_quality_manifest(
     quality_manifest_path: Option<&Path>,
 ) -> Result<(), String> {
     let config = read_runtime_config(runtime_path)?;
-    let frame = read_bar_frame_for_backtest(frame_path)?;
+    let (frame, bars_content_sha256) = read_bar_frame_for_backtest_with_content_sha256(frame_path)?;
+    run_strategy_backtest_with_loaded_frame(
+        runtime_path,
+        frame_path,
+        spec_path,
+        quality_manifest_path,
+        &config,
+        &frame,
+        &bars_content_sha256,
+    )
+}
+
+pub(crate) fn run_strategy_backtest_with_loaded_frame(
+    runtime_path: &Path,
+    frame_path: &Path,
+    spec_path: Option<&Path>,
+    quality_manifest_path: Option<&Path>,
+    config: &qx_runtime::RuntimeConfig,
+    frame: &BarFrame,
+    bars_content_sha256: &str,
+) -> Result<(), String> {
     if frame.ts.len() < 2 {
         return Err("跨语言 Bar 回测至少需要两根 Bar".into());
     }
-    let (bars, manifest) = barframe_dataset_identity(frame_path, &frame)?;
+    let (bars, manifest) = barframe_dataset_identity(frame_path, frame)?;
     let dataset_quality = quality_manifest_path
         .map(|path| {
             qx_app::artifact_store::verify_barframe_dataset_quality(
-                path, frame_path, &frame, &manifest,
+                path, frame_path, frame, &manifest,
             )
         })
         .transpose()?;
@@ -68,20 +88,13 @@ pub(crate) fn run_strategy_backtest_with_quality_manifest(
     }
     // 同一份身份必须跟着产物走：只印在 stdout 上的指纹，事后拿着摘要无从复核（V11 Q66）。
     let input = qx_app::backtest_input_identity::barframe_input_provenance(frame_path, &manifest);
-    let bars_content_sha256 =
-        qx_data::sha256_hex_bytes(&std::fs::read(frame_path).map_err(|error| {
-            format!(
-                "读取策略 BarFrame 原始字节失败 {}: {error}",
-                frame_path.display()
-            )
-        })?);
     let strategy_bindings =
         qx_service::backtest_bindings::strategy_batch::strategy_batch_backtest_bindings(
-            &config,
+            config,
             runtime_path,
             &manifest,
-            &frame,
-            &bars_content_sha256,
+            frame,
+            bars_content_sha256,
         )?;
     for binding in strategy_bindings {
         let bundle_fingerprint = binding.dataset_bundle_fingerprint.as_deref();
@@ -90,7 +103,7 @@ pub(crate) fn run_strategy_backtest_with_quality_manifest(
             config: &binding.config,
             config_fingerprint: binding.config_fingerprint,
             runtime_config_path: Some(runtime_path),
-            frame: &frame,
+            frame,
             bars: &bars,
             spec_path,
             strategy_id: &binding.strategy_id,

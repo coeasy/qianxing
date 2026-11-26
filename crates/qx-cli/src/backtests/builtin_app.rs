@@ -52,9 +52,9 @@ pub(crate) fn run_builtin_backtest_with_runtime_snapshot(
             source_config_path.display()
         )
     })?;
-    let instrument = super::read_bar_frame_for_backtest(frame_path)?
-        .instrument
-        .to_string();
+    let (frame, bars_content_sha256) =
+        super::read_bar_frame_for_backtest_with_content_sha256(frame_path)?;
+    let instrument = frame.instrument.to_string();
     let prepared = qx_service::backtest_bindings::prepare_builtin_backtest_snapshot(
         qx_service::backtest_bindings::BuiltinBacktestSnapshotInput {
             frame_path,
@@ -66,10 +66,14 @@ pub(crate) fn run_builtin_backtest_with_runtime_snapshot(
             config,
         },
     )?;
-    crate::run_strategy_backtest_with_quality_manifest(
+    let runtime = super::read_runtime_config(&prepared.runtime_snapshot_path)?;
+    crate::run_strategy_backtest_with_loaded_frame(
         &prepared.runtime_snapshot_path,
         &prepared.frame_path,
         spec_path,
         quality_manifest_path,
+        &runtime,
+        &frame,
+        &bars_content_sha256,
     )
 }
