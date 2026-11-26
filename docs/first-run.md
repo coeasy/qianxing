@@ -4,7 +4,7 @@
 每条命令都可以直接复制；一份命令属于哪个二进制写在行内，不做混写。能力全景与排障口径不在这里，见
 [工业化易用性收口指南](工业化易用性收口指南-V1.md)；完整安装前置与坑表见[安装指南](installation.md)。
 
-本页对应当前已发布版 v0.4.2。GitHub Release、PyPI 三平台 wheel 与 crates.io Rust SDK 闭包均已发布；版本和能力边界见[安装指南](installation.md)。注意：GitHub Release 与 PyPI 的三平台 Python wheel 文件哈希目前不一致，Python 用户请按下方命令从 PyPI 安装，不要把 GitHub 附件 wheel 当作同一文件。Python CCXT 首跑从匿名公开行情读取数据，不需要账户密钥，也不提交订单。
+本页对应当前已发布的 v0.4.2 回测 / Paper 正式版：Python 使用 [PyPI 的 qianxing 0.4.2](https://pypi.org/project/qianxing/0.4.2/)，Rust 工程使用 [crates.io 的 qx-sdk 0.4.2](https://crates.io/crates/qx-sdk/0.4.2)，CLI 与 Web Console 从 [GitHub Release v0.4.2](https://github.com/coeasy/qianxing/releases/tag/v0.4.2) 下载。GitHub Release 与 PyPI 的三平台 Python wheel 文件哈希目前不一致，Python 用户请按下方命令从 PyPI 安装，不要把 GitHub 附件 wheel 当作同一文件。Python CCXT 首跑从匿名公开行情读取数据，不需要账户密钥，也不提交订单。`quickstart --profile paper` 是 tag 后加入的一键首跑入口，尚未进入 v0.4.2 CLI 或 wheel；v0.4.2 仍可使用该版本已有的 Paper 命令和控制流程。
 
 > 标注口径：**【已实现】**= 命令在当前工作树里可执行，且行为由常驻用例或门禁钉住；
 > **进阶**= 能力存在，但不属于首跑承诺，本页只在末尾点名，不给步骤。本页不重复登记未实现的设计意图，
@@ -60,11 +60,11 @@ cargo install --git https://github.com/coeasy/qianxing --tag v0.4.2 --locked qx-
 qx-cli quickstart my-qx                          # 建项目 → 静态检查 → 回测 → 生成/核验证据包 → 安全状态
 qx-cli quickstart my-rsi --strategy rsi           # 同一条链路直接运行 RSI 内置策略
 qx-cli quickstart my-ashare --profile ashare     # A 股样例 → 静态检查 → 回测 → 生成/核验证据包 → 安全状态
-qx-cli quickstart my-paper --profile paper        # 本地合成报价 → Scheduler → Strategy → Paper Execution → Ledger
 qx-cli quickstart my-okx --profile ccxt --days 30 --timeframe 1h --html  # 真实公开行情 → 回测 → HTML/SVG 与证据包
 ```
 
 Binance Spot 示例需要包含本分支改动的后续 CLI；已发布的 v0.4.1 和现存 v0.4.2 tag 尚不含 `--market-type` 参数。
+`my-paper --profile paper` 一键首跑仅适用于包含 tag 后变更的当前源码或基于它构建的 CLI；v0.4.2 预编译 CLI 和 `cargo install --tag v0.4.2` 不支持此 quickstart 参数。
 
 已在仓库内开发时可用 `cargo install --path crates/qx-cli --locked`；该方式需要完整源码和 Rust 工具链。Release 二进制没有
 仓库相对路径依赖，可从任意工作目录运行。
@@ -86,13 +86,13 @@ Binance Spot 示例需要包含本分支改动的后续 CLI；已发布的 v0.4.
 若只安装了 Rust CLI，可在同一 Python 环境补装行情 worker：`python -m pip install "qianxing[ccxt]"`；运行时用 `QX_PYTHON` 指向该环境的解释器。
 双腿套利策略需要两份行情，quickstart 会拒绝它们并提示使用 `multi-builtin` 入口。
 
-Paper 有独立的首跑入口：
+Paper 有独立的首跑入口（当前源码 / 后续版本）：
 
 ```bash
 qx-cli quickstart ./paper-demo --profile paper
 ```
 
-它会在新目录生成 `paper` 运行配置，完成静态检查、Scheduler → Strategy → Paper Execution → Ledger 主链路和状态检查。成交来自本地合成 L1 报价，
+该入口是在 v0.4.2 tag 后加入的；从当前源码构建的 CLI 会在新目录生成 `paper` 运行配置，完成静态检查、Scheduler → Strategy → Paper Execution → Ledger 主链路和状态检查。成交来自本地合成 L1 报价，
 不会联网、读取交易凭据或发送实盘订单；它证明的是本机 Paper 管道可执行，不代表真实交易所撮合或收益。该流程保护已有持久账本，不支持 `--force`；
 每次新的首跑请使用新的项目目录。Paper 与回测 quickstart 分开运行，避免把合成 Paper 成交混进历史回测结果。
 
@@ -101,13 +101,12 @@ cd my-qx
 qx-cli init qianxing.runtime.json --strategy macd   # 配置 + 样例 BarFrame + README.qianxing.md
 qx-cli doctor qianxing.runtime.json                 # 静态检查：不联网、不启动 worker、不下单
 qx-cli backtest qianxing.runtime.json               # 跑一轮 MACD 回测，产物落 data_dir 指向的 runs/
-qx-cli report qianxing.runtime.json --evidence      # 读回摘要并生成 EvidenceBundle
-# 用 report 输出的 [Report] evidence= 后完整路径执行离线校验
-qx-cli evidence verify-run /path/printed/by/report.evidence.json
+evidence=$(qx-cli report qianxing.runtime.json --evidence | sed -n 's/^\[Report\] evidence=//p')
+qx-cli evidence verify-run "$evidence"
 qx-cli status qianxing.runtime.json                 # 本地配置/worker/回测结果的安全状态；不连交易所
 ```
 
-`evidence verify-run` 的路径直接复制上一条输出的 `[Report] evidence=` 值；它检查 bundle、报告产物和行情输入的一致性，
+上面的 Bash 命令从报告输出中提取证据包路径，`evidence verify-run` 检查 bundle、报告产物和行情输入的一致性，
 不声称独立重跑策略。需要复算结果时，另行显式传 `--recompute`。
 
 要可视化结果就在回测后加 `--html`：`qx-cli report qianxing.runtime.json --html` 写一份可离线打开的
@@ -140,10 +139,10 @@ python -m pip install "qianxing[ccxt]==0.4.2"
 
 ```bash
 python -m pip install dist/qianxing-0.4.2-cp310-abi3-win_amd64.whl    # 按平台下载 v0.4.2 wheel 后替换文件名
-python -c "import qianxing as qx; print(qx.doctor()['status'])"
+python -c "import qianxing as qx; print(qx.doctor()['native_extension_compatibility'])"
 ```
 
-顶层 `dependencies` 是空的（`python/pyproject.toml`），所以这一步不联网也装得成，`--no-deps` 不再是必需项。
+基础包没有必装的第三方 Python 依赖。离线安装时先取得适配本机平台的 wheel，再运行 `python -m pip install --no-index <wheel 文件路径>`。
 `doctor` 里要看的是三格：原生扩展是否 `matched`、用例集是否 `complete`、`report_renderer` 的
 `origin` 是 `bundled` / `external` / `missing` 中的哪一个。
 
@@ -162,7 +161,7 @@ wheel 由 `tools/build_python_wheel.ps1` / `.sh` 从当前工作树构建；它�
 
 ```bash
 qianxing quickstart ./demo
-qianxing quickstart ./demo --format html,xlsx,json --report-output reports/first-run.html
+qianxing quickstart ./demo-formats --format html,xlsx,json --report-output reports/first-run.html
 ```
 
 它会在指定目录创建 600 根内置合成 Bar 样例，复用下方相同的项目快照、预检、Rust 引擎、运行回执和报告校验流程；
@@ -173,9 +172,9 @@ qianxing quickstart ./demo --format html,xlsx,json --report-output reports/first
 
 Python sample quickstart 会额外生成并离线核验 `run_evidence.bundle_path` 指向的 EvidenceBundle；校验输入身份和已登记文件摘要，不自动重跑策略。分步项目报告可用 `qianxing project report ./demo RUN_ID --evidence` 生成并核验同类证据。
 
-#### 本地 Paper 生命周期
+#### 本地 Paper 生命周期（当前源码 / 后续版本）
 
-安装包含 Paper quickstart 的 wheel 后，Python 入口复用 wheel 内匹配版本的 Rust CLI：
+`--profile paper` 一键首跑尚未包含在 PyPI `qianxing==0.4.2` 中。使用当前源码构建并安装 wheel 后，Python 入口复用 wheel 内匹配版本的 Rust CLI：
 
 ```bash
 qianxing quickstart ./paper-demo --profile paper
@@ -185,7 +184,7 @@ qianxing quickstart ./paper-demo --profile paper
 目标目录必须是新的，Paper 的持久订单与账本不会由 quickstart 自动清空；此入口不需要安装 `ccxt` extra。
 
 ```bash
-qianxing quickstart ./demo --rows 120 --cli qx-cli
+qianxing quickstart ./demo-custom --rows 120 --cli qx-cli
 ```
 
 #### 真实公共行情（只读 CCXT）
@@ -364,7 +363,7 @@ mkdir -p .qianxing/api-data
 cp deploy/qianxing.bar-frame.example.json .qianxing/api-data/sample.json
 ```
 
-如果设置了 `QX_API_DATA_ROOT`，请把 `sample.json` 放到那个目录；未设置时服务按启动工作目录使用 `.qianxing/api-data`。仓库外使用预编译 CLI 时，样例 BarFrame 可从 [v0.4.1 教学 fixture](https://raw.githubusercontent.com/coeasy/qianxing/v0.4.2/deploy/qianxing.bar-frame.example.json) 下载为 `sample.json`，并保存到刚创建的 `.qianxing/api-data/`。
+如果设置了 `QX_API_DATA_ROOT`，请把 `sample.json` 放到那个目录；未设置时服务按启动工作目录使用 `.qianxing/api-data`。仓库外使用预编译 CLI 时，样例 BarFrame 可从 [v0.4.2 教学 fixture](https://raw.githubusercontent.com/coeasy/qianxing/v0.4.2/deploy/qianxing.bar-frame.example.json) 下载为 `sample.json`，并保存到刚创建的 `.qianxing/api-data/`。
 
 不含源码仓库时，可用以下命令下载样例：
 

@@ -2,7 +2,7 @@
 
 逐轮执行记录按版本分片保存，内容沿用原有条目。按版本查看：
 
-- [0.4.2 发布范围与候选准入](docs/release-scope-0.4.2.md)
+- [0.4.2 正式版与发布验收](docs/release-scope-0.4.2.md)
 
 - [近期记录（2026-10-11 至 2026-10-10）](docs/changelog/current.md)
 - [V13](docs/changelog/v13.md)

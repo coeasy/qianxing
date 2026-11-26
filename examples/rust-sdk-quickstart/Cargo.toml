@@ -7,4 +7,4 @@ publish = false
 [workspace]
 
 [dependencies]
-qx-sdk = "0.4.1"
+qx-sdk = "0.4.2"
