@@ -892,7 +892,7 @@ async function refreshReadModels() {
     for (const deployment of deployments.body) {
       deploymentRows.push([
         String(deployment.worker_id),
-        `${deployment.state}; desired_revision=${deployment.desired_revision ?? "—"}; desired_running=${deployment.desired_running ?? "未声明"}; observed=${tsText(deployment.observed_at_ms)}; trading_enabled=${deployment.trading_enabled === null ? "未评估" : deployment.trading_enabled}`,
+        `${deployment.state}; desired_revision=${deployment.desired_revision ?? "—"}; desired_running=${deployment.desired_running ?? "未声明"}; observed=${tsText(deployment.observed_at_ms)}; trading_enabled=${deployment.trading_enabled ?? "未评估"}`,
       ]);
       deploymentRows.push([`${deployment.worker_id} / 阻塞原因`,
         Array.isArray(deployment.blocking_reasons) ? deployment.blocking_reasons.join(", ") : "响应缺少阻塞原因"]);

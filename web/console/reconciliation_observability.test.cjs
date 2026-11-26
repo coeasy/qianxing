@@ -12,8 +12,9 @@ const to = source.indexOf("// ---- 控制面（M3'）", from);
 assert.notEqual(from, -1, "missing read-model refresh function");
 assert.notEqual(to, -1, "missing control-plane boundary");
 
-async function renderReadModels(reports) {
+async function renderReadModels(reports, deployments = []) {
   let renderedRows = [];
+  let renderedDeploymentRows = [];
   const paths = {
     ledger: "/account/ledger",
     reconcileReports: "/reconcile/reports",
@@ -27,11 +28,13 @@ async function renderReadModels(reports) {
     $(id) { return id; },
     rows(target, pairs) {
       if (target === "readmodels-rows") renderedRows = pairs;
+      if (target === "strategy-deployments-rows") renderedDeploymentRows = pairs;
     },
     tsText: (value) => String(value ?? "—"),
     errorOf: () => "fixture error",
     async getJson(url) {
       if (url === paths.reconcileReports) return { ok: true, status: 200, body: reports };
+      if (url === paths.strategyDeployments) return { ok: true, status: 200, body: deployments };
       if (url.startsWith(paths.controlAudit)) {
         return {
           ok: true,
@@ -59,6 +62,7 @@ async function renderReadModels(reports) {
     context,
   );
   await context.refreshReadModels();
+  renderedRows.deploymentRows = renderedDeploymentRows;
   return renderedRows;
 }
 
@@ -108,4 +112,31 @@ test("reconciliation rows show observation age and exact discrepancy counts", as
   const unknown = rows.find(([label]) => label.startsWith("对账 reconciler-unknown"))[1];
   assert.match(unknown, /报告字段不完整/);
   assert.match(unknown, /order_issues=未知; balance_discrepancies=未知/);
+});
+
+test("deployment rows keep missing trading authorization unevaluated", async () => {
+  const rows = await renderReadModels([], [
+    {
+      worker_id: "legacy-worker",
+      state: "ready",
+      desired_revision: 3,
+      desired_running: true,
+      observed_at_ms: 1_000,
+      blocking_reasons: [],
+    },
+    {
+      worker_id: "blocked-worker",
+      state: "blocked",
+      desired_revision: 4,
+      desired_running: true,
+      observed_at_ms: 1_000,
+      trading_enabled: false,
+      blocking_reasons: ["operator authorization missing"],
+    },
+  ]);
+  const legacy = rows.deploymentRows.find(([label]) => label === "legacy-worker");
+  const blocked = rows.deploymentRows.find(([label]) => label === "blocked-worker");
+  assert.match(legacy[1], /trading_enabled=未评估/);
+  assert.doesNotMatch(legacy[1], /undefined/);
+  assert.match(blocked[1], /trading_enabled=false/);
 });

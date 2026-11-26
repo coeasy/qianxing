@@ -18,6 +18,7 @@
 
 - Windows：`cargo test --workspace --all-targets --locked --offline` 通过。
 - Python：从仓库根目录以候选原生扩展运行 `python -m unittest discover -s python/tests -q`，687 项运行、7 项跳过、无失败。
+- 前后端契约：Console Node 测试 24/24 通过；`cargo test --locked --offline -p qx-api --all-targets -j 2` 通过，覆盖 130 项 API 单元测试和全部集成测试。另修正了兼容旧部署观察时缺少 `trading_enabled` 字段会显示 `undefined` 的问题，缺失/null 显示“未评估”，明确 `false` 仍显示为 false。
 - `python tools/check_architecture.py` 通过。
 - `python tools/check_rust_sdk_packages.py qx-sdk --offline --allow-dirty` 验证 14 个归档包，并从这些归档编译、运行独立 quickstart；结果 `Verified: true`。
 - Python wheel 在隔离环境离线安装；内置 renderer 报告版本、平台和 schema 匹配。样例 quickstart 产生 HTML 与 EvidenceBundle，`result_recomputed=false`，所以这里只证明输入身份及产物完整性，没有声称重新计算回测结果。
