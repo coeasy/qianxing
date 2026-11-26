@@ -1453,16 +1453,13 @@ fn digest_rejected_order_snapshot(h: &mut crate::sourcing::Fnv1a, order: &crate:
     });
     h.write_i128(order.filled.raw());
     h.write_text(&order.account_id);
+    h.write_u64(u64::from(order.trace.is_some()));
     if let Some(trace) = &order.trace {
-        h.write_text(trace.strategy_id.as_deref().unwrap_or_default());
-        h.write_u64(trace.signal_id.unwrap_or_default());
-        h.write_u64(trace.intent_id.unwrap_or_default());
-        h.write_text(trace.rule_version.as_deref().unwrap_or_default());
-    } else {
-        h.write_text("");
-        h.write_u64(0);
-        h.write_u64(0);
-        h.write_text("");
+        digest_optional_text(h, trace.run_id.as_deref());
+        digest_optional_text(h, trace.strategy_id.as_deref());
+        digest_optional_u64(h, trace.signal_id);
+        digest_optional_u64(h, trace.intent_id);
+        digest_optional_text(h, trace.rule_version.as_deref());
     }
     if let Some(policy) = order.policy {
         h.write_u64(1);
@@ -1516,6 +1513,26 @@ fn digest_rejected_order_snapshot(h: &mut crate::sourcing::Fnv1a, order: &crate:
         }
     } else {
         h.write_u64(0);
+    }
+}
+
+fn digest_optional_text(h: &mut crate::sourcing::Fnv1a, value: Option<&str>) {
+    match value {
+        Some(value) => {
+            h.write_u64(1);
+            h.write_text(value);
+        }
+        None => h.write_u64(0),
+    }
+}
+
+fn digest_optional_u64(h: &mut crate::sourcing::Fnv1a, value: Option<u64>) {
+    match value {
+        Some(value) => {
+            h.write_u64(1);
+            h.write_u64(value);
+        }
+        None => h.write_u64(0),
     }
 }
 
@@ -1629,6 +1646,30 @@ mod tests {
             )
         };
         let first = event_with_order(order.clone());
+        let mut with_run_trace = order.clone();
+        with_run_trace.trace = Some(crate::OrderTrace {
+            run_id: Some("run-a".into()),
+            strategy_id: None,
+            signal_id: None,
+            intent_id: None,
+            rule_version: None,
+        });
+        let traced_first = event_with_order(with_run_trace.clone());
+        with_run_trace.trace.as_mut().unwrap().run_id = Some("run-b".into());
+        let traced_second = event_with_order(with_run_trace);
+        assert_ne!(digest(&first), digest(&traced_first));
+        assert_ne!(digest(&traced_first), digest(&traced_second));
+
+        let mut empty_trace = order.clone();
+        empty_trace.trace = Some(crate::OrderTrace {
+            run_id: None,
+            strategy_id: None,
+            signal_id: None,
+            intent_id: None,
+            rule_version: None,
+        });
+        assert_ne!(digest(&first), digest(&event_with_order(empty_trace)));
+
         order.qty = Quantity::from_raw(20_000_000);
         let second = event_with_order(order);
         assert_ne!(digest(&first), digest(&second));
