@@ -451,6 +451,21 @@
       ]
     },
     {
+      "acceptance_id": "R18-AC03",
+      "work_package": "R18",
+      "status": "accepted",
+      "acceptance_criteria": [
+        "The packaged console counts successful array and entries-envelope read models, and reports HTTP failures before interpreting their response body as successful data."
+      ],
+      "required_artifacts": [
+        ".github/workflows/ci.yml",
+        "web/console/app.js",
+        "web/console/reconciliation_observability.test.cjs",
+        "maturity/acceptance-artifacts/8e5f0e55-9ad9-43fe-a422-ba60a7a9aacc.log",
+        "maturity/acceptance-artifacts/8e5f0e55-9ad9-43fe-a422-ba60a7a9aacc.source-tree.json"
+      ]
+    },
+    {
       "acceptance_id": "R19-AC01",
       "work_package": "R19",
       "status": "accepted",
@@ -21246,6 +21261,53 @@
         }
       ],
       "notes": "Focused Console compatibility contract only; does not close R18 live-readiness gaps."
+    },
+    {
+      "run_id": "8e5f0e55-9ad9-43fe-a422-ba60a7a9aacc",
+      "acceptance_id": "R18-AC03",
+      "recorded_at_utc": "2026-11-26T23:16:17.716891Z",
+      "source_revision": "538499fd386f69b363a6431e275e5c6bf542c08d",
+      "source_tree_sha256": "57dc04896881e382d501c507fe5436915881a44d28c5e9ed8ac3bf23eeff54bf",
+      "source_manifest": "maturity/acceptance-artifacts/8e5f0e55-9ad9-43fe-a422-ba60a7a9aacc.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "node",
+        "--test",
+        "web/console/*.test.js",
+        "web/console/*.test.cjs"
+      ],
+      "inputs": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "sha256": "8672ab9de0f6d21200faa1c7bc2f62ae518e47f474b2e71986b8ddb47586d7f4"
+        },
+        {
+          "path": "web/console/app.js",
+          "sha256": "5cb5795507618fb428e0355f925898d251f5ea256f1d4711b3e55ddcc9b92f43"
+        },
+        {
+          "path": "web/console/reconciliation_observability.test.cjs",
+          "sha256": "e632473798043589deb9630c25ebfa7650a58fe0b30bff9aa8dc156fc80fbaaa"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/8e5f0e55-9ad9-43fe-a422-ba60a7a9aacc.log",
+          "sha256": "095dc21e32dc9ade876002632914f1d4509dd588d43f60723e63f3f7ccf9b0a7"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/8e5f0e55-9ad9-43fe-a422-ba60a7a9aacc.source-tree.json",
+          "sha256": "1b5da7e1ec4297bdd01600c6e5d1a4442ba15a9d4bf1b68ce34339fab02ef241"
+        }
+      ],
+      "notes": "Focused read-model summary contract only; does not close the broader R18 authorization and live-readiness gaps."
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"

@@ -12,7 +12,7 @@ const to = source.indexOf("// ---- 控制面（M3'）", from);
 assert.notEqual(from, -1, "missing read-model refresh function");
 assert.notEqual(to, -1, "missing control-plane boundary");
 
-async function renderReadModels(reports, deployments = []) {
+async function renderReadModels(reports, deployments = [], reconciliationOk = true) {
   let renderedRows = [];
   let renderedDeploymentRows = [];
   const paths = {
@@ -33,7 +33,9 @@ async function renderReadModels(reports, deployments = []) {
     tsText: (value) => String(value ?? "—"),
     errorOf: () => "fixture error",
     async getJson(url) {
-      if (url === paths.reconcileReports) return { ok: true, status: 200, body: reports };
+      if (url === paths.reconcileReports) {
+        return { ok: reconciliationOk, status: reconciliationOk ? 200 : 503, body: reports };
+      }
       if (url === paths.strategyDeployments) return { ok: true, status: 200, body: deployments };
       if (url.startsWith(paths.controlAudit)) {
         return {
@@ -74,6 +76,12 @@ test("missing reconciliation reports are shown as unknown, not clean", async () 
   assert.doesNotMatch(summary[1], /0 项差异/);
 });
 
+test("failed reconciliation reads keep the HTTP error instead of counting an array body", async () => {
+  const rows = await renderReadModels([], [], false);
+  assert.equal(rows.find(([label]) => label === "/reconcile/reports")[1], "HTTP 503");
+  assert.match(rows.find(([label]) => label === "对账详情")[1], /HTTP 503/);
+});
+
 test("reconciliation rows show observation age and exact discrepancy counts", async () => {
   const rows = await renderReadModels([
     {
@@ -99,6 +107,9 @@ test("reconciliation rows show observation age and exact discrepancy counts", as
       observed_ts: 2_000,
     },
   ]);
+
+  assert.equal(rows.find(([label]) => label === "/reconcile/reports")[1], "3 条");
+  assert.equal(rows.find(([label]) => label === "/control/audit")[1], "0 条");
 
   const clean = rows.find(([label]) => label.startsWith("对账 reconciler-clean"))[1];
   assert.match(clean, /报告记录 0 项差异/);

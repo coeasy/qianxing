@@ -849,6 +849,8 @@ async function refreshReadModels() {
     getJson(API_PATHS.strategyDeployments),
   ]);
   const count = (r) => {
+    if (!r.ok) return `HTTP ${r.status}`;
+    if (Array.isArray(r.body)) return `${r.body.length} 条`;
     const entries = r.body && Array.isArray(r.body.entries) ? r.body.entries : null;
     return entries
       ? `${entries.length} 条${r.body.has_more ? "（还有更多）" : ""}`

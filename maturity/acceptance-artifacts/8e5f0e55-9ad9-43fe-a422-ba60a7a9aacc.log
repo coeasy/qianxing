@@ -1,0 +1,39 @@
+$ node --test web/console/*.test.js web/console/*.test.cjs
+exit_code=0
+
+[stdout]
+✔ legacy account activity rows may omit newly added signal and intent fields (1.1226ms)
+✔ account activity filters run, strategy, signal, and intent context through the HTTP query (1.5945ms)
+✔ legacy coverage reports distinguish missing signal and intent counters (0.6967ms)
+✔ a stale account activity response cannot replace the latest selection (0.6857ms)
+✔ an order snapshot links to account events with its client ID and default account scope (0.5909ms)
+✔ an account event correlation link clears intersecting filters and loads the exact trace key (0.5554ms)
+✔ packaged console reads its CSRF cookie and sends it with same-origin writes (1.6388ms)
+✔ packaged console does not invent a CSRF token when the cookie is absent (0.5834ms)
+✔ order group detail disclosure renders the persisted snapshot as text (0.5773ms)
+✔ order group table exposes group and child identities, including quote-budget orders (1.5021ms)
+✔ missing reconciliation reports are shown as unknown, not clean (1.428ms)
+✔ failed reconciliation reads keep the HTTP error instead of counting an array body (1.1148ms)
+✔ reconciliation rows show observation age and exact discrepancy counts (0.6855ms)
+✔ deployment rows keep missing trading authorization unevaluated (0.6218ms)
+✔ aligns returns on the shared UTC interval and holds the last observed equity (1.1503ms)
+✔ rejects curves without a common UTC interval (0.1243ms)
+✔ requires epoch-millisecond timestamps and strictly increasing samples (0.1181ms)
+✔ rejects a zero equity baseline instead of producing an invalid ratio (0.0914ms)
+✔ only exposes a cross-report event prefix proven by every source watermark (0.466ms)
+✔ keeps multi-account tie ordering and rejects unordered or unsafe source rows (0.2243ms)
+✔ combines structured event filters with the text search (0.1899ms)
+✔ exports verified event rows as formula-safe CSV with exact strings (0.2611ms)
+✔ run-event pages append by stable run identity and contiguous sequence (0.8405ms)
+✔ run-event pages fail closed on sequence gaps, cross-run events, and unstable IDs (0.2842ms)
+✔ terminal run status requires its matching final lifecycle event (0.1502ms)
+ℹ tests 25
+ℹ suites 0
+ℹ pass 25
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 155.7997
+
+[stderr]

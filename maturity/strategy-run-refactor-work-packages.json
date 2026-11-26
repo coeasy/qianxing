@@ -863,7 +863,9 @@
         "maturity/evidence/r18-packaged-console-human-review-2026-11-05.json",
         "web/console/reconciliation_observability.test.cjs",
         "maturity/acceptance-artifacts/7afe03aa-1755-48ef-9198-7e056067609c.log",
-        "maturity/acceptance-artifacts/7afe03aa-1755-48ef-9198-7e056067609c.source-tree.json"
+        "maturity/acceptance-artifacts/7afe03aa-1755-48ef-9198-7e056067609c.source-tree.json",
+        "maturity/acceptance-artifacts/8e5f0e55-9ad9-43fe-a422-ba60a7a9aacc.log",
+        "maturity/acceptance-artifacts/8e5f0e55-9ad9-43fe-a422-ba60a7a9aacc.source-tree.json"
       ]
     },
     {
