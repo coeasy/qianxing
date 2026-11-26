@@ -8,7 +8,7 @@ use qx_strategy::BuiltinStrategyConfig;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-pub const BACKTEST_SUMMARY_SCHEMA_VERSION: u32 = 8;
+pub const BACKTEST_SUMMARY_SCHEMA_VERSION: u32 = 9;
 pub const BACKTEST_METRICS_DEFINITION_VERSION: u32 = 1;
 
 #[derive(Clone, Debug)]
@@ -553,6 +553,7 @@ pub fn persist_backtest_artifacts_with_summary(
             .iter()
             .map(|(reason, count)| serde_json::json!({ "reason": reason, "count": count }))
             .collect::<Vec<_>>(),
+        "rejection_detail_readout": crate::trade_facts::rejection_detail_readout(input.event_log),
         "clock_start": input.clock_start,
         "clock_end": input.clock_end,
         "input_data_hash": format!("{:016x}", input.input_data_hash),

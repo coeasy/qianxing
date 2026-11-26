@@ -1384,8 +1384,9 @@ fn checked_abs(value: i128) -> Result<i128, qx_core::QxError> {
 pub(crate) fn append_rejection(
     log: &mut EventLog,
     ts: u64,
-    client_order_id: u64,
+    order: &Order,
     reason: &str,
+    reference_price_exact: Option<qx_core::ExactDecimal>,
 ) -> u64 {
     let seq = log.alloc_seq();
     log.append(Event::new(
@@ -1393,8 +1394,10 @@ pub(crate) fn append_rejection(
         ts,
         qx_core::Priority::COMMAND,
         EventKind::Rejected {
-            client_order_id,
+            client_order_id: order.client_id,
             reason: reason.into(),
+            reference_price_exact,
+            order_snapshot: Some(Box::new(order.clone())),
         },
     ));
     seq

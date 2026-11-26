@@ -22,9 +22,9 @@ pub(crate) fn require_current_summary_schema(summary: &serde_json::Value) -> Res
         && report_readout::summary_block(summary, "input").is_some()
         && report_readout::summary_block(summary, "replay").is_some()
         && report_readout::summary_block(summary, "artifact_locations").is_some();
-    if !(5..=8).contains(&schema) && !complete_app_run_summary {
+    if !(5..=9).contains(&schema) && !complete_app_run_summary {
         return Err(format!(
-            "回测摘要 schema_version={schema} 已拒绝：仅接受 v5/v6/v7/v8，或字段完整且可由 qx-app 共享核验的 RunSummary v1；旧摘要不具备可验证的输入身份与重放证据。{migration}，再对新生成的 v8 summary 执行 report。"
+            "回测摘要 schema_version={schema} 已拒绝：仅接受 v5/v6/v7/v8/v9，或字段完整且可由 qx-app 共享核验的 RunSummary v1；旧摘要不具备可验证的输入身份与重放证据。{migration}，再对新生成的 v9 summary 执行 report。"
         ));
     }
     Ok(())

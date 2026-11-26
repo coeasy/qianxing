@@ -109,7 +109,7 @@ pub(crate) fn current_summary_fixture(label: &str) -> (PathBuf, PathBuf) {
     let (deploy, frame, template) = builtin_backtest_example_paths();
     let config = read_runtime_config(&template).expect("读取内置回测 runtime 模板");
     let (root, runtime) = isolated_backtest_runtime(&deploy, &config, label);
-    run_strategy_backtest(&runtime, &frame, None).expect("生成 v8 summary fixture");
+    run_strategy_backtest(&runtime, &frame, None).expect("生成 v9 summary fixture");
     let summary = list_backtest_summary_paths(&root.join("runs"))
         .expect("读取生成的 summary")
         .into_iter()

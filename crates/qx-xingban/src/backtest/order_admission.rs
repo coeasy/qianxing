@@ -125,7 +125,18 @@ fn reject_order(
     reason: &str,
     rejected_updates: &mut Vec<StrategyOrderStatusUpdate>,
 ) -> Result<(), qx_core::QxError> {
-    let event_seq = append_rejection(log, ts, order.client_id, reason);
+    reject_order_with_reference(log, ts, order, reason, None, rejected_updates)
+}
+
+fn reject_order_with_reference(
+    log: &mut EventLog,
+    ts: u64,
+    order: &Order,
+    reason: &str,
+    reference_price_exact: Option<ExactDecimal>,
+    rejected_updates: &mut Vec<StrategyOrderStatusUpdate>,
+) -> Result<(), qx_core::QxError> {
+    let event_seq = append_rejection(log, ts, order, reason, reference_price_exact);
     let Some(strategy_id) = order
         .trace
         .as_ref()
@@ -379,7 +390,14 @@ pub(crate) fn admit_orders(
                 )
             };
             if let Err(error) = validation {
-                reject_order(log, ts, &order, &error.to_string(), &mut rejected_updates)?;
+                reject_order_with_reference(
+                    log,
+                    ts,
+                    &order,
+                    &error.to_string(),
+                    Some(reference_price_exact),
+                    &mut rejected_updates,
+                )?;
                 continue;
             }
         } else if exact_amounts.is_some() {

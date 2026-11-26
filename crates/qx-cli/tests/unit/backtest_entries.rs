@@ -20,12 +20,12 @@ fn cross_language_strategy_backtest_publishes_the_v8_artifact_contract() {
         summaries[0]
             .file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| name.ends_with(".v8.summary.json")),
+            .is_some_and(|name| name.ends_with(".v9.summary.json")),
         "summary filenames must carry the schema generation"
     );
     let summary: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&summaries[0]).unwrap()).unwrap();
-    assert_eq!(summary["schema_version"], 8);
+    assert_eq!(summary["schema_version"], 9);
     assert_eq!(summary["strategy_id"], "strategy-builtin");
     assert_eq!(summary["sample_unit"], "bar");
     assert_eq!(summary["bars"].as_u64(), Some(70));
@@ -56,7 +56,7 @@ fn summary_listing_hides_older_generations_of_the_same_run() {
         "same-run.v5.summary.json",
         "same-run.v6.summary.json",
         "same-run.v7.summary.json",
-        "same-run.v8.summary.json",
+        "same-run.v9.summary.json",
         "distinct-run.v6.summary.json",
         "future-run.v9.summary.json",
     ] {
@@ -73,7 +73,7 @@ fn summary_listing_hides_older_generations_of_the_same_run() {
         std::collections::BTreeSet::from([
             "distinct-run.v6.summary.json".to_owned(),
             "future-run.v9.summary.json".to_owned(),
-            "same-run.v8.summary.json".to_owned(),
+            "same-run.v9.summary.json".to_owned(),
         ])
     );
     let _ = std::fs::remove_dir_all(root);
