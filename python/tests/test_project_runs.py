@@ -419,6 +419,49 @@ class ProjectRunTests(unittest.TestCase):
         tampered = runs.verify_project_artifacts(self.root, record["project_run_id"])
         self.assertEqual(tampered["artifacts"]["strategy_bundle"], "changed")
 
+    def test_project_input_snapshot_preserves_strategy_parameters_named_path(self):
+        bars = self.root / "bars.json"
+        bars.write_text("{\"bars\":[]}", encoding="utf-8")
+        original_bars = bars.read_bytes()
+        spec = self.root / "input.json"
+        raw = {
+            "bars_path": "bars.json",
+            "parameters": {"path": "breakout"},
+            "strategy": {"path": "mean-reversion"},
+            "base": {"parameters": {"path": "baseline"}},
+            "markets": [{"strategies": [{"strategy": {"path": "momentum"}}]}],
+        }
+        spec.write_text(json.dumps(raw), encoding="utf-8")
+
+        resolved, failures = project._resolve_input_paths(self.root, raw)
+        self.assertEqual(failures, [])
+        self.assertEqual(resolved["parameters"]["path"], "breakout")
+        self.assertEqual(resolved["strategy"]["path"], "mean-reversion")
+        self.assertEqual(resolved["base"]["parameters"]["path"], "baseline")
+        self.assertEqual(
+            resolved["markets"][0]["strategies"][0]["strategy"]["path"], "momentum"
+        )
+        self.assertEqual(Path(resolved["bars_path"]), bars.resolve())
+
+        run = runs.ProjectRun(self.root, "demo")
+        token = runs._ACTIVE.set(run)
+        try:
+            snapshot = runs.snapshot_project_input(self.root, spec)
+        finally:
+            runs._ACTIVE.reset(token)
+        frozen = json.loads(snapshot.read_text(encoding="utf-8"))
+        self.assertEqual(frozen["parameters"]["path"], "breakout")
+        self.assertEqual(frozen["strategy"]["path"], "mean-reversion")
+        self.assertEqual(frozen["base"]["parameters"]["path"], "baseline")
+        self.assertEqual(
+            frozen["markets"][0]["strategies"][0]["strategy"]["path"], "momentum"
+        )
+        frozen_bars = Path(frozen["bars_path"])
+        self.assertNotEqual(frozen_bars.resolve(), bars.resolve())
+        self.assertEqual(frozen_bars.read_bytes(), original_bars)
+        bars.write_text("{\"bars\":[\"changed after snapshot\"]}", encoding="utf-8")
+        self.assertEqual(frozen_bars.read_bytes(), original_bars)
+
     def test_dependency_lock_snapshot_mutation_is_detected(self):
         version = importlib_metadata.version("pip")
         lock = self.root / "requirements.lock"
