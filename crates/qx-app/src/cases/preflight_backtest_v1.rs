@@ -2,11 +2,12 @@
 
 use super::attach;
 use super::guard::guard_panics;
-use super::validate_dataset::inspect_dataset;
+use super::validate_dataset::{inspect_bar_frame, inspect_dataset};
 use crate::context::{CallerCapability, RunContext};
 use crate::error::AppError;
 use crate::spec::{BacktestSpec, DatasetSpec};
 use qx_core::{InstrumentId, Quantity};
+use qx_datastruct::BarFrame;
 use qx_strategy::{BuiltinStrategy, BuiltinStrategyConfig};
 use serde::{Deserialize, Serialize};
 
@@ -116,19 +117,43 @@ pub fn preflight_backtest_v1(
 ) -> Result<BacktestPreflightResultV1, AppError> {
     context.require(CallerCapability::Research, "Bar 回测预检")?;
     let correlation_id = context.correlation_id().to_string();
-    guard_panics(&correlation_id, || preflight_inner(spec))
-        .map_err(|error| attach(error, &correlation_id))
+    guard_panics(&correlation_id, || {
+        spec.validate()?;
+        let inspection = inspect_dataset(&DatasetSpec::new(&spec.run_id, &spec.bars_path))?;
+        preflight_inner(spec, inspection)
+    })
+    .map_err(|error| attach(error, &correlation_id))
 }
 
-fn preflight_inner(spec: &BacktestSpec) -> Result<BacktestPreflightResultV1, AppError> {
-    spec.validate()?;
+/// Build the preflight report from a BarFrame that the caller has already read and verified
+/// against `spec.bars_path`. This is intended for the backtest execution path, which already
+/// owns that exact immutable input snapshot and should not parse it again just to report
+/// readiness.
+pub fn preflight_backtest_v1_with_frame(
+    spec: &BacktestSpec,
+    frame: &BarFrame,
+    context: &RunContext,
+) -> Result<BacktestPreflightResultV1, AppError> {
+    context.require(CallerCapability::Research, "Bar 回测预检")?;
+    let correlation_id = context.correlation_id().to_string();
+    guard_panics(&correlation_id, || {
+        spec.validate()?;
+        let inspection = inspect_bar_frame(&spec.run_id, frame)?;
+        preflight_inner(spec, inspection)
+    })
+    .map_err(|error| attach(error, &correlation_id))
+}
+
+fn preflight_inner(
+    spec: &BacktestSpec,
+    inspection: super::validate_dataset::DatasetInspection,
+) -> Result<BacktestPreflightResultV1, AppError> {
     let requested = InstrumentId::parse(&spec.instrument).ok_or_else(|| {
         crate::error::AppError::new(
             crate::error::AppErrorCategory::InvalidInput,
             "BacktestSpec.instrument 在预检后无法解析",
         )
     })?;
-    let inspection = inspect_dataset(&DatasetSpec::new(&spec.run_id, &spec.bars_path))?;
     let dataset = inspection.verdict;
     let instrument_matches = requested == inspection.instrument;
     let mut strategies = vec![&spec.strategy];

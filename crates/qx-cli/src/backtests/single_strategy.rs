@@ -98,7 +98,7 @@ pub(crate) fn run_single_strategy_backtest(
     )
     .with_code_commit(build_identity::BUILD_REVISION);
     if builtin_execution.is_some() {
-        let preflight = qx_app::preflight_backtest_v1(&app_spec, &app_context)
+        let preflight = qx_app::preflight_backtest_v1_with_frame(&app_spec, frame, &app_context)
             .map_err(|error| format!("Bar 回测预检失败: {error}"))?;
         println!(
             "[Backtest · Preflight] ready={} instrument={} rows={} fingerprint={}",
