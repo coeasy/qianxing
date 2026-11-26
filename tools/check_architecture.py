@@ -16057,16 +16057,28 @@ def performance_baseline_check() -> None:
     workflow = ROOT / ".github/workflows/ci.yml"
     workflow_source = workflow.read_text(encoding="utf-8") if workflow.is_file() else ""
     performance_job = workflow_source.split("  performance-trend:", 1)[-1].split("\n  python-wheel-build:", 1)[0]
+    criterion_scope_selector = ROOT / "benchmarks/select_criterion_profile.py"
+    criterion_scope_source = criterion_scope_selector.read_text(encoding="utf-8") if criterion_scope_selector.is_file() else ""
     check(
         "name: Select PR Criterion scope" in performance_job
         and '"$BASE_SHA" "$GITHUB_SHA"' in performance_job
-        and "crates/qx-core/src" in performance_job
-        and "crates/qx-core/benches" in performance_job
+        and "benchmarks/select_criterion_profile.py" in performance_job
         and "steps.criterion-scope.outputs.profile" in performance_job
         and '"pr-core"' in bench_driver_source
         and "PR_CORE_CRITERION_FILTERS" in bench_driver_source,
-        "PR 保持 21 个产品热路径样本；涉及 qx-core 或共享构建输入时追加完整 core 基准",
-        "PR 性能基准范围未由 qx-core 源码/构建输入变更驱动",
+        "PR Criterion 范围由变更 crate 选择；单 crate 精确测量，共享 core 扩展完整 core，多 crate 保留代表性覆盖",
+        "PR 性能基准范围选择器或 crate 专属 profile 不完整",
+    )
+    check(
+        "criterion_profile_for_changed_files" in criterion_scope_source
+        and "git" in criterion_scope_source
+        and "diff" in criterion_scope_source
+        and all(f'"{profile}"' in bench_driver_source for profile in ("pr-runtime", "pr-xingban", "pr-zhenlu"))
+        and "test_single_package_change_only_runs_its_own_benchmarks" in (ROOT / "benchmarks/tests/test_run_rust_bench.py").read_text(encoding="utf-8")
+        and "test_shared_inputs_or_core_changes_include_the_shared_dependency_suite" in (ROOT / "benchmarks/tests/test_run_rust_bench.py").read_text(encoding="utf-8")
+        and "test_multiple_benchmarked_package_changes_use_the_representative_profile" in (ROOT / "benchmarks/tests/test_run_rust_bench.py").read_text(encoding="utf-8"),
+        "Criterion 选择器有单 crate、共享 core 与多 crate 的行为覆盖",
+        "Criterion 选择器缺少按变更范围选择 profile 的行为覆盖",
     )
     check(
         "performance-trend:" in workflow_source
