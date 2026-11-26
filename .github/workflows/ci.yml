@@ -32,7 +32,10 @@ jobs:
       - name: Validate workflow syntax and expressions
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/*.yml
       - name: Verify paired performance builds use isolated Cargo targets
-        run: python3 -m unittest tools.test_performance_workflow
+        run: >-
+          python3 -m unittest
+          tools.test_performance_workflow
+          benchmarks.tests.test_measurement_source_changes
       - name: Validate Prometheus alert expressions
         run: >-
           docker run --rm --entrypoint=/bin/promtool
@@ -383,39 +386,42 @@ jobs:
           python3 benchmarks/run_crypto_paper_e2e.py \
             --binary target/release/qx-cli \
             --out benchmarks/results/crypto-paper-e2e.json --repeats 7
+      - name: Detect changes to measured Rust sources and workload inputs
+        id: measured_source
+        if: steps.paired_baseline.outputs.available == 'true'
+        env:
+          BASE_REVISION: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        shell: bash
+        run: |
+          changed=$(python3 benchmarks/measurement_source_changes.py "$BASE_REVISION" "$GITHUB_SHA")
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          if [[ "$changed" == "true" ]]; then
+            echo "Measured Rust source, build manifests, fixtures, or performance policy changed."
+          else
+            echo "Only benchmark infrastructure or non-measured files changed; paired results will be recorded without regression blocking."
+          fi
       - name: Block registered regressions above ledger thresholds
         run: |
-          if [[ "${{ steps.paired_baseline.outputs.available }}" == "true" ]]; then
-            python3 benchmarks/compare_baseline.py \
-              benchmarks/results/previous/end-to-end.json \
-              benchmarks/results/end-to-end.json \
-              --targets maturity/targets.yaml
+          if [[ "${{ steps.paired_baseline.outputs.available }}" == "true" && "${{ steps.measured_source.outputs.changed }}" == "true" ]]; then
+            for pair in \
+              "end-to-end.json end-to-end.json" \
+              "rust-micro.json rust-micro.json" \
+              "ashare-rules-on.json ashare-rules-on.json" \
+              "crypto-paper-e2e.json crypto-paper-e2e.json"; do
+              read -r baseline_name current_name <<< "$pair"
+              if [[ -f "benchmarks/results/previous/$baseline_name" ]]; then
+                python3 benchmarks/compare_baseline.py \
+                  "benchmarks/results/previous/$baseline_name" \
+                  "benchmarks/results/$current_name" \
+                  --targets maturity/targets.yaml
+              else
+                echo "No previous compatible $baseline_name baseline; recording first sample."
+              fi
+            done
+          elif [[ "${{ steps.paired_baseline.outputs.available }}" == "true" ]]; then
+            echo "Skipping regression comparison because no measured source changed; paired reports remain available in the uploaded artifact."
           else
-            echo "No previous compatible end-to-end baseline; recording first sample."
-          fi
-          if [[ -f benchmarks/results/previous/rust-micro.json ]]; then
-            python3 benchmarks/compare_baseline.py \
-              benchmarks/results/previous/rust-micro.json \
-              benchmarks/results/rust-micro.json \
-              --targets maturity/targets.yaml
-          else
-            echo "No previous compatible Rust microbenchmark baseline; recording first sample."
-          fi
-          if [[ -f benchmarks/results/previous/ashare-rules-on.json ]]; then
-            python3 benchmarks/compare_baseline.py \
-              benchmarks/results/previous/ashare-rules-on.json \
-              benchmarks/results/ashare-rules-on.json \
-              --targets maturity/targets.yaml
-          else
-            echo "No previous compatible A-share rules-on baseline; recording first sample."
-          fi
-          if [[ -f benchmarks/results/previous/crypto-paper-e2e.json ]]; then
-            python3 benchmarks/compare_baseline.py \
-              benchmarks/results/previous/crypto-paper-e2e.json \
-              benchmarks/results/crypto-paper-e2e.json \
-              --targets maturity/targets.yaml
-          else
-            echo "No previous compatible crypto Paper E2E baseline; recording first sample."
+            echo "No previous compatible performance baseline; recording first sample."
           fi
       - uses: actions/upload-artifact@v4
         with:
