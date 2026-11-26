@@ -313,7 +313,7 @@ jobs:
         if: github.event_name == 'pull_request' || github.event_name == 'push'
         env:
           BASE_REVISION: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+          CARGO_TARGET_DIR: ${{ runner.temp }}/qianxing-performance-baseline-target
         shell: bash
         run: |
           if [[ -z "$BASE_REVISION" || "$BASE_REVISION" =~ ^0+$ ]]; then
@@ -324,7 +324,6 @@ jobs:
           base_dir="$RUNNER_TEMP/qianxing-performance-baseline"
           git fetch --no-tags --depth=1 origin "$BASE_REVISION"
           git worktree add --detach "$base_dir" FETCH_HEAD
-          ln -s "$GITHUB_WORKSPACE/target" "$base_dir/target"
           cargo build --release --manifest-path "$base_dir/Cargo.toml" -p qx-cli
           baseline_binary="$RUNNER_TEMP/qx-cli-performance-baseline"
           cp "$CARGO_TARGET_DIR/release/qx-cli" "$baseline_binary"
