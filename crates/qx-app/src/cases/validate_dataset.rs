@@ -61,17 +61,22 @@ pub(super) fn inspect_dataset(spec: &DatasetSpec) -> Result<DatasetInspection, A
             format!("BarFrame 校验失败 {}: {error:?}", spec.bars_path),
         )
     })?;
-    inspection_from_validated_frame(&spec.dataset_id, &frame)
+    let fingerprint = qx_data::fingerprint_bar_frame(&frame).map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InvalidInput,
+            format!("BarFrame 内容指纹计算失败：{error}"),
+        )
+    })?;
+    inspection_from_validated_frame(&spec.dataset_id, &frame, &fingerprint)
 }
 
-/// Build the same readiness facts from a frame that has already been read and validated.
-///
-/// The backtest command uses this after its canonical input reader has verified the frame
-/// against the Provider manifest. Reusing it avoids parsing and hashing the same JSON file a
-/// second time just to produce the preflight report.
+/// Build the same readiness facts from the exact frame and manifest already verified by the
+/// canonical dataset identity path. Do not recompute the manifest fingerprint here: it covers
+/// the same immutable Bar rows and was produced during that verification.
 pub(super) fn inspect_bar_frame(
     dataset_id: &str,
     frame: &BarFrame,
+    manifest: &qx_data::DatasetManifest,
 ) -> Result<DatasetInspection, AppError> {
     frame.validate().map_err(|error| {
         AppError::new(
@@ -79,23 +84,34 @@ pub(super) fn inspect_bar_frame(
             format!("BarFrame 校验失败: {error:?}"),
         )
     })?;
-    inspection_from_validated_frame(dataset_id, frame)
+    manifest.validate().map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InvalidInput,
+            format!("BarFrame 数据集清单无效: {error}"),
+        )
+    })?;
+    let instrument = frame.instrument.to_string();
+    let first_ts = frame.ts.first().copied();
+    let last_ts = frame.ts.last().copied();
+    if manifest.dataset_id != format!("strategy-bars:{instrument}")
+        || manifest.start_timestamp != first_ts.unwrap_or_default()
+        || manifest.end_timestamp != last_ts.unwrap_or_default()
+    {
+        return Err(AppError::new(
+            AppErrorCategory::InvalidInput,
+            "BarFrame 数据集清单与已验证输入不匹配",
+        ));
+    }
+    inspection_from_validated_frame(dataset_id, frame, &manifest.fingerprint)
 }
 
 fn inspection_from_validated_frame(
     dataset_id: &str,
     frame: &BarFrame,
+    fingerprint: &str,
 ) -> Result<DatasetInspection, AppError> {
     let rows = frame.len();
-    let content_fingerprint = format!(
-        "barframe:{}",
-        qx_data::fingerprint_bar_frame(frame).map_err(|error| {
-            AppError::new(
-                AppErrorCategory::InvalidInput,
-                format!("BarFrame 内容指纹计算失败：{error}"),
-            )
-        })?
-    );
+    let content_fingerprint = format!("barframe:{fingerprint}");
     let mut gaps: Vec<String> = Vec::new();
     if rows < MIN_BACKTEST_BARS {
         gaps.push(format!(

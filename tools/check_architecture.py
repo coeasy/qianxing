@@ -25157,7 +25157,7 @@ def qx_app_check() -> None:
         "BacktestPreflightCheckV1",
         "BacktestPreflightDataV1",
         "BacktestPreflightResultV1",
-        "preflight_backtest_v1_with_frame",
+        "preflight_backtest_v1_with_verified_manifest",
         "run_multi_builtin_backtest_with_inputs",
         "validate_multi_builtin_frames",
         "MultiBuiltinBacktestInputs",
@@ -25182,9 +25182,9 @@ def qx_app_check() -> None:
     )
     preflight_support = ROOT / APP_CASES_DIR / "preflight_backtest_v1.rs"
     check(
-        "pub fn preflight_backtest_v1_with_frame(" in preflight_support.read_text(encoding="utf-8"),
+        "pub fn preflight_backtest_v1_with_verified_manifest(" in preflight_support.read_text(encoding="utf-8"),
         "已校验 BarFrame 预检入口与文件预检共用同一用例实现",
-        "preflight_backtest_v1_with_frame",
+        "preflight_backtest_v1_with_verified_manifest",
     )
     check(
         {"verify_depth_run_with_reader", "verify_run_with_reader"} <= grouped_symbols

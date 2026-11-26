@@ -24,6 +24,7 @@ pub(crate) struct SingleStrategyBacktestInput<'a> {
     pub(crate) spec_path: Option<&'a Path>,
     pub(crate) strategy_id: &'a str,
     pub(crate) dataset_binding: Option<DatasetRunBinding<'a>>,
+    pub(crate) dataset_manifest: &'a qx_data::DatasetManifest,
     pub(crate) run_manifest_root: &'a Path,
     // 本轮实际消费的那份输入的身份（路径 + 数据集 + 已复核指纹）。它由调用方从**唯一读点**
     // 拿到，在这里只往两处用：RunManifest 的 `data_fingerprint` 与产物摘要的 `input` 块。
@@ -43,6 +44,7 @@ pub(crate) fn run_single_strategy_backtest(
         spec_path,
         strategy_id,
         dataset_binding,
+        dataset_manifest,
         run_manifest_root,
         input,
         dataset_quality,
@@ -98,8 +100,13 @@ pub(crate) fn run_single_strategy_backtest(
     )
     .with_code_commit(build_identity::BUILD_REVISION);
     if builtin_execution.is_some() {
-        let preflight = qx_app::preflight_backtest_v1_with_frame(&app_spec, frame, &app_context)
-            .map_err(|error| format!("Bar 回测预检失败: {error}"))?;
+        let preflight = qx_app::preflight_backtest_v1_with_verified_manifest(
+            &app_spec,
+            frame,
+            dataset_manifest,
+            &app_context,
+        )
+        .map_err(|error| format!("Bar 回测预检失败: {error}"))?;
         println!(
             "[Backtest · Preflight] ready={} instrument={} rows={} fingerprint={}",
             preflight.ready,
