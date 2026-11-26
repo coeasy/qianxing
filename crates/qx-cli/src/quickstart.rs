@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use crate::{
     cli_args, resolve_backtest_summary_path, run_ccxt_builtin_backtest, run_doctor,
-    run_init_with_ccxt_selection, run_init_with_profile, run_report_with_output, run_status,
+    run_init_with_ccxt_market_selection, run_init_with_profile, run_report_with_output, run_status,
     run_unified_backtest, write_ccxt_quickstart_project_manifest, CcxtBuiltinBacktestInput,
 };
 
@@ -309,7 +309,7 @@ pub(crate) fn run(
         init_arguments.push("--force");
     }
     let init_outcome = if let Some((_, exchange_id)) = ccxt_preflight.as_ref() {
-        run_init_with_ccxt_selection(&runtime, force, exchange_id, &instrument)
+        run_init_with_ccxt_market_selection(&runtime, force, exchange_id, &instrument, market_type)
     } else {
         run_init_with_profile(&runtime, force, strategy_name, init_profile, false)
     };
