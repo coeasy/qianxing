@@ -2,6 +2,8 @@
 
 状态（2026-11-25）：PR #40 已合并，`v0.4.2` tag 已创建；Rust SDK 的 14 个 crates.io 包已发布并完成 checksum 与独立 consumer 验收。首次 tag 发布工作流 [#45515432971](https://github.com/coeasy/qianxing/actions/runs/45515432971) 在性能门禁失败，PyPI wheel 与 GitHub Release 尚未发布。当前公开稳定版仍为 v0.4.1。PR #41 的重复测量门禁修复和精确 tag 手动续跑入口 CI 39/39 通过，尚待合并授权。
 
+发布边界补记（2026-11-26）：Binance Spot `--market-type spot` quickstart 在现存 `v0.4.2` tag 创建后开发；该 tag 不含此入口。若合入并发布，须进入后续新版本，不可把它记作 `v0.4.2` 已有能力。
+
 ## 面向用户的新增体验
 
 - PyPI wheel 提供 `qianxing quickstart --profile ccxt`，从 Python 入口完成匿名公开行情读取、回测和 HTML 报告。wheel 调用同版本自带的 `qx-cli`，并使用当前 Python 解释器启动行情 worker；用户无需单独安装 Rust 工具链或 CLI。

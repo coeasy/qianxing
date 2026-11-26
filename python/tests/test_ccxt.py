@@ -356,6 +356,95 @@ class CcxtEnvironmentProxyTest(unittest.TestCase):
 
         self.assertEqual(raised.exception.error_class, CcxtErrorClass.INVALID)
 
+    def test_binance_spot_data_api_changes_only_public_spot_url_and_restricts_market_loading(self):
+        class Exchange:
+            def __init__(self, params):
+                self.params = params
+                self.calls = []
+                self.urls = {"api": {
+                    "public": "https://api.binance.com/api/v3",
+                    "private": "https://api.binance.com/api/v3",
+                    "fapiPublic": "https://fapi.binance.com/fapi/v1",
+                }}
+
+            def request(self, path, api="public", method="GET", params=None):
+                self.calls.append((path, api, method, params))
+                return {"ok": True}
+
+        class Module:
+            binance = Exchange
+
+        client = CcxtExchangeClient(
+            CcxtConfig(
+                exchange_id="binance",
+                default_type="spot",
+                public_market_data_endpoint="binance_spot_data_api",
+            ),
+            ccxt_module=Module,
+        )
+
+        self.assertEqual(
+            client.exchange.urls["api"]["public"],
+            "https://data-api.binance.vision/api/v3",
+        )
+        self.assertEqual(
+            client.exchange.urls["api"]["private"],
+            "https://api.binance.com/api/v3",
+        )
+        self.assertEqual(
+            client.exchange.urls["api"]["fapiPublic"],
+            "https://fapi.binance.com/fapi/v1",
+        )
+        self.assertEqual(
+            client.exchange.params["options"]["fetchMarkets"]["types"], ["spot"]
+        )
+        self.assertEqual(
+            client.exchange.request("ticker/price", "public", "GET", {}), {"ok": True}
+        )
+        self.assertEqual(
+            client.exchange.request("exchangeInfo", ["public"], "GET", {}), {"ok": True}
+        )
+        with self.assertRaises(CcxtConnectorError) as raised:
+            client.exchange.request("order", "private", "POST", {})
+        self.assertEqual(raised.exception.error_class, CcxtErrorClass.UNSUPPORTED)
+        self.assertEqual(len(client.exchange.calls), 2)
+
+    def test_binance_spot_data_api_rejects_credentialed_or_non_spot_configs(self):
+        invalid = (
+            CcxtConfig(
+                exchange_id="binance",
+                default_type="spot",
+                api_key="must-not-be-present",
+                public_market_data_endpoint="binance_spot_data_api",
+            ),
+            CcxtConfig(
+                exchange_id="binance",
+                default_type="swap",
+                public_market_data_endpoint="binance_spot_data_api",
+            ),
+            CcxtConfig(
+                exchange_id="binance",
+                default_type="spot",
+                options={"defaultType": "swap"},
+                public_market_data_endpoint="binance_spot_data_api",
+            ),
+            CcxtConfig(
+                exchange_id="okx",
+                default_type="spot",
+                public_market_data_endpoint="binance_spot_data_api",
+            ),
+            CcxtConfig(
+                exchange_id="binance",
+                default_type="spot",
+                public_market_data_endpoint="https://attacker.example/",
+            ),
+        )
+        for config in invalid:
+            with self.subTest(config=config):
+                with self.assertRaises(CcxtConnectorError) as raised:
+                    config.validate()
+                self.assertEqual(raised.exception.error_class, CcxtErrorClass.INVALID)
+
 
 class CcxtTest(unittest.TestCase):
     def test_scale_is_reexported_from_native_rust(self):

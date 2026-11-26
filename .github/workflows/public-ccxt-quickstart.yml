@@ -5,6 +5,10 @@ on:
     paths:
       - ".github/workflows/public-ccxt-quickstart.yml"
       - "crates/qx-cli/src/quickstart.rs"
+      - "crates/qx-cli/src/cli_args.rs"
+      - "crates/qx-cli/src/cli.rs"
+      - "crates/qx-cli/src/cli/project_command.rs"
+      - "crates/qx-cli/src/cli_help.rs"
       - "crates/qx-cli/src/backtests/ccxt_builtin.rs"
       - "crates/qx-cli/src/init_project.rs"
       - "crates/qx-cli/src/project_manifest.rs"
@@ -17,13 +21,17 @@ on:
       - "python/qianxing/cli.py"
       - "python/qianxing_ccxt/**"
       - "python/tests/test_project_runs.py"
+      - "python/tests/test_ccxt.py"
+      - "python/tests/test_ccxt_worker.py"
+      - "docs/first-run.md"
+      - "tools/check_architecture.py"
       - "tools/build_python_wheel.sh"
       - "python/pyproject.toml"
       - "deploy/qianxing.runtime.ccxt.example.json"
   workflow_dispatch:
     inputs:
       public_profile:
-        description: "Use the release profile (OKX + Bitget only)"
+        description: "Use the release profile (OKX/Bitget swaps + Binance Spot public data)"
         required: true
         type: choice
         options:
@@ -33,7 +41,7 @@ on:
   workflow_call:
     inputs:
       public_profile:
-        description: "Release profile limits public-data acceptance to OKX + Bitget; full profile also includes Binance."
+        description: "Release profile checks OKX/Bitget swaps and Binance Spot; full profile also checks Binance perpetuals."
         required: false
         type: string
         default: full
@@ -105,13 +113,13 @@ jobs:
           retention-days: 2
 
   public-market-data-quickstart:
-    name: Real public-data quickstart (${{ matrix.exchange }})
+    name: Real public-data quickstart (${{ matrix.exchange }} ${{ matrix.market_type }})
     runs-on: ubuntu-22.04
     needs: build-linux-release
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON((github.event_name == 'pull_request' || inputs.public_profile == 'release') && '[{"exchange":"okx","instrument":"BTC/USDT:USDT.OKX","days":180},{"exchange":"bitget","instrument":"BTC/USDT:USDT.BITGET","days":180}]' || '[{"exchange":"okx","instrument":"BTC/USDT:USDT.OKX","days":180},{"exchange":"binance","instrument":"BTC/USDT:USDT.BINANCE","days":180},{"exchange":"bitget","instrument":"BTC/USDT:USDT.BITGET","days":180}]') }}
+        include: ${{ fromJSON((github.event_name == 'pull_request' || inputs.public_profile == 'release') && '[{"exchange":"okx","market_type":"swap","instrument":"BTC/USDT:USDT.OKX","days":180},{"exchange":"bitget","market_type":"swap","instrument":"BTC/USDT:USDT.BITGET","days":180},{"exchange":"binance","market_type":"spot","instrument":"BTC/USDT.BINANCE","days":180}]' || '[{"exchange":"okx","market_type":"swap","instrument":"BTC/USDT:USDT.OKX","days":180},{"exchange":"binance","market_type":"swap","instrument":"BTC/USDT:USDT.BINANCE","days":180},{"exchange":"binance","market_type":"spot","instrument":"BTC/USDT.BINANCE","days":180},{"exchange":"bitget","market_type":"swap","instrument":"BTC/USDT:USDT.BITGET","days":180}]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -132,6 +140,7 @@ jobs:
       - name: Run the installed Python wheel through real public data and render a report
         env:
           EXCHANGE: ${{ matrix.exchange }}
+          MARKET_TYPE: ${{ matrix.market_type }}
           INSTRUMENT: ${{ matrix.instrument }}
           ACCEPTANCE_DAYS: ${{ matrix.days }}
           AS_OF_MS: ${{ needs.build-linux-release.outputs.as_of_ms }}
@@ -144,62 +153,92 @@ jobs:
           "$PYTHON_BIN" -m pip install --disable-pip-version-check --no-deps "$GITHUB_WORKSPACE"/dist/*.whl
           "$PYTHON_BIN" -c 'import qianxing_bridge; print("native_extension=loaded")'
           "$PYTHON_BIN" -m pip install --disable-pip-version-check ccxt==4.5.89
-          project="$ACCEPTANCE_ROOT/$EXCHANGE/project"
-          home="$ACCEPTANCE_ROOT/$EXCHANGE/home"
+          project="$ACCEPTANCE_ROOT/$EXCHANGE-$MARKET_TYPE/project"
+          home="$ACCEPTANCE_ROOT/$EXCHANGE-$MARKET_TYPE/home"
           mkdir -p "$home"
           export HOME="$home"
           export XDG_DATA_HOME="$home/.local/share"
           export QX_PYTHON="$PYTHON_BIN"
-          log="$ACCEPTANCE_ROOT/$EXCHANGE/quickstart.log"
+          log="$ACCEPTANCE_ROOT/$EXCHANGE-$MARKET_TYPE/quickstart.log"
           mkdir -p "$(dirname "$log")"
           "$PYTHON_BIN" -m qianxing.cli quickstart "$project" \
             --profile ccxt --days "$ACCEPTANCE_DAYS" --timeframe 15m --as-of-ms "$AS_OF_MS" \
-            --exchange "$EXCHANGE" --instrument "$INSTRUMENT" \
+            --exchange "$EXCHANGE" --market-type "$MARKET_TYPE" --instrument "$INSTRUMENT" \
             2>&1 | tee "$log"
           test -s "$project/qianxing.project.json"
           test -s "$project/qianxing.ccxt.public.json"
-          python - "$project/qianxing.ccxt.public.json" "$EXCHANGE" "$INSTRUMENT" <<'PY'
+          python - "$project/qianxing.ccxt.public.json" "$EXCHANGE" "$MARKET_TYPE" "$INSTRUMENT" <<'PY'
           import json
           import sys
           from pathlib import Path
 
           config = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
           assert config["exchange_id"] == sys.argv[2], config
-          assert sys.argv[3] in config["instruments"], config
+          assert config["default_type"] == sys.argv[3], config
+          assert sys.argv[4] in config["instruments"], config
           assert config["sandbox"] is False, config
           forbidden = {"apiKey", "secret", "password", "uid", "token"}
           assert not (forbidden & config.keys()), config
+          if sys.argv[3] == "spot":
+              assert config["public_market_data_endpoint"] == "binance_spot_data_api", config
+              assert config["options"]["fetchMarkets"]["types"] == ["spot"], config
+          else:
+              assert "public_market_data_endpoint" not in config, config
           PY
           report="$(find "$project" "$home" -type f -name '*.report.html' -size +0c -print -quit)"
           test -n "$report"
           summary="$(find "$project" -type f -name '*.summary.json' -size +0c -print -quit)"
           test -n "$summary"
-          python - "$summary" "$ACCEPTANCE_DAYS" <<'PY'
+          python - "$summary" "$ACCEPTANCE_DAYS" "$MARKET_TYPE" <<'PY'
           import json
           import sys
           from pathlib import Path
 
           summary = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
           days = int(sys.argv[2])
+          market_type = sys.argv[3]
           expected_bars = days * 24 * 4
           assert int(summary["bars"]) == expected_bars, {
               "expected_bars": expected_bars,
               "summary": summary,
           }
-          assert int(summary["rejected_orders"]) == 0, summary.get("rejection_reasons")
+          rejected_orders = int(summary["rejected_orders"])
+          rejection_reasons = summary.get("rejection_reasons") or []
+          if isinstance(rejection_reasons, dict):
+              rejection_reasons = [rejection_reasons]
+          if market_type == "spot":
+              # Cash-only Spot can leave exchange-minimum dust after fills. Accept only
+              # a small, fully explained tail; short/oversell rejections are never valid.
+              fills = int(summary["fills"])
+              assert fills > 0, summary
+              assert rejected_orders <= max(1, fills // 20), {
+                  "fills": fills,
+                  "rejected_orders": rejected_orders,
+                  "rejection_reasons": rejection_reasons,
+              }
+              assert sum(int(item["count"]) for item in rejection_reasons) == rejected_orders, {
+                  "rejected_orders": rejected_orders,
+                  "rejection_reasons": rejection_reasons,
+              }
+              assert all(
+                  "订单名义金额低于交易所最小限制" in str(item["reason"])
+                  for item in rejection_reasons
+              ), rejection_reasons
+          else:
+              assert rejected_orders == 0, rejection_reasons
           quality = summary["dataset_quality"]["quality_report"]
           assert int(quality["missing_intervals"]) == 0, quality
           PY
-          printf 'exchange=%s\ninstrument=%s\nreport=%s\n' "$EXCHANGE" "$INSTRUMENT" "$report" \
-            > "$ACCEPTANCE_ROOT/$EXCHANGE/result.txt"
-          sha256sum "$GITHUB_WORKSPACE/target/release/qx-cli" > "$ACCEPTANCE_ROOT/$EXCHANGE/qx-cli.sha256"
-          python --version > "$ACCEPTANCE_ROOT/$EXCHANGE/python-version.txt" 2>&1
-          "$PYTHON_BIN" -c 'import ccxt; print(ccxt.__version__)' > "$ACCEPTANCE_ROOT/$EXCHANGE/ccxt-version.txt"
+          printf 'exchange=%s\nmarket_type=%s\ninstrument=%s\nreport=%s\n' "$EXCHANGE" "$MARKET_TYPE" "$INSTRUMENT" "$report" \
+            > "$ACCEPTANCE_ROOT/$EXCHANGE-$MARKET_TYPE/result.txt"
+          sha256sum "$GITHUB_WORKSPACE/target/release/qx-cli" > "$ACCEPTANCE_ROOT/$EXCHANGE-$MARKET_TYPE/qx-cli.sha256"
+          python --version > "$ACCEPTANCE_ROOT/$EXCHANGE-$MARKET_TYPE/python-version.txt" 2>&1
+          "$PYTHON_BIN" -c 'import ccxt; print(ccxt.__version__)' > "$ACCEPTANCE_ROOT/$EXCHANGE-$MARKET_TYPE/ccxt-version.txt"
       - name: Upload quickstart project, real-data lineage, report, and logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: public-ccxt-quickstart-${{ matrix.exchange }}
-          path: ${{ runner.temp }}/public-ccxt-acceptance/${{ matrix.exchange }}
+          name: public-ccxt-quickstart-${{ matrix.exchange }}-${{ matrix.market_type }}
+          path: ${{ runner.temp }}/public-ccxt-acceptance/${{ matrix.exchange }}-${{ matrix.market_type }}
           if-no-files-found: warn
           retention-days: 30

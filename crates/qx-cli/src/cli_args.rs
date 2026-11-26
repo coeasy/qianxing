@@ -24,6 +24,21 @@ pub(crate) enum QuickstartProfile {
     Paper,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum QuickstartMarketType {
+    Spot,
+    Swap,
+}
+
+impl QuickstartMarketType {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Spot => "spot",
+            Self::Swap => "swap",
+        }
+    }
+}
+
 impl QuickstartProfile {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
@@ -81,12 +96,15 @@ pub(crate) enum Command {
         /// 复现窗口的 UTC Unix 毫秒时间上限；同一值可让多所 quickstart 对齐结束 K 线。
         #[arg(long)]
         as_of_ms: Option<u64>,
-        /// CCXT 永续合约标的（必须含结算币和交易所后缀）；省略时按 --exchange 选择 BTC/USDT 永续合约，缺省 OKX。
+        /// CCXT 标的；swap 必须含结算币，spot 当前仅支持 Binance。省略时按产品类型和 --exchange 选择 BTC/USDT 标的。
         #[arg(long)]
         instrument: Option<String>,
         /// 公共行情交易所：okx、binance 或 bitget。
         #[arg(long)]
         exchange: Option<String>,
+        /// CCXT 产品：swap（默认）或 spot；当前 spot quickstart 仅支持 Binance 公共行情。
+        #[arg(long, value_enum)]
+        market_type: Option<QuickstartMarketType>,
     },
     #[command(name = "guide")]
     Guide(super::guide_args::GuideArgs),
