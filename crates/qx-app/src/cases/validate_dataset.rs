@@ -71,19 +71,30 @@ pub(super) fn inspect_dataset(spec: &DatasetSpec) -> Result<DatasetInspection, A
 }
 
 /// Build the same readiness facts from the exact frame and manifest already verified by the
-/// canonical dataset identity path. Do not recompute the manifest fingerprint here: it covers
-/// the same immutable Bar rows and was produced during that verification.
+/// canonical dataset identity path. Do not rescan the frame or recompute its fingerprint here:
+/// the manifest covers the same immutable Bar rows and was produced during that verification.
 pub(super) fn inspect_bar_frame(
     dataset_id: &str,
     frame: &BarFrame,
     manifest: &qx_data::DatasetManifest,
 ) -> Result<DatasetInspection, AppError> {
-    frame.validate().map_err(|error| {
-        AppError::new(
+    let rows = frame.len();
+    if rows == 0
+        || frame.open_raw.len() != rows
+        || frame.high_raw.len() != rows
+        || frame.low_raw.len() != rows
+        || frame.close_raw.len() != rows
+        || frame.volume_raw.len() != rows
+        || frame
+            .exact_ohlcv
+            .as_ref()
+            .is_some_and(|values| values.len() != rows)
+    {
+        return Err(AppError::new(
             AppErrorCategory::InvalidInput,
-            format!("BarFrame 校验失败: {error:?}"),
-        )
-    })?;
+            "BarFrame 列长度与已验证数据集清单不匹配",
+        ));
+    }
     manifest.validate().map_err(|error| {
         AppError::new(
             AppErrorCategory::InvalidInput,
@@ -93,9 +104,12 @@ pub(super) fn inspect_bar_frame(
     let instrument = frame.instrument.to_string();
     let first_ts = frame.ts.first().copied();
     let last_ts = frame.ts.last().copied();
+    let schema_version = if frame.exact_ohlcv.is_some() { 2 } else { 1 };
     if manifest.dataset_id != format!("strategy-bars:{instrument}")
         || manifest.start_timestamp != first_ts.unwrap_or_default()
         || manifest.end_timestamp != last_ts.unwrap_or_default()
+        || manifest.source != frame.source.0
+        || manifest.schema_version != schema_version
     {
         return Err(AppError::new(
             AppErrorCategory::InvalidInput,
