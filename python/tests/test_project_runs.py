@@ -675,6 +675,89 @@ class ProjectRunTests(unittest.TestCase):
         self.assertFalse(document["run_evidence"]["result_recomputed"])
         self.assertEqual(document["run_evidence"]["run_id"], "test-run")
 
+    def test_paper_quickstart_delegates_to_bundled_cli_and_reports_local_only_execution(self):
+        output = io.StringIO()
+        renderer = {"path": "qx-cli", "origin": "bundled", "status": "ready"}
+        project = self.root / "paper"
+        paper_result = {
+            "profile": "paper",
+            "new_orders": 1,
+            "new_ledger_entries": 4,
+            "quote_source": "local_synthetic_l1",
+            "network_accessed": False,
+            "credentials_loaded": False,
+            "live_orders_submitted": False,
+        }
+        process = types.SimpleNamespace(
+            returncode=0,
+            stdout=(
+                "quickstart 使用 paper profile\n"
+                f"[QuickstartPaperResult] {json.dumps(paper_result)}\n"
+            ),
+            stderr="",
+        )
+
+        def run(command, **kwargs):
+            project.mkdir(parents=True, exist_ok=True)
+            (project / "qianxing.runtime.json").write_text("{}", encoding="utf-8")
+            return process
+
+        with patch("qianxing.report_renderer.require_report_renderer", return_value=renderer), \
+             patch("subprocess.run", side_effect=run) as invoke, \
+             contextlib.redirect_stdout(output):
+            self.assertEqual(
+                cli.main(["quickstart", str(project), "--profile", "paper"]),
+                0,
+            )
+
+        command = invoke.call_args.args[0]
+        self.assertEqual(command[:2], ["qx-cli", "quickstart"])
+        self.assertEqual(command[-2:], ["--profile", "paper"])
+        self.assertEqual(invoke.call_args.kwargs["env"]["QX_PYTHON"], sys.executable)
+        document = json.loads(output.getvalue())
+        self.assertEqual(document["profile"], "paper")
+        self.assertEqual(document["paper"]["new_orders"], 1)
+        self.assertEqual(document["data"]["source"], "local_synthetic_l1")
+        self.assertFalse(document["data"]["network_accessed"])
+        self.assertFalse(document["data"]["credentials_loaded"])
+        self.assertFalse(document["data"]["live_orders_submitted"])
+
+    def test_paper_quickstart_rejects_force_before_resolving_renderer(self):
+        with patch("qianxing.report_renderer.require_report_renderer") as renderer, \
+             patch("subprocess.run") as invoke, \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                cli.main(["quickstart", str(self.root / "paper"), "--profile", "paper", "--force"]),
+                2,
+            )
+        renderer.assert_not_called()
+        invoke.assert_not_called()
+        self.assertIn("不支持 --force", self.output.getvalue())
+
+    @unittest.skipUnless(hasattr(Path, "symlink_to"), "symbolic links are unavailable")
+    def test_paper_quickstart_preserves_symlink_root_for_rust_safety_check(self):
+        target = self.root / "paper-target"
+        target.mkdir()
+        alias = self.root / "paper-link"
+        try:
+            alias.symlink_to(target, target_is_directory=True)
+        except OSError as error:
+            self.skipTest(f"cannot create symlink in this environment: {error}")
+        process = types.SimpleNamespace(
+            returncode=2,
+            stdout="",
+            stderr="Paper 首跑拒绝使用目录符号链接",
+        )
+        renderer = {"path": "qx-cli", "origin": "bundled", "status": "ready"}
+        with patch("qianxing.report_renderer.require_report_renderer", return_value=renderer), \
+             patch("subprocess.run", return_value=process) as invoke, \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.main(["quickstart", str(alias), "--profile", "paper"]), 2)
+
+        command = invoke.call_args.args[0]
+        self.assertEqual(command[2], os.path.abspath(alias))
+        self.assertNotEqual(command[2], str(alias.resolve()))
+
     def test_ccxt_quickstart_does_not_report_success_without_evidence_bundle(self):
         from qianxing_ccxt import CcxtExchangeClient
 
