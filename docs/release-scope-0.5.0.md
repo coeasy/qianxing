@@ -24,7 +24,9 @@
 
 Windows workspace 验收之外，已用本地 Podman 启动 Linux Rust 1.98.1 与 PostgreSQL 16 容器：存储层 34 项常规测试和 11 项 PostgreSQL 忽略集成用例通过；`qx-cli` 的 R12 Unknown 跨进程恢复用例在 0.5.0 候选树通过（147.82 秒），覆盖 file、SQLite、PostgreSQL，并将证据绑定到源码清单。该恢复用例使用 fixture venue，没有连接交易所或提交订单。证据见 [`R12-AC01 运行日志`](../maturity/acceptance-artifacts/058f92cc-8ef6-456e-bd7f-d2a47bb15a81.log) 和[源码清单](../maturity/acceptance-artifacts/058f92cc-8ef6-456e-bd7f-d2a47bb15a81.source-tree.json)。
 
-这不是最终 tag 的 hosted Linux/PostgreSQL CI 证据，也没有覆盖整个 workspace 的 Linux 构建；外部 crates.io consumer、带凭据的交易所 testnet/实盘测试仍未执行。
+另有 PR #39 当前 head 的[托管 CI run #45885805476](https://github.com/coeasy/qianxing/actions/runs/45885805476) 全部通过，其中 Linux/PostgreSQL job 覆盖 Paper 部署生命周期、Python checkpoint supervisor 重启、两类 4,096 项队列容量和六种 worker 崩溃边界。Binance testnet job 的离线 fail-closed 检查通过，但带凭据的完整 testnet 步骤被跳过。该 run 是 PR head 证据，不是最终 0.5.0 tag，也不能证明真实账户/下单验收。
+
+本机 Podman 结果不是最终 tag 的 hosted Linux/PostgreSQL CI 证据；PR #39 hosted job 也没有覆盖最终候选的完整 workspace Linux 构建。`0.5.0` crates.io registry consumer 和带凭据的交易所 testnet/实盘测试仍未执行。
 
 ## 真实公共行情 quickstart
 
