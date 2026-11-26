@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "kind": "python_project_run_evidence_quickstart",
+  "recorded_at_utc": "2026-11-26T04:31:21Z",
+  "source": {
+    "base_commit": "643f1293d006915c931adb9fd1fd61f91a73d422",
+    "working_tree_changes_included": true,
+    "tracked_code_and_doc_path_count_before_recording_evidence": 8,
+    "sha256": {
+      "python/qianxing/cli.py": "b9736439bc4fedc26ced24d6b8cb5dd9b7d0b2a39c1afa30f8b3733d49498f34",
+      "python/qianxing/project_runs.py": "6c46f45d83e93caa2a22c56d643f3ae415cecb3119775eb898960f85f0dacfbd",
+      "python/tests/test_project_runs.py": "168227c4b33c2dd9582726d0c2560c1e3e8b68371ad092362a5b72c1aac28119",
+      "python/tests/test_native_project_runs.py": "c5a2496d13eec2e7735159e7a1d0dd65e730a6e12b45951f03c12c81209899f4"
+    }
+  },
+  "builds": {
+    "qx_cli": {
+      "command": "cargo build --locked -p qx-cli",
+      "profile": "debug",
+      "sha256": "2b1839f9d67748020fccf5d9a7ac864d3cb027de01e024424035c274ef422fcf"
+    },
+    "qx_python": {
+      "command": "cargo build --locked -p qx-python --features extension-module",
+      "profile": "debug",
+      "sha256": "e1143a8a53c0de2aff4746178f208426518f352dd9aac972b6a19e3e585a4c6c"
+    }
+  },
+  "checks": [
+    {
+      "command": "python -m unittest python.tests.test_project_runs",
+      "result": "passed",
+      "cases": 59
+    },
+    {
+      "command": "python.tests.test_native_project_runs.NativeProjectRunTests.test_python_quickstart_runs_sample_preflight_engine_and_verified_report",
+      "result": "passed",
+      "cases": 1,
+      "formats": ["html", "json"],
+      "evidence_bundle_generated": true,
+      "evidence_verify_run_passed": true,
+      "input_identity_recomputed": true,
+      "strategy_result_recomputed": false,
+      "json_report_path_verified": true
+    },
+    {
+      "command": "python.tests.test_native_project_runs.NativeProjectRunTests.test_python_quickstart_runs_bundled_local_paper_lifecycle",
+      "result": "passed",
+      "cases": 1
+    },
+    {
+      "command": "python.tests.test_project_runs.ProjectRunTests evidence rejection and mutation cases",
+      "result": "passed",
+      "cases": 2
+    },
+    {
+      "command": "python tools/check_architecture.py --fast",
+      "result": "passed",
+      "shards": 4,
+      "named_checks": 376,
+      "duplicates": 0
+    },
+    {
+      "command": "python -m py_compile python/qianxing/cli.py python/qianxing/project_runs.py python/tests/test_project_runs.py python/tests/test_native_project_runs.py",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "interpretation": [
+    "The Python sample quickstart and project report --evidence path use the bundled matching Rust CLI to create an EvidenceBundle, verify the reported bundle path, and run evidence verify-run before reporting success.",
+    "The local EvidenceBundle check verifies recorded artifact digests and input identity; it does not recompute the strategy result.",
+    "This is a dirty Windows debug build and local integration run, not clean-wheel, hosted Linux/macOS CI, PyPI, or release evidence.",
+    "Paper verification is a separate local synthetic-quote lifecycle and is not exchange sandbox or production acceptance."
+  ]
+}
