@@ -17,6 +17,17 @@ pub(crate) fn read_bar_frame_for_backtest(path: &Path) -> Result<BarFrame, Strin
         .map_err(|error| format!("策略回测 BarFrame 校验失败 {}: {error:?}", path.display()))
 }
 
+/// Read a strategy BarFrame once when its exact file-content digest is also required.
+pub(crate) fn read_bar_frame_for_backtest_with_content_sha256(
+    path: &Path,
+) -> Result<(BarFrame, String), String> {
+    let payload = read_example_json(path, "策略回测 BarFrame ")?;
+    let content_sha256 = qx_data::sha256_hex_bytes(payload.as_bytes());
+    let frame = BarFrame::from_json(&payload)
+        .map_err(|error| format!("策略回测 BarFrame 校验失败 {}: {error:?}", path.display()))?;
+    Ok((frame, content_sha256))
+}
+
 /// BarFrame → 数据集身份的**唯一**读点：`strategy backtest` 用它登记与复核，`qx report` 用它把
 /// 产物上声明的指纹重算一遍。两处各解一遍 JSON 时，"声明的输入"与"重算的输入"会读成两个答案。
 pub(crate) fn barframe_dataset_identity(

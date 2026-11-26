@@ -3375,7 +3375,11 @@ def ashare_backtest_binding_check() -> None:
     )
     check(
         strategy_chain.count("ashare_backtest_binding(") == 1
-        and builtin_chain.count("crate::run_strategy_backtest_with_quality_manifest(") == 1
+        and (
+            builtin_chain.count("crate::run_strategy_backtest_with_quality_manifest(")
+            + builtin_chain.count("crate::run_strategy_backtest_with_loaded_frame(")
+            == 1
+        )
         and "config.strategy.bars_snapshot_path = Some(" in service_builtin_snapshot
         # builtin 与 strategy CLI 共用规则绑定和 qx-app 费率装配，不保留第二份 A 股读法。
         and "ashare_rules: input.ashare_rules" in strategy_service_binding
@@ -3388,7 +3392,7 @@ def ashare_backtest_binding_check() -> None:
         and "configured_ashare_binding(" not in builtin_chain,
         "两条 Bar 回测链把 A 股规则传入 BacktestSpec，由 qx-app 统一装配费率",
         f"绑定调用 {strategy_chain.count('ashare_backtest_binding(')}/"
-        f"共享 builtin 委托 {builtin_chain.count('crate::run_strategy_backtest_with_quality_manifest(')} 处、"
+        f"共享 builtin 委托 {builtin_chain.count('crate::run_strategy_backtest_with_quality_manifest(') + builtin_chain.count('crate::run_strategy_backtest_with_loaded_frame(')} 处、"
         f"service 绑定传递 {'ashare_rules: input.ashare_rules' in strategy_service_binding}/"
         f"应用 spec 写入 {'spec.ashare_rules = bindings.ashare_rules' in strategy_spec_assembly}/"
         f"应用层费率装配 {'AShareFeeModel' in app_execution_binding}、"
@@ -3633,7 +3637,10 @@ def builtin_signal_check() -> None:
         and "config.strategy.builtin_strategy = Some(kind.name().to_string());" in service_builtin_snapshot
         and 'config.strategy.version = format!("builtin-{}-v1", kind.name());' in service_builtin_snapshot
         and 'strategy.version = format!("builtin-{}-v1", kind.name());' in service_strategy_batch
-        and "crate::run_strategy_backtest_with_quality_manifest(" in builtin_app
+        and (
+            "crate::run_strategy_backtest_with_quality_manifest(" in builtin_app
+            or "crate::run_strategy_backtest_with_loaded_frame(" in builtin_app
+        )
         and "config.strategy.builtin_fast_window =" not in service_builtin_snapshot
         and "config.strategy.builtin_slow_window =" not in service_builtin_snapshot
         and "config.strategy.builtin_period =" not in service_builtin_snapshot
@@ -4526,7 +4533,10 @@ def backtest_assembly_check() -> None:
         and "fill_model: fill.model" in service_single_strategy
         and "fill_model_name" in strategy_backtest_source
         and "match fill_model_name" not in strategy_backtest
-        and "run_strategy_backtest_with_quality_manifest(" in builtin_backtest
+        and (
+            "run_strategy_backtest_with_quality_manifest(" in builtin_backtest
+            or "run_strategy_backtest_with_loaded_frame(" in builtin_backtest
+        )
         and "config.strategy.fill_model" not in builtin_backtest
         and "Some(\"one_tick_slippage\")" not in builtin_backtest
         and "fill_model: fill_configured.map(|_| primary_fill.model)" in multi_bindings
@@ -9678,8 +9688,8 @@ def ccxt_backtest_snapshot_ownership_check() -> None:
     )
     check(
         "prepare_builtin_backtest_snapshot(" in builtin_app
-        and builtin_app.count("read_bar_frame_for_backtest(") == 1
-        and "crate::run_strategy_backtest_with_quality_manifest(" in builtin_app
+        and builtin_app.count("read_bar_frame_for_backtest_with_content_sha256(") == 1
+        and "crate::run_strategy_backtest_with_loaded_frame(" in builtin_app
         and "resolve_strategy_runtime_paths(" not in builtin_app
         and "write_backtest_artifact(" not in builtin_app,
         "CLI builtin 门面只读一次行情并委托 service 准备快照，再调用共享策略回测链",
@@ -13361,7 +13371,10 @@ def market_spec_source_check() -> None:
     )
     printed = (ROOT / MARKET_SPEC_BUILTIN_FILE).read_text(encoding="utf-8")
     check(
-        "run_strategy_backtest_with_quality_manifest(" in printed
+        (
+            "run_strategy_backtest_with_quality_manifest(" in printed
+            or "run_strategy_backtest_with_loaded_frame(" in printed
+        )
         and "instrument_spec_version" in (ROOT / MARKET_SPEC_SOURCE_CHAINS["策略回测"]).read_text(encoding="utf-8")
         and "use super::*;" not in printed,
         "builtin 适配器委托共享策略链，market spec 来源随持久化回测身份输出",
@@ -16088,6 +16101,8 @@ def performance_baseline_check() -> None:
         and "benchmarks/run_rust_bench.py" in workflow_source
         and "benchmarks/run_crypto_paper_e2e.py" in workflow_source
         and "benchmarks/compare_baseline.py" in workflow_source
+        and "Build and measure the parent revision on this runner" in performance_job
+        and "BASE_REVISION" in performance_job
         and "benchmarks/results/crypto-paper-e2e.json" in workflow_source
         and "name: performance-baseline" in workflow_source
         and "name: Upload performance diagnostics after failure" in performance_job
@@ -16095,8 +16110,8 @@ def performance_baseline_check() -> None:
         and "name: performance-diagnostics-${{ github.run_attempt }}" in performance_job
         and "benchmarks/results/previous/*.json" in performance_job
         and "benchmarks/results/diagnostics/ci-context.json" in performance_job,
-        "CI 运行 Rust 与真实 Paper worker 基准、阻断已登记回归并保留成功基线及失败样本",
-        "缺少 performance-trend job、趋势比较、成功基线或失败诊断 artifact",
+        "CI 在同一 runner 测量父版本与候选版本，运行 Rust 与真实 Paper worker 基准并保留配对证据",
+        "缺少 performance-trend job、同 runner 父版本对照、趋势比较或失败诊断 artifact",
     )
     profile_driver = ROOT / "benchmarks/run_profile_backtest.py"
     profile_evidence_path = ROOT / "maturity/evidence/profile-market-backtest.json"
@@ -24849,7 +24864,10 @@ def qx_app_check() -> None:
         and "BuiltinStrategySpec::from_strategy_config(&strategy_config)" in app_strategy_engine_source
         and "run_bar_backtest_with_outcome(&resolved_spec, bars, &mut strategy, context)" in app_strategy_engine_source
         and "BuiltinStrategySpec::from_strategy_config(&builtin_config)" not in single_strategy_source
-        and "run_strategy_backtest_with_quality_manifest(" in builtin_adapter_source
+        and (
+            "run_strategy_backtest_with_quality_manifest(" in builtin_adapter_source
+            or "run_strategy_backtest_with_loaded_frame(" in builtin_adapter_source
+        )
         and "let mut strategy = qx_app::BuiltinStrategySpec::new(kind, strategy_id)" not in builtin_adapter_source
         and "fn app_builtin_strategy_spec(" not in single_strategy_source,
         "单策略与 legacy builtin 的规格映射由 qx-app 单源完成并保留 sizing 参数",
@@ -25137,11 +25155,22 @@ def qx_app_check() -> None:
     grouped_symbols = {
         symbol.strip()
         for module, group in grouped_reexports
-        if module in {"run_multi_builtin_backtest", "verify_depth_run", "verify_run"}
+        if module in {
+            "preflight_backtest_v1",
+            "run_multi_builtin_backtest",
+            "verify_depth_run",
+            "verify_run",
+        }
         for symbol in group.split(",")
         if symbol.strip()
     }
     case_support_exports = {
+        "BACKTEST_PREFLIGHT_SCHEMA_VERSION_V1",
+        "BacktestPreflightCheckStatusV1",
+        "BacktestPreflightCheckV1",
+        "BacktestPreflightDataV1",
+        "BacktestPreflightResultV1",
+        "preflight_backtest_v1_with_verified_manifest",
         "run_multi_builtin_backtest_with_inputs",
         "validate_multi_builtin_frames",
         "MultiBuiltinBacktestInputs",
@@ -25161,8 +25190,14 @@ def qx_app_check() -> None:
         case_support_exports <= grouped_symbols
         and "pub fn run_multi_builtin_backtest_with_inputs(" in support_source
         and "pub struct MultiBuiltinBacktestInputs" in support_source,
-        "多策略入口的 typed inputs 是同一用例的支持 API，不登记成平行用例",
+        "预检报告/已校验帧与多策略 typed inputs 都是用例支持 API，不登记成平行用例",
         f"群组导出 {sorted(grouped_symbols)}",
+    )
+    preflight_support = ROOT / APP_CASES_DIR / "preflight_backtest_v1.rs"
+    check(
+        "pub fn preflight_backtest_v1_with_verified_manifest(" in preflight_support.read_text(encoding="utf-8"),
+        "已校验 BarFrame 预检入口与文件预检共用同一用例实现",
+        "preflight_backtest_v1_with_verified_manifest",
     )
     check(
         {"verify_depth_run_with_reader", "verify_run_with_reader"} <= grouped_symbols

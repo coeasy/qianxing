@@ -61,16 +61,71 @@ pub(super) fn inspect_dataset(spec: &DatasetSpec) -> Result<DatasetInspection, A
             format!("BarFrame 校验失败 {}: {error:?}", spec.bars_path),
         )
     })?;
+    let fingerprint = qx_data::fingerprint_bar_frame(&frame).map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InvalidInput,
+            format!("BarFrame 内容指纹计算失败：{error}"),
+        )
+    })?;
+    inspection_from_validated_frame(&spec.dataset_id, &frame, &fingerprint)
+}
+
+/// Build the same readiness facts from the exact frame and manifest already verified by the
+/// canonical dataset identity path. Do not rescan the frame or recompute its fingerprint here:
+/// the manifest covers the same immutable Bar rows and was produced during that verification.
+pub(super) fn inspect_bar_frame(
+    dataset_id: &str,
+    frame: &BarFrame,
+    manifest: &qx_data::DatasetManifest,
+) -> Result<DatasetInspection, AppError> {
     let rows = frame.len();
-    let content_fingerprint = format!(
-        "barframe:{}",
-        qx_data::fingerprint_bar_frame(&frame).map_err(|error| {
-            AppError::new(
-                AppErrorCategory::InvalidInput,
-                format!("BarFrame 内容指纹计算失败：{error}"),
-            )
-        })?
-    );
+    if rows == 0
+        || frame.open_raw.len() != rows
+        || frame.high_raw.len() != rows
+        || frame.low_raw.len() != rows
+        || frame.close_raw.len() != rows
+        || frame.volume_raw.len() != rows
+        || frame
+            .exact_ohlcv
+            .as_ref()
+            .is_some_and(|values| values.len() != rows)
+    {
+        return Err(AppError::new(
+            AppErrorCategory::InvalidInput,
+            "BarFrame 列长度与已验证数据集清单不匹配",
+        ));
+    }
+    manifest.validate().map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InvalidInput,
+            format!("BarFrame 数据集清单无效: {error}"),
+        )
+    })?;
+    let instrument = frame.instrument.to_string();
+    let first_ts = frame.ts.first().copied();
+    let last_ts = frame.ts.last().copied();
+    let schema_version = if frame.exact_ohlcv.is_some() { 2 } else { 1 };
+    if manifest.dataset_id != format!("strategy-bars:{instrument}")
+        || manifest.start_timestamp != first_ts.unwrap_or_default()
+        || manifest.end_timestamp != last_ts.unwrap_or_default()
+        || manifest.source != frame.source.0
+        || manifest.schema_version != schema_version
+    {
+        return Err(AppError::new(
+            AppErrorCategory::InvalidInput,
+            "BarFrame 数据集清单与已验证输入不匹配",
+        ));
+    }
+    inspection_from_validated_frame(dataset_id, frame, &manifest.fingerprint)
+}
+
+fn inspection_from_validated_frame(
+    dataset_id: &str,
+    frame: &BarFrame,
+    fingerprint: &str,
+) -> Result<DatasetInspection, AppError> {
+    let rows = frame.len();
+    let content_fingerprint = format!("barframe:{fingerprint}");
     let mut gaps: Vec<String> = Vec::new();
     if rows < MIN_BACKTEST_BARS {
         gaps.push(format!(
@@ -79,7 +134,7 @@ pub(super) fn inspect_dataset(spec: &DatasetSpec) -> Result<DatasetInspection, A
     }
     Ok(DatasetInspection {
         verdict: DatasetVerdict {
-            dataset_id: spec.dataset_id.clone(),
+            dataset_id: dataset_id.to_owned(),
             instrument: frame.instrument.to_string(),
             rows: rows as u64,
             content_fingerprint,
@@ -88,7 +143,7 @@ pub(super) fn inspect_dataset(spec: &DatasetSpec) -> Result<DatasetInspection, A
         },
         first_ts: frame.ts.first().copied(),
         last_ts: frame.ts.last().copied(),
-        instrument: frame.instrument,
+        instrument: frame.instrument.clone(),
     })
 }
 

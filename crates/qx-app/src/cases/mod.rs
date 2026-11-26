@@ -87,7 +87,9 @@ pub use paper_available_margin_raw::paper_available_margin_raw;
 pub use plan_algo_execution::plan_algo_execution;
 pub use plan_capital_allocation::plan_capital_allocation;
 pub use plan_risk_parity::plan_risk_parity;
-pub use preflight_backtest_v1::preflight_backtest_v1;
+pub use preflight_backtest_v1::{
+    preflight_backtest_v1, preflight_backtest_v1_with_verified_manifest,
+};
 pub use preflight_backtest_v1::{
     BacktestPreflightCheckStatusV1, BacktestPreflightCheckV1, BacktestPreflightDataV1,
     BacktestPreflightResultV1, BACKTEST_PREFLIGHT_SCHEMA_VERSION_V1,

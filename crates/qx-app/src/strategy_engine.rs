@@ -260,9 +260,9 @@ pub fn run_bar_backtest_with_outcome(
             ));
         }
         if spec.market_spec.as_ref().is_some_and(|market| {
-            bars.iter().any(|bar| {
-                bar.ts < market.valid_from || market.valid_to.is_some_and(|until| bar.ts >= until)
-            })
+            bars.first()
+                .zip(bars.last())
+                .is_some_and(|(first, last)| !market.covers_timestamp_range(first.ts, last.ts))
         }) {
             return Err(AppError::new(
                 AppErrorCategory::InvalidInput,

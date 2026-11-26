@@ -63,6 +63,5 @@ class PerformanceWorkflowTests(unittest.TestCase):
         )
         self.assertIn("paired reports remain available in the uploaded artifact", comparison_step)
 
-
 if __name__ == "__main__":
     unittest.main()
