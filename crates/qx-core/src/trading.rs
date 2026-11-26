@@ -129,6 +129,15 @@ impl TradingInstrumentSpec {
         }
     }
 
+    /// Whether the complete inclusive timestamp span `[first, last]` fits this spec's
+    /// validity window. `valid_to` is exclusive. Callers with ordered data can validate the
+    /// entire series from its endpoints in constant time.
+    pub fn covers_timestamp_range(&self, first: u64, last: u64) -> bool {
+        first <= last
+            && first >= self.valid_from
+            && self.valid_to.is_none_or(|valid_to| last < valid_to)
+    }
+
     pub fn validate(&self) -> QxResult<()> {
         if self.base_currency.trim().is_empty()
             || self.quote_currency.trim().is_empty()
@@ -900,6 +909,19 @@ mod tests {
         let mut market = spec(TradingProduct::Spot);
         market.settlement_currency = "CNY".into();
         assert_eq!(resolve_settlement_currency(Some(&market)), "CNY");
+    }
+
+    #[test]
+    fn market_spec_covers_timestamp_range_with_half_open_validity() {
+        let mut market = spec(TradingProduct::Spot);
+        market.valid_from = 10;
+        market.valid_to = Some(20);
+
+        assert!(market.covers_timestamp_range(10, 19));
+        assert!(!market.covers_timestamp_range(9, 19));
+        assert!(!market.covers_timestamp_range(10, 20));
+        assert!(!market.covers_timestamp_range(20, 20));
+        assert!(!market.covers_timestamp_range(12, 11));
     }
 
     #[test]

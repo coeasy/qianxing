@@ -640,6 +640,28 @@ fn a_bar_frame_for_a_different_instrument_is_rejected() {
 }
 
 #[test]
+fn a_bar_backtest_rejects_the_exclusive_market_spec_end_timestamp() {
+    let root = scratch("bt-market-window");
+    let bars = write_frame(&root, "bars.json", "BTCUSDT.BINANCE", 60);
+    let mut spec = backtest_spec("run-market-window", &bars, &root.join("out"));
+    let instrument = qx_core::InstrumentId::parse("BTCUSDT.BINANCE").expect("instrument");
+    let mut market = qx_core::TradingInstrumentSpec::spot_default(&instrument, "USDT");
+    market.valid_from = 1_000;
+    market.valid_to = Some(60_000);
+    spec.market_spec = Some(market);
+    spec.fee_schedule = Some(qx_core::MakerTakerFeeSchedule::default());
+
+    let error = run_backtest(&spec, &research("run-market-window"))
+        .expect_err("valid_to is exclusive and must reject the final Bar at the boundary");
+
+    assert_eq!(error.category(), AppErrorCategory::InvalidInput);
+    assert_eq!(
+        error.message(),
+        "Bar 数据时间超出 BacktestSpec.market_spec 的有效期"
+    );
+}
+
+#[test]
 fn a_run_with_too_few_bars_is_fidelity_insufficient() {
     let root = scratch("bt-short");
     let bars = write_frame(&root, "bars.json", "BTCUSDT.BINANCE", 1);

@@ -182,10 +182,11 @@ fn run_backtest_inner_unchecked_with_details(
         ));
     }
     if spec.market_spec.as_ref().is_some_and(|market| {
-        frame.ts.iter().any(|timestamp| {
-            *timestamp < market.valid_from
-                || market.valid_to.is_some_and(|until| *timestamp >= until)
-        })
+        frame
+            .ts
+            .first()
+            .zip(frame.ts.last())
+            .is_some_and(|(first, last)| !market.covers_timestamp_range(*first, *last))
     }) {
         return Err(AppError::new(
             AppErrorCategory::InvalidInput,
