@@ -4,7 +4,7 @@
 每条命令都可以直接复制；一份命令属于哪个二进制写在行内，不做混写。能力全景与排障口径不在这里，见
 [工业化易用性收口指南](工业化易用性收口指南-V1.md)；完整安装前置与坑表见[安装指南](installation.md)。
 
-v0.4.2 回测 / Paper 正式版已发布。Python 使用 [PyPI 的 qianxing 0.4.2](https://pypi.org/project/qianxing/0.4.2/)，Rust 工程使用 [crates.io 的 qx-sdk 0.4.2](https://crates.io/crates/qx-sdk/0.4.2)，CLI 与 Web Console 从 [GitHub Release v0.4.2](https://github.com/coeasy/qianxing/releases/tag/v0.4.2) 下载。
+v0.4.2 回测 / Paper 正式版已发布。Python 使用 [PyPI 的 qianxing 0.4.2](https://pypi.org/project/qianxing/0.4.2/)，Rust 工程使用 [crates.io 的 qx-sdk 0.4.2](https://crates.io/crates/qx-sdk/0.4.2)，CLI 与 Web Console 从 [GitHub Release v0.4.2](https://github.com/coeasy/qianxing/releases/tag/v0.4.2) 下载。本文中的 `quickstart --profile paper` 是 tag 后加入的一键首跑入口，尚未进入 v0.4.2 CLI 或 wheel；v0.4.2 仍可使用该版本已有的 Paper 命令和控制流程。
 
 > 标注口径：**【已实现】**= 命令在当前工作树里可执行，且行为由常驻用例或门禁钉住；
 > **进阶**= 能力存在，但不属于首跑承诺，本页只在末尾点名，不给步骤。本页不重复登记未实现的设计意图，
@@ -60,9 +60,10 @@ cargo install --git https://github.com/coeasy/qianxing --tag v0.4.2 --locked qx-
 qx-cli quickstart my-qx                          # 建项目 → 静态检查 → 回测 → 生成/核验证据包 → 安全状态
 qx-cli quickstart my-rsi --strategy rsi           # 同一条链路直接运行 RSI 内置策略
 qx-cli quickstart my-ashare --profile ashare     # A 股样例 → 静态检查 → 回测 → 生成/核验证据包 → 安全状态
-qx-cli quickstart my-paper --profile paper        # 本地合成报价 → Scheduler → Strategy → Paper Execution → Ledger
 qx-cli quickstart my-okx --profile ccxt --days 30 --timeframe 1h --html  # 真实公开行情 → 回测 → HTML/SVG 与证据包
 ```
+
+`my-paper --profile paper` 一键首跑仅适用于包含 tag 后变更的当前源码或基于它构建的 CLI；v0.4.2 预编译 CLI 和 `cargo install --tag v0.4.2` 不支持此 quickstart 参数。
 
 已在仓库内开发时可用 `cargo install --path crates/qx-cli --locked`；该方式需要完整源码和 Rust 工具链。Release 二进制没有
 仓库相对路径依赖，可从任意工作目录运行。
@@ -84,13 +85,13 @@ qx-cli quickstart my-okx --profile ccxt --days 30 --timeframe 1h --html  # 真�
 若只安装了 Rust CLI，可在同一 Python 环境补装行情 worker：`python -m pip install "qianxing[ccxt]"`；运行时用 `QX_PYTHON` 指向该环境的解释器。
 双腿套利策略需要两份行情，quickstart 会拒绝它们并提示使用 `multi-builtin` 入口。
 
-Paper 有独立的首跑入口：
+Paper 有独立的首跑入口（当前源码 / 后续版本）：
 
 ```bash
 qx-cli quickstart ./paper-demo --profile paper
 ```
 
-它会在新目录生成 `paper` 运行配置，完成静态检查、Scheduler → Strategy → Paper Execution → Ledger 主链路和状态检查。成交来自本地合成 L1 报价，
+该入口是在 v0.4.2 tag 后加入的；从当前源码构建的 CLI 会在新目录生成 `paper` 运行配置，完成静态检查、Scheduler → Strategy → Paper Execution → Ledger 主链路和状态检查。成交来自本地合成 L1 报价，
 不会联网、读取交易凭据或发送实盘订单；它证明的是本机 Paper 管道可执行，不代表真实交易所撮合或收益。该流程保护已有持久账本，不支持 `--force`；
 每次新的首跑请使用新的项目目录。Paper 与回测 quickstart 分开运行，避免把合成 Paper 成交混进历史回测结果。
 
@@ -168,9 +169,9 @@ qianxing quickstart ./demo-formats --format html,xlsx,json --report-output repor
 可改用新目录，或继续按下方 `project init` / `project run` / `project report` 分步操作。`--cli` 可显式指定报告渲染器，
 默认优先使用 wheel 内的 `qx-cli`，再查找 PATH。
 
-#### 本地 Paper 生命周期
+#### 本地 Paper 生命周期（当前源码 / 后续版本）
 
-安装包含 Paper quickstart 的 wheel 后，Python 入口复用 wheel 内匹配版本的 Rust CLI：
+`--profile paper` 一键首跑尚未包含在 PyPI `qianxing==0.4.2` 中。使用当前源码构建并安装 wheel 后，Python 入口复用 wheel 内匹配版本的 Rust CLI：
 
 ```bash
 qianxing quickstart ./paper-demo --profile paper
