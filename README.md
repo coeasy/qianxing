@@ -104,6 +104,8 @@ python -m pip install "qianxing[ccxt]==0.4.2"
 qianxing quickstart ./qianxing-okx --profile ccxt --exchange okx --days 30 --timeframe 1h
 ```
 
+当前开发分支另行实现 Binance 现货匿名公共行情入口：`--market-type spot` 默认使用 `BTC/USDT.BINANCE`，不会读取账户密钥、调用私有 API 或提交订单。已发布的 v0.4.1 和现存 v0.4.2 tag 均不含该参数；须等待后续版本发布后才能按包安装使用。
+
 v0.4.2 候选的 Python wheel → 真实公共行情 → 回测 → HTML 报告链路已通过 [CI #850（30/30）](https://github.com/coeasy/qianxing/actions/runs/45466193593) 和 [OKX/Bitget 公共行情验收 #140](https://github.com/coeasy/qianxing/actions/runs/45466194122)：两家均获取 180 天 15 分钟 K 线（各 17,280 根、零缺失间隔），生成 HTML/SVG 报告；无拒单、无账户凭据、无订单提交。完整参数、Python 策略与分步数据工作流见[首跑指南](docs/first-run.md)。
 
 Rust 应用当前可从 crates.io 使用已发布的 `qx-sdk = "0.4.1"`，其 14 包依赖闭包已通过逐包 checksum 与 Ubuntu、Windows、macOS 独立消费者验收。v0.4.2 候选保持同一 SDK facade，并将在发布后提供新版本；当前 crates.io 状态见 [qx-sdk](https://crates.io/crates/qx-sdk)。独立快速入门仍可直接从 registry 构建运行，源码 Git 消费路径另由独立脚本验收。

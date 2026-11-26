@@ -321,7 +321,15 @@ def _parser() -> argparse.ArgumentParser:
         choices=("okx", "binance", "bitget"),
         help="public CCXT market source (ccxt profile only; default: okx)",
     )
-    quickstart.add_argument("--instrument", help="settled perpetual symbol, e.g. BTC/USDT:USDT.OKX")
+    quickstart.add_argument(
+        "--market-type",
+        choices=("swap", "spot"),
+        help="CCXT product type (default: swap; Binance public Spot is also supported)",
+    )
+    quickstart.add_argument(
+        "--instrument",
+        help="CCXT symbol (swap: BTC/USDT:USDT.OKX; Binance spot: BTC/USDT.BINANCE)",
+    )
     quickstart.add_argument("--days", type=int, help="public candle history (1..365; default: 30)")
     quickstart.add_argument("--timeframe", help="candle interval (default: 1h)")
     quickstart.add_argument("--as-of-ms", type=int, help="exclusive UTC cutoff in Unix milliseconds (ccxt only)")
@@ -789,6 +797,7 @@ def _run_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any] | Non
         value is not None
         for value in (
             args.exchange,
+            args.market_type,
             args.instrument,
             args.days,
             args.timeframe,
@@ -851,6 +860,11 @@ def _run_ccxt_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any] 
     if formats != "html":
         raise ValueError("ccxt profile 目前生成 HTML 报告；请使用 --format html")
 
+    exchange = args.exchange or "okx"
+    market_type = args.market_type or "swap"
+    if market_type == "spot" and exchange != "binance":
+        raise ValueError("当前 spot quickstart 仅支持 Binance 公共现货行情")
+
     # Fail before creating a project or opening a network connection when the optional
     # exchange dependency is absent or differs from the version covered by request-shape checks.
     from qianxing_ccxt import CcxtExchangeClient
@@ -864,10 +878,14 @@ def _run_ccxt_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any] 
     if not executable:
         raise ValueError("匹配当前 Python wheel 的 qx-cli 不可用；请重新安装 qianxing wheel 或传入 --cli PATH")
 
-    exchange = args.exchange or "okx"
     days = args.days if args.days is not None else 30
     timeframe = args.timeframe or "1h"
-    instrument = args.instrument or f"BTC/USDT:USDT.{exchange.upper()}"
+    default_instrument = (
+        f"BTC/USDT.{exchange.upper()}"
+        if market_type == "spot"
+        else f"BTC/USDT:USDT.{exchange.upper()}"
+    )
+    instrument = args.instrument or default_instrument
     project = Path(args.directory).expanduser().resolve(strict=False)
     command = [
         executable,
@@ -877,6 +895,8 @@ def _run_ccxt_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any] 
         "ccxt",
         "--exchange",
         exchange,
+        "--market-type",
+        market_type,
         "--instrument",
         instrument,
         "--days",
@@ -963,6 +983,7 @@ def _run_ccxt_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any] 
         "project_root": str(project),
         "data": {
             "source": f"ccxt:{exchange}",
+            "market_type": market_type,
             "is_sample": False,
             "access": "public_read_only",
             "credentials_loaded": False,
@@ -999,6 +1020,7 @@ def _run_paper_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any]
         "--format": args.format,
         "--report-output": args.report_output,
         "--exchange": args.exchange,
+        "--market-type": args.market_type,
         "--instrument": args.instrument,
         "--days": args.days,
         "--timeframe": args.timeframe,

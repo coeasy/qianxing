@@ -40,9 +40,20 @@ pub(super) fn dispatch_quickstart(
     as_of_ms: Option<u64>,
     instrument: Option<String>,
     exchange: Option<String>,
+    market_type: Option<crate::cli_args::QuickstartMarketType>,
 ) {
     quickstart::run(
-        project, html, force, profile, strategy, days, timeframe, as_of_ms, instrument, exchange,
+        project,
+        html,
+        force,
+        profile,
+        strategy,
+        days,
+        timeframe,
+        as_of_ms,
+        instrument,
+        exchange,
+        market_type,
     );
 }
 

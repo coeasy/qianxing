@@ -604,7 +604,7 @@ class ProjectRunTests(unittest.TestCase):
             self.assertEqual(
                 cli.main([
                     "quickstart", str(self.root / "crypto"), "--profile", "ccxt",
-                    "--exchange", "bitget", "--days", "52", "--timeframe", "15m",
+                    "--exchange", "bitget", "--market-type", "swap", "--days", "52", "--timeframe", "15m",
                     "--as-of-ms", "1700001000000",
                 ]),
                 0,
@@ -613,6 +613,7 @@ class ProjectRunTests(unittest.TestCase):
         command = run.call_args.args[0]
         self.assertEqual(command[:2], ["qx-cli", "quickstart"])
         self.assertEqual(command[command.index("--exchange") + 1], "bitget")
+        self.assertEqual(command[command.index("--market-type") + 1], "swap")
         self.assertEqual(command[command.index("--instrument") + 1], "BTC/USDT:USDT.BITGET")
         self.assertEqual(command[command.index("--days") + 1], "52")
         self.assertEqual(command[command.index("--as-of-ms") + 1], "1700001000000")
@@ -622,6 +623,7 @@ class ProjectRunTests(unittest.TestCase):
         document = json.loads(output.getvalue())
         self.assertEqual(document["profile"], "ccxt")
         self.assertEqual(document["data"]["source"], "ccxt:bitget")
+        self.assertEqual(document["data"]["market_type"], "swap")
         self.assertFalse(document["data"]["is_sample"])
         self.assertFalse(document["data"]["orders_submitted"])
         self.assertEqual(document["report_html_path"], str(report_file))
@@ -631,6 +633,67 @@ class ProjectRunTests(unittest.TestCase):
         self.assertTrue(document["run_evidence"]["input_identity_recomputed"])
         self.assertFalse(document["run_evidence"]["result_recomputed"])
         self.assertEqual(document["run_evidence"]["run_id"], "test-run")
+
+    def test_binance_spot_quickstart_selects_spot_symbol_and_forwards_product_type(self):
+        from qianxing_ccxt import CcxtExchangeClient
+
+        output = io.StringIO()
+        renderer = {"path": "qx-cli", "origin": "bundled", "status": "ready"}
+        report_file = self.root / "spot-report.html"
+        report_file.write_text("<html>spot report</html>", encoding="utf-8")
+        evidence_file = self.root / "spot.evidence.json"
+        evidence_file.write_text("{}", encoding="utf-8")
+        process = types.SimpleNamespace(
+            returncode=0,
+            stdout=(
+                f"[Report] html={report_file}\n"
+                f"[Report] evidence={evidence_file}\n"
+                '{"ok":true,"operation":"run-evidence-input-and-artifact-verified",'
+                '"input_identity_recomputed":true,"result_recomputed":false,'
+                '"run_id":"spot-run","result_hash":"spot123"}\n'
+            ),
+            stderr="",
+        )
+        with patch.object(CcxtExchangeClient, "_load_ccxt"), \
+             patch("qianxing.report_renderer.require_report_renderer", return_value=renderer), \
+             patch("subprocess.run", return_value=process) as run, \
+             contextlib.redirect_stdout(output):
+            self.assertEqual(
+                cli.main([
+                    "quickstart", str(self.root / "binance-spot"), "--profile", "ccxt",
+                    "--exchange", "binance", "--market-type", "spot",
+                ]),
+                0,
+            )
+
+        command = run.call_args.args[0]
+        self.assertEqual(command[command.index("--exchange") + 1], "binance")
+        self.assertEqual(command[command.index("--market-type") + 1], "spot")
+        self.assertEqual(command[command.index("--instrument") + 1], "BTC/USDT.BINANCE")
+        document = json.loads(output.getvalue())
+        self.assertEqual(document["data"]["market_type"], "spot")
+        self.assertFalse(document["data"]["credentials_loaded"])
+        self.assertFalse(document["data"]["orders_submitted"])
+
+    def test_spot_quickstart_rejects_other_exchanges_before_network_or_project_write(self):
+        from qianxing_ccxt import CcxtExchangeClient
+
+        with patch.object(CcxtExchangeClient, "_load_ccxt") as load_ccxt, \
+             patch("qianxing.report_renderer.require_report_renderer") as renderer, \
+             patch("subprocess.run") as process, \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                cli.main([
+                    "quickstart", str(self.root / "not-binance"), "--profile", "ccxt",
+                    "--exchange", "okx", "--market-type", "spot",
+                ]),
+                2,
+            )
+        load_ccxt.assert_not_called()
+        renderer.assert_not_called()
+        process.assert_not_called()
+        self.assertFalse((self.root / "not-binance").exists())
+        self.assertIn("仅支持 Binance", self.output.getvalue())
 
     def test_paper_quickstart_delegates_to_bundled_cli_and_reports_local_only_execution(self):
         output = io.StringIO()
@@ -776,7 +839,7 @@ class ProjectRunTests(unittest.TestCase):
         with patch.object(cli, "init_strategy_project") as initialize, \
              contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(
-                cli.main(["quickstart", str(self.root / "sample"), "--exchange", "okx"]),
+                cli.main(["quickstart", str(self.root / "sample"), "--market-type", "spot"]),
                 2,
             )
         initialize.assert_not_called()
