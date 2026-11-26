@@ -5,7 +5,7 @@ use qx_core::{
 use qx_xingban::{
     BookLevel, DataTier, DepthFrame, OrderBookBacktestConfig, OrderBookBacktestEngine,
     OrderBookExecutionModel, OrderBookPortfolioBacktestEngine, OrderBookPortfolioMarket,
-    OrderBookSnapshot, OrderBookStrategy,
+    OrderBookSnapshot, OrderBookStrategy, OrderBookStrategySlot, PortfolioOrderBookStrategy,
 };
 use qx_zhenlu::RiskGate;
 
@@ -307,6 +307,114 @@ fn multi_market_orderbook_shares_cash_oms_and_replay() {
         }),
         Some(true)
     );
+    report.verify().unwrap();
+}
+
+#[test]
+fn multi_market_orderbook_strategy_budget_rejection_keeps_order_details() {
+    let btc = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let eth = InstrumentId::parse("ETHUSDT.BYBIT").unwrap();
+    let spec = |instrument: InstrumentId, base: &str| TradingInstrumentSpec {
+        instrument,
+        product: TradingProduct::Spot,
+        base_currency: base.into(),
+        quote_currency: "USDT".into(),
+        settlement_currency: "USDT".into(),
+        contract_size: SCALE,
+        linear: false,
+        inverse: false,
+        price_tick: 1,
+        qty_step: 1,
+        min_qty: 1,
+        min_notional_raw: 0,
+        max_leverage: 1,
+        maintenance_margin_bps: 0,
+        valid_from: 1,
+        valid_to: None,
+        exact_rules: None,
+    };
+    let books = |instrument: &InstrumentId| {
+        [1, 2]
+            .map(|ts| OrderBookSnapshot {
+                instrument: instrument.clone(),
+                ts,
+                sequence: ts,
+                bids: vec![BookLevel {
+                    price_exact: None,
+                    qty_exact: None,
+                    price: Price::from_i64(99),
+                    qty: Quantity::from_i64(10),
+                }],
+                asks: vec![BookLevel {
+                    price_exact: None,
+                    qty_exact: None,
+                    price: Price::from_i64(100),
+                    qty: Quantity::from_i64(10),
+                }],
+            })
+            .to_vec()
+    };
+    let btc_books = books(&btc);
+    let eth_books = books(&eth);
+    let mut btc_strategy = PortfolioOrderBookStrategy::new(
+        btc.clone(),
+        vec![OrderBookStrategySlot::new(
+            0,
+            "alpha",
+            50 * SCALE,
+            BuyOnce { emitted: false },
+        )],
+    )
+    .unwrap();
+    let mut eth_strategy = NoopStrategy;
+    let markets = vec![
+        OrderBookPortfolioMarket {
+            instrument_spec: spec(btc.clone(), "BTC"),
+            data_tier: DataTier::L2L3,
+            priority: 0,
+            snapshots: &btc_books,
+            execution_model: OrderBookExecutionModel::new(0).unwrap(),
+            strategy: &mut btc_strategy,
+        },
+        OrderBookPortfolioMarket {
+            instrument_spec: spec(eth.clone(), "ETH"),
+            data_tier: DataTier::L2L3,
+            priority: 1,
+            snapshots: &eth_books,
+            execution_model: OrderBookExecutionModel::new(0).unwrap(),
+            strategy: &mut eth_strategy,
+        },
+    ];
+    let report = OrderBookPortfolioBacktestEngine::new(
+        "main",
+        "USDT",
+        Money::from_i64(1_000),
+        RiskGate::conservative_default(),
+        markets,
+    )
+    .unwrap()
+    .run()
+    .unwrap();
+
+    assert!(report.fills.is_empty());
+    let rejection = report
+        .event_log
+        .events()
+        .iter()
+        .find_map(|event| match &event.kind {
+            qx_core::EventKind::Rejected {
+                client_order_id,
+                reason,
+                order_snapshot: Some(order),
+                ..
+            } if reason.contains("订单簿策略资金额度不足") => {
+                Some((*client_order_id, reason, order))
+            }
+            _ => None,
+        });
+    assert!(rejection.is_some_and(|(client_order_id, reason, order)| {
+        client_order_id == order.client_id && order.instrument == btc && reason.contains("budget=")
+    }));
     report.verify().unwrap();
 }
 
