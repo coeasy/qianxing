@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from run_rust_bench import (
     CRITERION_REQUIRED,
+    criterion_profile_for_changed_files,
     criterion_estimate_path,
     criterion_plan,
     steady_state_tick_curve,
@@ -36,6 +37,42 @@ class CriterionEstimatePathTests(unittest.TestCase):
 
 
 class CriterionPlanTests(unittest.TestCase):
+    def test_single_package_change_only_runs_its_own_benchmarks(self) -> None:
+        cases = (
+            ("qx-runtime", "pr-runtime", "qx_runtime_"),
+            ("qx-xingban", "pr-xingban", "portfolio_bar_timeline_aligned_64k_bars/"),
+            ("qx-zhenlu", "pr-zhenlu", "qx_zhenlu_crypto_paper_lifecycle_v2/"),
+        )
+        for package, profile, benchmark_prefix in cases:
+            with self.subTest(package=package):
+                selected = criterion_profile_for_changed_files(
+                    [f"crates/{package}/src/lib.rs", "benchmarks/run_rust_bench.py"]
+                )
+                self.assertEqual(selected, profile)
+                required, commands = criterion_plan("cargo", selected)
+                self.assertTrue(required)
+                self.assertTrue(all(name.startswith(benchmark_prefix) for name in required))
+                self.assertEqual({command[3] for command in commands}, {package})
+
+    def test_shared_inputs_or_core_changes_include_the_shared_dependency_suite(self) -> None:
+        for changed in (
+            ["Cargo.lock", "crates/qx-runtime/src/pipeline.rs"],
+            ["crates/qx-core/src/event_log.rs"],
+        ):
+            with self.subTest(changed=changed):
+                self.assertEqual(criterion_profile_for_changed_files(changed), "pr-core")
+                required, commands = criterion_plan("cargo", "pr-core")
+                self.assertEqual(len(required), 74)
+                self.assertEqual(len([command for command in commands if command[3] == "qx-core"]), 1)
+
+    def test_multiple_benchmarked_package_changes_use_the_representative_profile(self) -> None:
+        self.assertEqual(
+            criterion_profile_for_changed_files(
+                ["crates/qx-runtime/src/pipeline.rs", "crates/qx-xingban/src/backtest.rs"]
+            ),
+            "pr",
+        )
+
     def test_pr_profile_covers_registered_performance_regression_families(self) -> None:
         required, commands = criterion_plan("cargo", "pr")
         expected_regressions = {
