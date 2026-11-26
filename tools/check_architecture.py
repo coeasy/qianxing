@@ -24882,11 +24882,22 @@ def qx_app_check() -> None:
     grouped_symbols = {
         symbol.strip()
         for module, group in grouped_reexports
-        if module in {"run_multi_builtin_backtest", "verify_depth_run", "verify_run"}
+        if module in {
+            "preflight_backtest_v1",
+            "run_multi_builtin_backtest",
+            "verify_depth_run",
+            "verify_run",
+        }
         for symbol in group.split(",")
         if symbol.strip()
     }
     case_support_exports = {
+        "BACKTEST_PREFLIGHT_SCHEMA_VERSION_V1",
+        "BacktestPreflightCheckStatusV1",
+        "BacktestPreflightCheckV1",
+        "BacktestPreflightDataV1",
+        "BacktestPreflightResultV1",
+        "preflight_backtest_v1_with_frame",
         "run_multi_builtin_backtest_with_inputs",
         "validate_multi_builtin_frames",
         "MultiBuiltinBacktestInputs",
@@ -24906,8 +24917,14 @@ def qx_app_check() -> None:
         case_support_exports <= grouped_symbols
         and "pub fn run_multi_builtin_backtest_with_inputs(" in support_source
         and "pub struct MultiBuiltinBacktestInputs" in support_source,
-        "多策略入口的 typed inputs 是同一用例的支持 API，不登记成平行用例",
+        "预检报告/已校验帧与多策略 typed inputs 都是用例支持 API，不登记成平行用例",
         f"群组导出 {sorted(grouped_symbols)}",
+    )
+    preflight_support = ROOT / APP_CASES_DIR / "preflight_backtest_v1.rs"
+    check(
+        "pub fn preflight_backtest_v1_with_frame(" in preflight_support.read_text(encoding="utf-8"),
+        "已校验 BarFrame 预检入口与文件预检共用同一用例实现",
+        "preflight_backtest_v1_with_frame",
     )
     check(
         {"verify_depth_run_with_reader", "verify_run_with_reader"} <= grouped_symbols

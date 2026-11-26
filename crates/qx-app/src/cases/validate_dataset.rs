@@ -89,7 +89,7 @@ fn inspection_from_validated_frame(
     let rows = frame.len();
     let content_fingerprint = format!(
         "barframe:{}",
-        qx_data::fingerprint_bar_frame(&frame).map_err(|error| {
+        qx_data::fingerprint_bar_frame(frame).map_err(|error| {
             AppError::new(
                 AppErrorCategory::InvalidInput,
                 format!("BarFrame 内容指纹计算失败：{error}"),
