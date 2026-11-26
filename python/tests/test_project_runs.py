@@ -535,6 +535,9 @@ class ProjectRunTests(unittest.TestCase):
             self.assertEqual(render.call_args.args[1], newer_id)
             self.assertEqual(cli.main(["project", "report", str(self.root), older_id]), 0)
             self.assertEqual(render.call_args.args[1], older_id)
+            self.assertFalse(render.call_args.kwargs["evidence"])
+            self.assertEqual(cli.main(["project", "report", str(self.root), older_id, "--evidence"]), 0)
+            self.assertTrue(render.call_args.kwargs["evidence"])
 
     def test_quickstart_composes_demo_run_verified_report_and_marks_sample_data(self):
         created = {
@@ -545,7 +548,11 @@ class ProjectRunTests(unittest.TestCase):
                 "instrument": "SYNTHETIC.SAMPLE",
             },
         }
-        report = {"status": "succeeded", "report_paths": {"html": str(self.root / "report.html")}}
+        report = {
+            "status": "succeeded",
+            "report_paths": {"html": str(self.root / "report.html")},
+            "run_evidence": {"bundle_path": str(self.root / "run.evidence.json"), "integrity_verified": True},
+        }
         with patch.object(cli, "init_strategy_project", return_value=created) as initialize, \
              patch.object(cli, "_run_strategy_project", return_value=(0, {"fills": 1}, {"status": "ready"})) as run, \
              patch.object(cli, "load_strategy_project", return_value=(self.root, self.manifest)), \
@@ -558,7 +565,7 @@ class ProjectRunTests(unittest.TestCase):
         initialize.assert_called_once_with(str(self.root), demo=True, rows=80)
         run.assert_called_once_with(str(self.root))
         render.assert_called_once_with(
-            self.root, "run-verified", executable=None, output=None, formats="html,xlsx"
+            self.root, "run-verified", executable=None, output=None, formats="html,xlsx", evidence=True
         )
         result = json.loads(output.getvalue())
         self.assertEqual(result["status"], "succeeded")
@@ -567,6 +574,7 @@ class ProjectRunTests(unittest.TestCase):
         self.assertEqual(result["preflight"]["status"], "ready")
         self.assertTrue(result["artifacts_verified"])
         self.assertEqual(result["report"], report)
+        self.assertEqual(result["run_evidence"], report["run_evidence"])
 
     def test_quickstart_does_not_render_when_project_run_fails(self):
         with patch.object(cli, "init_strategy_project", return_value={"data": {"is_sample": True}}), \
@@ -896,6 +904,156 @@ class ProjectRunTests(unittest.TestCase):
         self.assertEqual(result["report_sha256"], hashlib.sha256(target.read_bytes()).hexdigest())
         self.assertTrue(Path(result["log_path"]).is_file())
         self.assertEqual(runs.project_run_status(self.root, record["project_run_id"])["status"], "succeeded")
+
+    def test_project_report_creates_and_verifies_evidence_bundle(self):
+        summary = self.root / "quickstart.summary.json"
+        summary.write_text("{}", encoding="utf-8")
+
+        def execute(root, manifest):
+            runs.record_project_result({"artifacts": {"summary": str(summary)}})
+            return 0
+
+        runs.run_project(self.root, execute)
+        record = runs.project_runs(self.root)[0]
+        run_id = record["project_run_id"]
+        report_path = runs._directory(self.root, run_id) / "report.html"
+        json_path = runs._directory(self.root, run_id) / "report.json"
+        evidence_path = summary.with_name("quickstart.evidence.json")
+        verification = {
+            "ok": True,
+            "operation": "run-evidence-input-and-artifact-verified",
+            "input_identity_recomputed": True,
+            "result_recomputed": False,
+            "run_id": "engine-run-id",
+            "result_hash": "cafe",
+        }
+
+        def render(command, **options):
+            self.assertEqual(options["cwd"], self.root)
+            if command[1] == "report":
+                self.assertEqual(command[-1], "--evidence")
+                report_path.write_text("<html>report</html>", encoding="utf-8")
+                evidence_path.write_text("{}", encoding="utf-8")
+                return types.SimpleNamespace(
+                    returncode=0,
+                    stdout=json.dumps({
+                        "schema_version": 1,
+                        "generated_artifacts": {"html": str(report_path)},
+                        "run_evidence": {"path": str(evidence_path)},
+                    }),
+                    stderr="",
+                )
+            self.assertEqual(command[1:3], ["evidence", "verify-run"])
+            self.assertEqual(Path(command[3]).resolve(), evidence_path.resolve())
+            return types.SimpleNamespace(returncode=0, stdout=json.dumps(verification), stderr="")
+
+        with self.renderer_patch(), patch("subprocess.run", side_effect=render):
+            result = runs.generate_project_report(self.root, run_id, formats="html,json", evidence=True)
+
+        self.assertEqual(result["status"], "succeeded")
+        self.assertEqual(result["report_artifacts"]["evidence"]["sha256"],
+                         hashlib.sha256(evidence_path.read_bytes()).hexdigest())
+        self.assertEqual(Path(result["run_evidence"]["bundle_path"]).resolve(), evidence_path.resolve())
+        self.assertTrue(result["run_evidence"]["integrity_verified"])
+        self.assertTrue(result["run_evidence"]["input_identity_recomputed"])
+        self.assertFalse(result["run_evidence"]["result_recomputed"])
+        self.assertEqual(result["run_evidence"]["run_id"], "engine-run-id")
+        self.assertTrue(json_path.is_file())
+        status = json.loads((runs._directory(self.root, run_id) / "report-status.json").read_text())
+        self.assertTrue(status["evidence_requested"])
+        self.assertTrue(status["report_artifacts"]["evidence"]["present"])
+
+    def test_project_report_refuses_report_json_that_aliases_requested_evidence(self):
+        summary = self.root / "quickstart.summary.json"
+        summary.write_text("{}", encoding="utf-8")
+
+        def execute(root, manifest):
+            runs.record_project_result({"artifacts": {"summary": str(summary)}})
+            return 0
+
+        runs.run_project(self.root, execute)
+        run_id = runs.project_runs(self.root)[0]["project_run_id"]
+        evidence_path = summary.with_name("quickstart.evidence.json")
+        colliding_report_output = summary.with_name("quickstart.evidence.evidence.json")
+        with patch("subprocess.run") as process:
+            with self.assertRaisesRegex(ValueError, "aliases the EvidenceBundle path"):
+                runs.generate_project_report(
+                    self.root, run_id, output=str(colliding_report_output), formats="json", evidence=True
+                )
+        process.assert_not_called()
+
+    def test_project_report_does_not_mark_a_rejected_evidence_bundle_verified(self):
+        summary = self.root / "quickstart.summary.json"
+        summary.write_text("{}", encoding="utf-8")
+
+        def execute(root, manifest):
+            runs.record_project_result({"artifacts": {"summary": str(summary)}})
+            return 0
+
+        runs.run_project(self.root, execute)
+        run_id = runs.project_runs(self.root)[0]["project_run_id"]
+        report_path = runs._directory(self.root, run_id) / "report.html"
+        evidence_path = summary.with_name("quickstart.evidence.json")
+        rejected = {
+            "ok": False,
+            "operation": "run-evidence-input-and-artifact-verified",
+            "input_identity_recomputed": False,
+        }
+
+        def render(command, **_options):
+            if command[1] == "report":
+                report_path.write_text("<html>report</html>", encoding="utf-8")
+                evidence_path.write_text("{}", encoding="utf-8")
+                return types.SimpleNamespace(
+                    returncode=0, stdout=f"[Report] evidence={evidence_path}\n", stderr=""
+                )
+            return types.SimpleNamespace(returncode=0, stdout=json.dumps(rejected), stderr="")
+
+        with self.renderer_patch(), patch("subprocess.run", side_effect=render):
+            with self.assertRaisesRegex(ValueError, "Rust report generation failed"):
+                runs.generate_project_report(self.root, run_id, evidence=True)
+
+        status = json.loads((runs._directory(self.root, run_id) / "report-status.json").read_text())
+        self.assertEqual(status["status"], "failed")
+        self.assertEqual(status["reason"], "evidence_verification_failed")
+        self.assertFalse(status["run_evidence"]["integrity_verified"])
+
+    def test_project_report_detects_evidence_bundle_mutation_during_verification(self):
+        summary = self.root / "quickstart.summary.json"
+        summary.write_text("{}", encoding="utf-8")
+
+        def execute(root, manifest):
+            runs.record_project_result({"artifacts": {"summary": str(summary)}})
+            return 0
+
+        runs.run_project(self.root, execute)
+        run_id = runs.project_runs(self.root)[0]["project_run_id"]
+        report_path = runs._directory(self.root, run_id) / "report.html"
+        evidence_path = summary.with_name("quickstart.evidence.json")
+        verified = {
+            "ok": True,
+            "operation": "run-evidence-input-and-artifact-verified",
+            "input_identity_recomputed": True,
+            "result_recomputed": False,
+        }
+
+        def render(command, **_options):
+            if command[1] == "report":
+                report_path.write_text("<html>report</html>", encoding="utf-8")
+                evidence_path.write_text("before", encoding="utf-8")
+                return types.SimpleNamespace(
+                    returncode=0, stdout=f"[Report] evidence={evidence_path}\n", stderr=""
+                )
+            evidence_path.write_text("after", encoding="utf-8")
+            return types.SimpleNamespace(returncode=0, stdout=json.dumps(verified), stderr="")
+
+        with self.renderer_patch(), patch("subprocess.run", side_effect=render):
+            with self.assertRaisesRegex(ValueError, "Rust report generation failed"):
+                runs.generate_project_report(self.root, run_id, evidence=True)
+
+        status = json.loads((runs._directory(self.root, run_id) / "report-status.json").read_text())
+        self.assertEqual(status["reason"], "evidence_bundle_changed_during_verification")
+        self.assertFalse(status["run_evidence"]["integrity_verified"])
 
     def test_project_report_fails_if_frozen_strategy_bundle_changes_during_render(self):
         record, _summary = self.report_run()

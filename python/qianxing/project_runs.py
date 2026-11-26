@@ -2349,9 +2349,30 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _run_evidence_path(summary_path: Path) -> Path:
+    name = summary_path.name
+    stem = name.removesuffix(".summary.json")
+    if stem == name:
+        raise ValueError(f"project summary name must end in .summary.json to create EvidenceBundle: {summary_path}")
+    return summary_path.with_name(f"{stem}.evidence.json")
+
+
+def _machine_json_result(output: str, operation: str) -> dict[str, Any] | None:
+    for line in output.splitlines():
+        if not line.startswith("{"):
+            continue
+        try:
+            candidate = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict) and candidate.get("operation") == operation:
+            return candidate
+    return None
+
+
 def generate_project_report(
     root: Path, run_id: str, *, executable: str | None = None, output: str | None = None,
-    formats: Any = ("html",),
+    formats: Any = ("html",), evidence: bool = False,
 ) -> dict:
     """Render with an explicit CLI, or the wheel's CLI before considering PATH."""
     from .report_renderer import ReportRendererError, require_report_renderer
@@ -2386,11 +2407,20 @@ def generate_project_report(
     summary = status["artifacts"].get("summary")
     if not summary:
         raise ValueError("this run has no indexed summary; use its outcome-specific report entry point")
+    summary_path = Path(summary["path"]).expanduser()
+    if not summary_path.is_absolute():
+        summary_path = root / summary_path
+    summary_path = summary_path.resolve(strict=False)
     directory = _directory(root, run_id)
     targets = _report_output_paths(root, directory, output, selected)
     if len(set(targets.values())) != len(targets):
         raise ValueError("requested report formats resolve to the same output path")
     protected = _project_report_protected_paths(root.resolve(), directory.resolve(), status)
+    evidence_path = _run_evidence_path(summary_path).resolve(strict=False) if evidence else None
+    if evidence_path is not None:
+        if evidence_path in targets.values():
+            raise ValueError("requested report output aliases the EvidenceBundle path")
+        protected.add(evidence_path)
     for path in targets.values():
         if path in protected:
             raise ValueError("report output aliases a project input or run evidence file")
@@ -2403,6 +2433,7 @@ def generate_project_report(
         "project_dependency_lock_sha256": dependency_lock_sha256,
         "project_dependency_wheelhouse_sha256": dependency_wheelhouse_sha256,
         "runtime_import_files_sha256": runtime_import_files_sha256,
+        "evidence_requested": evidence,
         "generated_at": _now(),
     }
     try:
@@ -2428,6 +2459,8 @@ def generate_project_report(
         command += ["--xlsx", str(targets["xlsx"])]
     if "json" in targets:
         command += ["--json"]
+    if evidence:
+        command += ["--evidence"]
     try:
         process = subprocess.run(
             command, cwd=root, capture_output=True, encoding="utf-8", errors="replace", timeout=300,
@@ -2452,6 +2485,72 @@ def generate_project_report(
     integrity_after = verify_project_artifacts(root, run_id)
     bundle_after = integrity_after["artifacts"].get("strategy_bundle")
     failure_reason: str | None = None
+    evidence_verification: dict[str, Any] | None = None
+    verified_evidence_sha256: str | None = None
+    if evidence:
+        reported_path = next(
+            (line.removeprefix("[Report] evidence=") for line in process.stdout.splitlines()
+             if line.startswith("[Report] evidence=")),
+            None,
+        )
+        if reported_path is None and "json" in targets:
+            try:
+                projection = json.loads(process.stdout or "null")
+            except json.JSONDecodeError:
+                projection = None
+            run_evidence = projection.get("run_evidence") if isinstance(projection, dict) else None
+            if isinstance(run_evidence, dict) and isinstance(run_evidence.get("path"), str):
+                reported_path = run_evidence["path"]
+        if reported_path is None:
+            failure_reason = "evidence_path_missing"
+        else:
+            reported_evidence_path = Path(reported_path).expanduser()
+            if not reported_evidence_path.is_absolute():
+                reported_evidence_path = root / reported_evidence_path
+            reported_evidence_path = reported_evidence_path.resolve(strict=False)
+            if reported_evidence_path != evidence_path:
+                failure_reason = "evidence_path_mismatch"
+            elif not reported_evidence_path.is_file() or reported_evidence_path.stat().st_size == 0:
+                failure_reason = "evidence_bundle_missing"
+            elif process.returncode == 0:
+                try:
+                    digest_before_verify = _file_sha256(reported_evidence_path)
+                except OSError:
+                    failure_reason = "evidence_bundle_unreadable"
+                else:
+                    try:
+                        verification_process = subprocess.run(
+                            [renderer["path"], "evidence", "verify-run", str(reported_evidence_path)],
+                            cwd=root, capture_output=True, encoding="utf-8", errors="replace", timeout=300,
+                        )
+                    except subprocess.TimeoutExpired:
+                        failure_reason = "evidence_verification_timeout"
+                    except OSError:
+                        failure_reason = "evidence_verification_unavailable"
+                    else:
+                        candidate_verification = _machine_json_result(
+                            verification_process.stdout or "", "run-evidence-input-and-artifact-verified"
+                        )
+                        if (
+                            verification_process.returncode != 0
+                            or candidate_verification is None
+                            or candidate_verification.get("ok") is not True
+                            or candidate_verification.get("input_identity_recomputed") is not True
+                        ):
+                            failure_reason = "evidence_verification_failed"
+                        else:
+                            try:
+                                verified_evidence_sha256 = _file_sha256(reported_evidence_path)
+                            except OSError:
+                                failure_reason = "evidence_bundle_unreadable"
+                            if (
+                                verified_evidence_sha256 is not None
+                                and verified_evidence_sha256 != digest_before_verify
+                            ):
+                                verified_evidence_sha256 = None
+                                failure_reason = "evidence_bundle_changed_during_verification"
+                            elif verified_evidence_sha256 is not None:
+                                evidence_verification = candidate_verification
     if "json" in targets:
         try:
             projection = json.loads((process.stdout or "").strip() or "null")
@@ -2487,11 +2586,33 @@ def generate_project_report(
         if not entry["present"] and failure_reason is None:
             failure_reason = f"report_{name}_missing"
         report_artifacts[name] = entry
+    if evidence_path is not None:
+        entry = {"path": str(evidence_path), "present": False, "sha256": None, "bytes": None}
+        try:
+            if evidence_path.is_file() and evidence_path.stat().st_size > 0:
+                entry["bytes"] = evidence_path.stat().st_size
+                entry["sha256"] = _file_sha256(evidence_path)
+                entry["present"] = True
+        except OSError:
+            failure_reason = failure_reason or "evidence_bundle_unreadable"
+        if not entry["present"] and failure_reason is None:
+            failure_reason = "evidence_bundle_missing"
+        evidence_integrity_verified = (
+            evidence_verification is not None
+            and verified_evidence_sha256 is not None
+            and entry["sha256"] == verified_evidence_sha256
+        )
+        if evidence_verification is not None and not evidence_integrity_verified:
+            failure_reason = failure_reason or "evidence_bundle_changed_after_verification"
+        report_artifacts["evidence"] = entry
+    else:
+        evidence_integrity_verified = False
     succeeded = (
         process.returncode == 0
         and failure_reason is None
         and integrity_after["verified"]
         and bundle_after == strategy_bundle_sha256
+        and (not evidence or evidence_integrity_verified)
     )
     result = {
         **identity,
@@ -2503,13 +2624,28 @@ def generate_project_report(
         "report_sha256": report_artifacts.get("html", {}).get("sha256"),
         "log_path": str(directory / "report.log"),
     }
+    if evidence_path is not None:
+        result["run_evidence"] = {
+            "bundle_path": str(evidence_path),
+            "integrity_verified": evidence_integrity_verified,
+            "input_identity_recomputed": (
+                evidence_verification.get("input_identity_recomputed") is True
+                if evidence_verification is not None else False
+            ),
+            "result_recomputed": (
+                evidence_verification.get("result_recomputed") is True
+                if evidence_verification is not None else False
+            ),
+            "run_id": evidence_verification.get("run_id") if evidence_verification is not None else None,
+            "result_hash": evidence_verification.get("result_hash") if evidence_verification is not None else None,
+        }
     if not succeeded:
         result["reason"] = failure_reason or "report_verification_failed"
         result["error"] = project_error_envelope(
             {
                 "category": "REPORT_FAILED",
                 "message": (
-                    "Rust report generation failed or source evidence changed during rendering"
+                    "Rust report generation, EvidenceBundle verification, or source artifact verification failed"
                     if failure_reason is None else f"report output failed: {failure_reason}"
                 ),
                 "reason": result["reason"],

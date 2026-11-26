@@ -169,6 +169,8 @@ qianxing quickstart ./demo --format html,xlsx,json --report-output reports/first
 可改用新目录，或继续按下方 `project init` / `project run` / `project report` 分步操作。`--cli` 可显式指定报告渲染器，
 默认优先使用 wheel 内的 `qx-cli`，再查找 PATH。
 
+Python sample quickstart 会额外生成并离线核验 `run_evidence.bundle_path` 指向的 EvidenceBundle；校验输入身份和已登记文件摘要，不自动重跑策略。分步项目报告可用 `qianxing project report ./demo RUN_ID --evidence` 生成并核验同类证据。
+
 #### 本地 Paper 生命周期
 
 安装包含 Paper quickstart 的 wheel 后，Python 入口复用 wheel 内匹配版本的 Rust CLI：
