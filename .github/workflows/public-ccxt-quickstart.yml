@@ -189,19 +189,43 @@ jobs:
           test -n "$report"
           summary="$(find "$project" -type f -name '*.summary.json' -size +0c -print -quit)"
           test -n "$summary"
-          python - "$summary" "$ACCEPTANCE_DAYS" <<'PY'
+          python - "$summary" "$ACCEPTANCE_DAYS" "$MARKET_TYPE" <<'PY'
           import json
           import sys
           from pathlib import Path
 
           summary = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
           days = int(sys.argv[2])
+          market_type = sys.argv[3]
           expected_bars = days * 24 * 4
           assert int(summary["bars"]) == expected_bars, {
               "expected_bars": expected_bars,
               "summary": summary,
           }
-          assert int(summary["rejected_orders"]) == 0, summary.get("rejection_reasons")
+          rejected_orders = int(summary["rejected_orders"])
+          rejection_reasons = summary.get("rejection_reasons") or []
+          if isinstance(rejection_reasons, dict):
+              rejection_reasons = [rejection_reasons]
+          if market_type == "spot":
+              # Cash-only Spot can leave exchange-minimum dust after fills. Accept only
+              # a small, fully explained tail; short/oversell rejections are never valid.
+              fills = int(summary["fills"])
+              assert fills > 0, summary
+              assert rejected_orders <= max(1, fills // 20), {
+                  "fills": fills,
+                  "rejected_orders": rejected_orders,
+                  "rejection_reasons": rejection_reasons,
+              }
+              assert sum(int(item["count"]) for item in rejection_reasons) == rejected_orders, {
+                  "rejected_orders": rejected_orders,
+                  "rejection_reasons": rejection_reasons,
+              }
+              assert all(
+                  "订单名义金额低于交易所最小限制" in str(item["reason"])
+                  for item in rejection_reasons
+              ), rejection_reasons
+          else:
+              assert rejected_orders == 0, rejection_reasons
           quality = summary["dataset_quality"]["quality_report"]
           assert int(quality["missing_intervals"]) == 0, quality
           PY
