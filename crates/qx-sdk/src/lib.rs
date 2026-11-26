@@ -51,6 +51,11 @@
 //! 最小上手见 `examples/quickstart.rs`（它由 `cargo test --workspace` 真编译，
 //! 不是文档里的假想代码）；从"直接用 `qx-app`"迁到本门面见 `docs/qx-sdk-migration.md`。
 
+// Keep the published package README and docs.rs landing page on the same compiled
+// documentation path. Rust code fences in README are doctested, so copy-paste
+// integration snippets cannot silently drift from the public SDK API.
+#![doc = include_str!("../README.md")]
+
 pub mod client;
 pub mod remote;
 
