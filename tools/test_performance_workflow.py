@@ -44,6 +44,25 @@ class PerformanceWorkflowTests(unittest.TestCase):
         self.assertIn('mkdir -p "$base_dir/target"', baseline_step)
         self.assertNotIn('ln -s "$GITHUB_WORKSPACE/target" "$base_dir/target"', baseline_step)
 
+    def test_regression_gate_runs_only_when_measured_inputs_changed(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        detection = workflow.index(
+            "- name: Detect changes to measured Rust sources and workload inputs"
+        )
+        comparison = workflow.index("- name: Block registered regressions above ledger thresholds")
+        comparison_end = workflow.index("- uses: actions/upload-artifact@v4", comparison)
+        detection_step = workflow[detection:comparison]
+        comparison_step = workflow[comparison:comparison_end]
+
+        self.assertIn("benchmarks/measurement_source_changes.py", detection_step)
+        self.assertIn("steps.measured_source.outputs.changed", comparison_step)
+        self.assertIn(
+            'if [[ "${{ steps.paired_baseline.outputs.available }}" == "true" && '
+            '"${{ steps.measured_source.outputs.changed }}" == "true" ]]; then',
+            comparison_step,
+        )
+        self.assertIn("paired reports remain available in the uploaded artifact", comparison_step)
+
 
 if __name__ == "__main__":
     unittest.main()
