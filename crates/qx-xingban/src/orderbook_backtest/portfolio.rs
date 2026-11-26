@@ -1047,27 +1047,44 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                             );
                             continue;
                         }
-                        if let Some(amounts) = local_order.exact_amounts {
-                            let price = amounts
+                        let budget_check = if let Some(amounts) = local_order.exact_amounts {
+                            amounts
                                 .limit_price
                                 .or(amounts.market_reference_price)
                                 .or(reference_price_exact)
-                                .ok_or_else(|| {
-                                    qx_core::QxError::BusinessViolation(
-                                        "共享精确策略预算缺少精确参考价".into(),
-                                    )
-                                })?;
-                            market.strategy.check_exact_order_budget(
-                                &local_order,
-                                price,
-                                Some(&market.spec),
-                            )?;
+                                .map_or_else(
+                                    || {
+                                        Err(qx_core::QxError::BusinessViolation(
+                                            "共享精确策略预算缺少精确参考价".into(),
+                                        ))
+                                    },
+                                    |price| {
+                                        market.strategy.check_exact_order_budget(
+                                            &local_order,
+                                            price,
+                                            Some(&market.spec),
+                                        )
+                                    },
+                                )
                         } else if let Some(price) = local_order.limit.or(reference_price) {
                             market.strategy.check_order_budget(
                                 &local_order,
                                 price.raw(),
                                 Some(&market.spec),
-                            )?;
+                            )
+                        } else {
+                            Ok(())
+                        };
+                        if let Err(error) = budget_check {
+                            crate::backtest::append_rejection_with_order_id(
+                                &mut log,
+                                ts,
+                                global_id,
+                                &local_order,
+                                &error.to_string(),
+                                reference_price_exact,
+                            );
+                            continue;
                         }
                         local_order.client_id = global_id;
                         local_order.status = OrderStatus::Submitted;
