@@ -52,7 +52,87 @@ pub(crate) fn fidelity_panel(summary: &Value) -> String {
             ("拒单数", number(summary, "/rejected_orders")),
         ],
     ));
+    html.push_str(&rejection_details_panel(summary));
     html.push_str("</section>");
+    html
+}
+
+fn rejection_details_panel(summary: &Value) -> String {
+    let Some(readout) = summary.get("rejection_detail_readout") else {
+        return "<p class=\"fidelity-note\">该旧版摘要未保存逐笔拒单快照。</p>".to_string();
+    };
+    let details = readout
+        .get("details")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let recorded = readout
+        .get("recorded_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(details.len() as u64);
+    let available = readout
+        .get("available_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(recorded);
+    let omitted = readout
+        .get("omitted_count")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let unavailable = readout
+        .get("unavailable_count")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let mut html = format!(
+        "<details class=\"rejection-details\"><summary>逐笔拒单明细（保存 {recorded}/{available}，缺少快照 {unavailable}）</summary>"
+    );
+    if details.is_empty() {
+        html.push_str("<p>本次没有可展示的逐笔拒单快照。</p>");
+    } else {
+        html.push_str("<div class=\"table-wrap\"><table><thead><tr><th>订单</th><th>时间</th><th>标的</th><th>方向</th><th>委托数量</th><th>参考/限价</th><th>拒绝原因</th></tr></thead><tbody>");
+        for detail in details {
+            let order_id = detail
+                .get("client_order_id")
+                .map_or_else(|| "—".to_string(), Value::to_string);
+            let timestamp = detail.get("ts").and_then(Value::as_u64);
+            let timestamp_cell = timestamp.map_or_else(
+                || "—".to_string(),
+                |ts| format!("<time data-timestamp=\"{ts}\">{ts}</time>"),
+            );
+            let instrument = detail
+                .get("instrument")
+                .and_then(Value::as_str)
+                .unwrap_or("—");
+            let side = detail.get("side").and_then(Value::as_str).unwrap_or("—");
+            let quantity = detail
+                .get("quantity_exact")
+                .and_then(Value::as_str)
+                .unwrap_or("—");
+            let reference_price = detail
+                .get("reference_price_exact")
+                .and_then(Value::as_str)
+                .or_else(|| detail.get("limit_price_exact").and_then(Value::as_str))
+                .unwrap_or("—");
+            let reason = detail.get("reason").and_then(Value::as_str).unwrap_or("—");
+            let _ = write!(
+                html,
+                "<tr><td>{}</td><td>{timestamp_cell}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                escape_html(&order_id),
+                escape_html(instrument),
+                escape_html(side),
+                escape_html(quantity),
+                escape_html(reference_price),
+                escape_html(reason),
+            );
+        }
+        html.push_str("</tbody></table></div>");
+    }
+    if omitted > 0 {
+        let _ = write!(
+            html,
+            "<p class=\"fidelity-note\">为控制报告大小，另有 {omitted} 条已记录快照未展开。</p>"
+        );
+    }
+    html.push_str("</details>");
     html
 }
 
@@ -180,4 +260,39 @@ fn table(title: &str, rows: &[(&str, String)]) -> String {
     }
     html.push_str("</tbody></table></article>");
     html
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fidelity_panel;
+
+    #[test]
+    fn fidelity_panel_renders_escaped_rejection_details_and_legacy_note() {
+        let summary = serde_json::json!({
+            "rejected_orders": 1,
+            "rejection_detail_readout": {
+                "recorded_count": 1,
+                "available_count": 1,
+                "omitted_count": 0,
+                "unavailable_count": 0,
+                "details": [{
+                    "client_order_id": 7,
+                    "ts": 1_000,
+                    "instrument": "BTC/USDT.BINANCE",
+                    "side": "buy",
+                    "quantity_exact": "0.001",
+                    "reference_price_exact": "100",
+                    "reason": "<script>alert(1)</script>"
+                }]
+            }
+        });
+        let html = fidelity_panel(&summary);
+        assert!(html.contains("逐笔拒单明细（保存 1/1，缺少快照 0）"));
+        assert!(html.contains("<time data-timestamp=\"1000\">1000</time>"));
+        assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+        assert!(!html.contains("<script>alert(1)</script>"));
+
+        let legacy = fidelity_panel(&serde_json::json!({ "rejected_orders": 0 }));
+        assert!(legacy.contains("该旧版摘要未保存逐笔拒单快照"));
+    }
 }

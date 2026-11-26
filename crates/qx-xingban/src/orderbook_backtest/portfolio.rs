@@ -756,14 +756,13 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                             || !seen_order_ids.insert(local_id)
                             || local_to_global.contains_key(&(market_index, local_id))
                         {
-                            append_event(
+                            crate::backtest::append_rejection_with_order_id(
                                 &mut log,
                                 ts,
-                                Priority::COMMAND,
-                                EventKind::Rejected {
-                                    client_order_id: global_id,
-                                    reason: "策略本地 client_id 必须为正且在本市场唯一".into(),
-                                },
+                                global_id,
+                                &local_order,
+                                "策略本地 client_id 必须为正且在本市场唯一",
+                                reference_price_exact,
                             );
                             continue;
                         }
@@ -773,27 +772,25 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                         if local_order.instrument != market.instrument
                             || local_order.account_id != account_id
                         {
-                            append_event(
+                            crate::backtest::append_rejection_with_order_id(
                                 &mut log,
                                 ts,
-                                Priority::COMMAND,
-                                EventKind::Rejected {
-                                    client_order_id: global_id,
-                                    reason: "订单账户或标的与共享订单簿市场不一致".into(),
-                                },
+                                global_id,
+                                &local_order,
+                                "订单账户或标的与共享订单簿市场不一致",
+                                reference_price_exact,
                             );
                             continue;
                         }
                         if event.snapshot.has_exact_levels() && local_order.exact_amounts.is_none()
                         {
-                            append_event(
+                            crate::backtest::append_rejection_with_order_id(
                                 &mut log,
                                 ts,
-                                Priority::COMMAND,
-                                EventKind::Rejected {
-                                    client_order_id: global_id,
-                                    reason: "共享多市场 DepthFrame v2 精确盘口要求精确数量订单；拒绝把 legacy 1e-9 订单回退到盘口投影".into(),
-                                },
+                                global_id,
+                                &local_order,
+                                "共享多市场 DepthFrame v2 精确盘口要求精确数量订单；拒绝把 legacy 1e-9 订单回退到盘口投影",
+                                reference_price_exact,
                             );
                             continue;
                         }
@@ -801,28 +798,26 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                             && (!event.snapshot.has_exact_levels()
                                 || !market.strategy.supports_exact_orders())
                         {
-                            append_event(
+                            crate::backtest::append_rejection_with_order_id(
                                 &mut log,
                                 ts,
-                                Priority::COMMAND,
-                                EventKind::Rejected {
-                                    client_order_id: global_id,
-                                    reason: "共享订单簿精确订单要求 DepthFrame v2 且策略实现 exact hooks".into(),
-                                },
+                                global_id,
+                                &local_order,
+                                "共享订单簿精确订单要求 DepthFrame v2 且策略实现 exact hooks",
+                                reference_price_exact,
                             );
                             continue;
                         }
                         if local_order.exact_amounts.is_some()
                             && market.exact_queue_estimation_enabled
                         {
-                            append_event(
+                            crate::backtest::append_rejection_with_order_id(
                                 &mut log,
                                 ts,
-                                Priority::COMMAND,
-                                EventKind::Rejected {
-                                    client_order_id: global_id,
-                                    reason: "共享精确盘口撮合暂不支持队列位置估算模型".into(),
-                                },
+                                global_id,
+                                &local_order,
+                                "共享精确盘口撮合暂不支持队列位置估算模型",
+                                reference_price_exact,
                             );
                             continue;
                         }
@@ -834,14 +829,13 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                             }
                         }
                         if market.spec.product.is_derivative() && local_order.policy.is_none() {
-                            append_event(
+                            crate::backtest::append_rejection_with_order_id(
                                 &mut log,
                                 ts,
-                                Priority::COMMAND,
-                                EventKind::Rejected {
-                                    client_order_id: global_id,
-                                    reason: "共享衍生订单必须显式携带 OrderPolicy".into(),
-                                },
+                                global_id,
+                                &local_order,
+                                "共享衍生订单必须显式携带 OrderPolicy",
+                                reference_price_exact,
                             );
                             continue;
                         }
@@ -882,14 +876,13 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                             }
                         });
                         if let Err(error) = validation {
-                            append_event(
+                            crate::backtest::append_rejection_with_order_id(
                                 &mut log,
                                 ts,
-                                Priority::COMMAND,
-                                EventKind::Rejected {
-                                    client_order_id: global_id,
-                                    reason: error.to_string(),
-                                },
+                                global_id,
+                                &local_order,
+                                &error.to_string(),
+                                reference_price_exact,
                             );
                             continue;
                         }
@@ -1025,14 +1018,13 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                                 )),
                             ),
                             FundingDecision::Reject(reason) => {
-                                append_event(
+                                crate::backtest::append_rejection_with_order_id(
                                     &mut log,
                                     ts,
-                                    Priority::COMMAND,
-                                    EventKind::Rejected {
-                                        client_order_id: global_id,
-                                        reason,
-                                    },
+                                    global_id,
+                                    &local_order,
+                                    &reason,
+                                    reference_price_exact,
                                 );
                                 continue;
                             }
@@ -1045,38 +1037,54 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                             ..OrderRiskContext::default()
                         };
                         if let Err(error) = risk.check_with_context(&local_order, &risk_context) {
-                            append_event(
+                            crate::backtest::append_rejection_with_order_id(
                                 &mut log,
                                 ts,
-                                Priority::COMMAND,
-                                EventKind::Rejected {
-                                    client_order_id: global_id,
-                                    reason: error.to_string(),
-                                },
+                                global_id,
+                                &local_order,
+                                &error.to_string(),
+                                reference_price_exact,
                             );
                             continue;
                         }
-                        if let Some(amounts) = local_order.exact_amounts {
-                            let price = amounts
+                        let budget_check = if let Some(amounts) = local_order.exact_amounts {
+                            amounts
                                 .limit_price
                                 .or(amounts.market_reference_price)
                                 .or(reference_price_exact)
-                                .ok_or_else(|| {
-                                    qx_core::QxError::BusinessViolation(
-                                        "共享精确策略预算缺少精确参考价".into(),
-                                    )
-                                })?;
-                            market.strategy.check_exact_order_budget(
-                                &local_order,
-                                price,
-                                Some(&market.spec),
-                            )?;
+                                .map_or_else(
+                                    || {
+                                        Err(qx_core::QxError::BusinessViolation(
+                                            "共享精确策略预算缺少精确参考价".into(),
+                                        ))
+                                    },
+                                    |price| {
+                                        market.strategy.check_exact_order_budget(
+                                            &local_order,
+                                            price,
+                                            Some(&market.spec),
+                                        )
+                                    },
+                                )
                         } else if let Some(price) = local_order.limit.or(reference_price) {
                             market.strategy.check_order_budget(
                                 &local_order,
                                 price.raw(),
                                 Some(&market.spec),
-                            )?;
+                            )
+                        } else {
+                            Ok(())
+                        };
+                        if let Err(error) = budget_check {
+                            crate::backtest::append_rejection_with_order_id(
+                                &mut log,
+                                ts,
+                                global_id,
+                                &local_order,
+                                &error.to_string(),
+                                reference_price_exact,
+                            );
+                            continue;
                         }
                         local_order.client_id = global_id;
                         local_order.status = OrderStatus::Submitted;

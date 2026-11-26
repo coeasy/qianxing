@@ -430,7 +430,7 @@ fn recompute_multi_barframe_input_inner(
                 || leg_summary["input"]["kind"] != "barframe"
             {
                 return Err(format!(
-                    "组合级第 {} 腿引用的不是可复核的 v5/v6/v7/v8 BarFrame 摘要",
+                    "组合级第 {} 腿引用的不是可复核的 v5/v6/v7/v8/v9 BarFrame 摘要",
                     index + 1
                 ));
             }

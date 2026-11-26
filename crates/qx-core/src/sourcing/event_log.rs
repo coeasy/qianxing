@@ -1,7 +1,10 @@
 use super::Fnv1a;
-use crate::{Event, QxResult};
+use crate::{Event, EventKind, QxResult};
 use std::collections::BTreeSet;
 use std::sync::Mutex;
+
+/// Maximum number of per-order rejection snapshots retained in one event log.
+pub const MAX_REJECTION_DETAIL_SNAPSHOTS: usize = 100;
 
 #[derive(Clone, Copy)]
 struct EventLogPrefixSummary {
@@ -21,6 +24,8 @@ pub struct EventLog {
     events_well_formed: bool,
     /// Rolling event-only digest for versioned append-only storage manifests.
     event_digest: u64,
+    /// Bounded counter used to avoid retaining an unbounded number of optional rejection snapshots.
+    rejection_detail_snapshots: usize,
     /// A small bounded cache for immutable prefix digests reused by append-only stores.
     digest_cache: Mutex<Vec<EventLogPrefixSummary>>,
 }
@@ -39,6 +44,7 @@ impl Clone for EventLog {
             max_event_seq: self.max_event_seq,
             events_well_formed: self.events_well_formed,
             event_digest: self.event_digest,
+            rejection_detail_snapshots: self.rejection_detail_snapshots,
             digest_cache: Mutex::new(digest_cache),
         }
     }
@@ -53,6 +59,7 @@ impl Default for EventLog {
             max_event_seq: None,
             events_well_formed: true,
             event_digest: Fnv1a::new().finish(),
+            rejection_detail_snapshots: 0,
             digest_cache: Mutex::new(Vec::new()),
         }
     }
@@ -90,6 +97,9 @@ impl EventLog {
             self.max_event_seq
                 .map_or(event.seq, |max| max.max(event.seq)),
         );
+        self.rejection_detail_snapshots = self
+            .rejection_detail_snapshots
+            .saturating_add(usize::from(has_rejection_detail_snapshot(&event)));
         self.events.push(event);
     }
 
@@ -117,6 +127,9 @@ impl EventLog {
         let mut rolling = Fnv1a::from_state(self.event_digest);
         event.digest(&mut rolling);
         self.event_digest = rolling.finish();
+        self.rejection_detail_snapshots = self
+            .rejection_detail_snapshots
+            .saturating_add(usize::from(has_rejection_detail_snapshot(&event)));
         self.events.push(event);
         Ok(())
     }
@@ -159,6 +172,7 @@ impl EventLog {
             .map(|event| (event.ts, event.prio, event.seq));
         let mut next_seq = self.next_seq;
         let mut max_event_seq = self.max_event_seq;
+        let mut rejection_detail_snapshots = self.rejection_detail_snapshots;
         let mut rolling = Fnv1a::from_state(self.event_digest);
         for event in batch {
             if !staged_seqs.insert(event.seq) {
@@ -169,12 +183,15 @@ impl EventLog {
             previous = Some(key);
             next_seq = next_seq.max(event_next_seq);
             max_event_seq = Some(max_event_seq.map_or(event.seq, |max| max.max(event.seq)));
+            rejection_detail_snapshots = rejection_detail_snapshots
+                .saturating_add(usize::from(has_rejection_detail_snapshot(event)));
             event.digest(&mut rolling);
         }
         self.cache_current_prefix();
         self.next_seq = next_seq;
         self.max_event_seq = max_event_seq;
         self.event_digest = rolling.finish();
+        self.rejection_detail_snapshots = rejection_detail_snapshots;
         for event in batch {
             self.seqs.insert(event.seq);
             self.events.push(event.clone());
@@ -227,6 +244,11 @@ impl EventLog {
 
     pub fn events(&self) -> &[Event] {
         &self.events
+    }
+
+    /// Whether an optional order snapshot can be retained without exceeding the per-log cap.
+    pub fn can_record_rejection_detail(&self) -> bool {
+        self.rejection_detail_snapshots < MAX_REJECTION_DETAIL_SNAPSHOTS
     }
 
     pub fn len(&self) -> usize {
@@ -455,4 +477,14 @@ impl EventLog {
         }
         Some(summary)
     }
+}
+
+fn has_rejection_detail_snapshot(event: &Event) -> bool {
+    matches!(
+        event.kind,
+        EventKind::Rejected {
+            order_snapshot: Some(_),
+            ..
+        }
+    )
 }

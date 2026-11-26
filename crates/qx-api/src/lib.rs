@@ -4032,6 +4032,8 @@ mod tests {
                 EventKind::Rejected {
                     client_order_id: 1,
                     reason: "paper".into(),
+                    reference_price_exact: None,
+                    order_snapshot: None,
                 },
             ))
             .unwrap();
@@ -4044,6 +4046,8 @@ mod tests {
                 EventKind::Rejected {
                     client_order_id: 2,
                     reason: "binance".into(),
+                    reference_price_exact: None,
+                    order_snapshot: None,
                 },
             ))
             .unwrap();

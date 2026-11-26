@@ -239,7 +239,7 @@ fn summary_chains_land_the_account_base_they_actually_used() {
     );
     assert_eq!(
         summary["schema_version"],
-        serde_json::json!(8),
+        serde_json::json!(9),
         "摘要世代包含当前 RunRecord 与回测分析字段"
     );
 

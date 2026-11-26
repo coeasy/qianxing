@@ -59,7 +59,7 @@ pub(crate) fn prepare_comparison_html(
     html.push_str(&escape_html(instrument));
     html.push_str("</b> · 数据指纹 <code>");
     html.push_str(&escape_html(data_fingerprint));
-    html.push_str("</code></p><p class=\"note\">排名按收益率降序、最大回撤升序、运行摘要名升序；每个指标直接读取对应 v5/v6/v7/v8 summary。可选基准指标按同一份 benchmark BarFrame 与每轮权益曲线逐时间戳精确对齐，基准指纹、价格口径、对齐与周期口径在表中列明。可信度分类列展示字段来源类别和 JSON Pointer，不代表数据或模型已独立认证。缺失指标显示 ");
+    html.push_str("</code></p><p class=\"note\">排名按收益率降序、最大回撤升序、运行摘要名升序；每个指标直接读取对应 v5/v6/v7/v8/v9 summary。可选基准指标按同一份 benchmark BarFrame 与每轮权益曲线逐时间戳精确对齐，基准指纹、价格口径、对齐与周期口径在表中列明。可信度分类列展示字段来源类别和 JSON Pointer，不代表数据或模型已独立认证。缺失指标显示 ");
     html.push_str(READOUT_ABSENT);
     html.push_str("，不按零参与比较。下面的筛选、排序均在本地浏览器执行，不发送回测数据。</p><section class=\"toolbar\"><label>搜索运行/策略 <input id=\"qx-search\" type=\"search\" placeholder=\"输入关键字\"></label><label>策略 <select id=\"qx-strategy\"><option value=\"\">全部策略</option>");
     let mut strategies = entries

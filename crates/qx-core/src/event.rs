@@ -621,6 +621,13 @@ pub enum EventKind {
     Rejected {
         client_order_id: u64,
         reason: String,
+        /// As-of reference price used when backtest admission applied market filters.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reference_price_exact: Option<ExactDecimal>,
+        /// Backtest admission rejection snapshot. Venue execution rejections may not
+        /// have the original request available and keep this absent.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        order_snapshot: Option<Box<crate::Order>>,
     },
     /// Durable cancel request intent. If the process exits while the venue call is in flight,
     /// restart recovery sees CancelPending and reconciles instead of treating the order as idle.
@@ -1190,10 +1197,20 @@ impl Event {
             EventKind::Rejected {
                 client_order_id,
                 reason,
+                reference_price_exact,
+                order_snapshot,
             } => {
                 h.write_u64(8);
                 h.write_u64(*client_order_id);
                 h.write_text(reason);
+                if let Some(price) = reference_price_exact {
+                    h.write_u64(0x5245_4a45_4354_5052);
+                    digest_exact_decimal(h, *price);
+                }
+                if let Some(order) = order_snapshot {
+                    h.write_u64(0x5245_4a45_4354_4f52);
+                    digest_rejected_order_snapshot(h, order);
+                }
             }
             EventKind::Cancelled { client_order_id } => {
                 h.write_u64(9);
@@ -1411,6 +1428,114 @@ impl Event {
     }
 }
 
+fn digest_rejected_order_snapshot(h: &mut crate::sourcing::Fnv1a, order: &crate::Order) {
+    h.write_u64(order.client_id);
+    h.write_text(&order.instrument.to_string());
+    h.write_u64(match order.side {
+        crate::order::Side::Buy => 1,
+        crate::order::Side::Sell => 2,
+    });
+    h.write_i128(order.qty.raw());
+    h.write_u64(u64::from(order.limit.is_some()));
+    h.write_i128(order.limit.map(|price| price.raw()).unwrap_or_default());
+    h.write_u64(match order.status {
+        crate::order::OrderStatus::PendingSubmit => 1,
+        crate::order::OrderStatus::Submitted => 2,
+        crate::order::OrderStatus::Accepted => 3,
+        crate::order::OrderStatus::Working => 4,
+        crate::order::OrderStatus::PartiallyFilled => 5,
+        crate::order::OrderStatus::Filled => 6,
+        crate::order::OrderStatus::CancelPending => 7,
+        crate::order::OrderStatus::Cancelled => 8,
+        crate::order::OrderStatus::Rejected => 9,
+        crate::order::OrderStatus::Expired => 10,
+        crate::order::OrderStatus::Unknown => 11,
+    });
+    h.write_i128(order.filled.raw());
+    h.write_text(&order.account_id);
+    h.write_u64(u64::from(order.trace.is_some()));
+    if let Some(trace) = &order.trace {
+        digest_optional_text(h, trace.run_id.as_deref());
+        digest_optional_text(h, trace.strategy_id.as_deref());
+        digest_optional_u64(h, trace.signal_id);
+        digest_optional_u64(h, trace.intent_id);
+        digest_optional_text(h, trace.rule_version.as_deref());
+    }
+    if let Some(policy) = order.policy {
+        h.write_u64(1);
+        h.write_u64(u64::from(policy.reduce_only));
+        h.write_u64(match policy.position_side {
+            crate::trading::PositionSide::Long => 1,
+            crate::trading::PositionSide::Short => 2,
+            crate::trading::PositionSide::Net => 3,
+        });
+        h.write_u64(match policy.margin_mode {
+            crate::trading::MarginMode::Cash => 1,
+            crate::trading::MarginMode::Cross => 2,
+            crate::trading::MarginMode::Isolated => 3,
+        });
+        h.write_u64(match policy.position_mode {
+            crate::trading::PositionMode::OneWay => 1,
+            crate::trading::PositionMode::Hedge => 2,
+        });
+        h.write_u64(policy.leverage as u64);
+        h.write_u64(u64::from(policy.post_only));
+    } else {
+        h.write_u64(0);
+    }
+    if let Some(exact) = order.exact_amounts {
+        h.write_u64(0x4558_4143_545f_414d);
+        digest_exact_decimal(h, exact.quantity);
+        digest_optional_exact_decimal(h, exact.limit_price);
+        digest_exact_decimal(h, exact.filled);
+        digest_optional_exact_decimal(h, exact.quote_budget);
+        digest_exact_decimal(h, exact.quote_filled);
+        digest_optional_exact_decimal(h, exact.market_reference_price);
+        h.write_u64(u64::from(exact.conditional.is_some()));
+        if let Some(conditional) = exact.conditional {
+            h.write_u64(0x434f_4e44_4954_494f);
+            h.write_u64(match conditional.kind {
+                crate::order::ConditionalOrderKind::Trigger => 1,
+                crate::order::ConditionalOrderKind::StopLoss => 2,
+                crate::order::ConditionalOrderKind::TakeProfit => 3,
+                crate::order::ConditionalOrderKind::Trailing => 4,
+            });
+            digest_optional_exact_decimal(h, conditional.trigger_price);
+            h.write_u64(match conditional.trigger_price_type {
+                None => 0,
+                Some(crate::order::TriggerPriceType::Last) => 1,
+                Some(crate::order::TriggerPriceType::Mark) => 2,
+                Some(crate::order::TriggerPriceType::Index) => 3,
+            });
+            digest_optional_exact_decimal(h, conditional.trailing_percent);
+            digest_optional_exact_decimal(h, conditional.trailing_amount);
+            digest_optional_exact_decimal(h, conditional.trailing_trigger_price);
+        }
+    } else {
+        h.write_u64(0);
+    }
+}
+
+fn digest_optional_text(h: &mut crate::sourcing::Fnv1a, value: Option<&str>) {
+    match value {
+        Some(value) => {
+            h.write_u64(1);
+            h.write_text(value);
+        }
+        None => h.write_u64(0),
+    }
+}
+
+fn digest_optional_u64(h: &mut crate::sourcing::Fnv1a, value: Option<u64>) {
+    match value {
+        Some(value) => {
+            h.write_u64(1);
+            h.write_u64(value);
+        }
+        None => h.write_u64(0),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1438,6 +1563,8 @@ mod tests {
             EventKind::Rejected {
                 client_order_id: 7,
                 reason: "c".into(),
+                reference_price_exact: None,
+                order_snapshot: None,
             },
         )
         .correlated("ab");
@@ -1448,6 +1575,8 @@ mod tests {
             EventKind::Rejected {
                 client_order_id: 7,
                 reason: "bc".into(),
+                reference_price_exact: None,
+                order_snapshot: None,
             },
         )
         .correlated("a");
@@ -1456,6 +1585,98 @@ mod tests {
         left.digest(&mut left_hash);
         right.digest(&mut right_hash);
         assert_ne!(left_hash.finish(), right_hash.finish());
+    }
+
+    #[test]
+    fn rejection_order_snapshot_is_optional_and_included_in_event_identity() {
+        let legacy_kind: EventKind = serde_json::from_value(serde_json::json!({
+            "Rejected": { "client_order_id": 7, "reason": "minimum notional" }
+        }))
+        .unwrap();
+        let legacy_event = Event::new(1, 2, Priority::COMMAND, legacy_kind.clone());
+        let current_legacy_event = Event::new(
+            1,
+            2,
+            Priority::COMMAND,
+            EventKind::Rejected {
+                client_order_id: 7,
+                reason: "minimum notional".into(),
+                reference_price_exact: None,
+                order_snapshot: None,
+            },
+        );
+        let digest = |event: &Event| {
+            let mut hash = crate::sourcing::Fnv1a::new();
+            event.digest(&mut hash);
+            hash.finish()
+        };
+        assert_eq!(digest(&legacy_event), digest(&current_legacy_event));
+        let serialized = serde_json::to_value(&current_legacy_event).unwrap();
+        assert!(serialized["kind"]["Rejected"]
+            .get("order_snapshot")
+            .is_none());
+        assert!(serialized["kind"]["Rejected"]
+            .get("reference_price_exact")
+            .is_none());
+
+        let mut order = Order {
+            client_id: 7,
+            instrument: InstrumentId::parse("BTC/USDT.BINANCE").unwrap(),
+            side: Side::Buy,
+            qty: Quantity::from_raw(10_000_000),
+            limit: None,
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: None,
+            exact_amounts: None,
+        };
+        let event_with_order = |order: Order| {
+            Event::new(
+                1,
+                2,
+                Priority::COMMAND,
+                EventKind::Rejected {
+                    client_order_id: 7,
+                    reason: "minimum notional".into(),
+                    reference_price_exact: Some(ExactDecimal::parse("100").unwrap()),
+                    order_snapshot: Some(Box::new(order)),
+                },
+            )
+        };
+        let first = event_with_order(order.clone());
+        let mut with_run_trace = order.clone();
+        with_run_trace.trace = Some(crate::OrderTrace {
+            run_id: Some("run-a".into()),
+            strategy_id: None,
+            signal_id: None,
+            intent_id: None,
+            rule_version: None,
+        });
+        let traced_first = event_with_order(with_run_trace.clone());
+        with_run_trace.trace.as_mut().unwrap().run_id = Some("run-b".into());
+        let traced_second = event_with_order(with_run_trace);
+        assert_ne!(digest(&first), digest(&traced_first));
+        assert_ne!(digest(&traced_first), digest(&traced_second));
+
+        let mut empty_trace = order.clone();
+        empty_trace.trace = Some(crate::OrderTrace {
+            run_id: None,
+            strategy_id: None,
+            signal_id: None,
+            intent_id: None,
+            rule_version: None,
+        });
+        assert_ne!(digest(&first), digest(&event_with_order(empty_trace)));
+
+        order.qty = Quantity::from_raw(20_000_000);
+        let second = event_with_order(order);
+        assert_ne!(digest(&first), digest(&second));
+        assert_eq!(
+            serde_json::from_str::<Event>(&serde_json::to_string(&first).unwrap()).unwrap(),
+            first
+        );
     }
 
     #[test]

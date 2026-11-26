@@ -355,6 +355,11 @@ fn blocked_signals_are_distinguishable_from_silent_strategies() {
         0,
         "对照侧摘要不该记到拒单"
     );
+    assert_eq!(
+        first_summary(&healthy.join("data"))["rejection_detail_readout"]["recorded_count"],
+        0,
+        "没有拒单时不该生成逐笔详情"
+    );
     let _ = std::fs::remove_dir_all(&healthy);
 
     // 实验侧：同一份夹具只把数量放到名义额远超初始现金，信号必然发得出但成交为 0。
@@ -424,5 +429,21 @@ fn blocked_signals_are_distinguishable_from_silent_strategies() {
         "拒单原因不是现金门禁: {:?}",
         reasons[0]
     );
+    let detail_readout = summary
+        .get("rejection_detail_readout")
+        .unwrap_or_else(|| panic!("摘要缺少 rejection_detail_readout: {summary}"));
+    assert_eq!(detail_readout["recorded_count"], 1);
+    assert_eq!(detail_readout["available_count"], 1);
+    assert_eq!(detail_readout["unavailable_count"], 0);
+    assert_eq!(detail_readout["details"].as_array().map(Vec::len), Some(1));
+    let detail = &detail_readout["details"][0];
+    assert_eq!(
+        detail["client_order_id"],
+        detail["snapshot_client_order_id"]
+    );
+    assert_eq!(detail["instrument"], "BTCUSDT.BINANCE");
+    assert_eq!(detail["side"], "buy");
+    assert_eq!(detail["quantity_scale"], 9);
+    assert_eq!(detail["reason"], reasons[0]["reason"]);
     let _ = std::fs::remove_dir_all(&blocked);
 }

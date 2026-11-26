@@ -8,7 +8,7 @@
   },
   "source_sha256": {
     "maturity/capability-matrix.yaml": "c6927e2c6a1a4cc4fad188ca4a393fe1a0f85832738fd9fde55e88cd700d3575",
-    "maturity/capabilities.yaml": "fafd0958b925229d563458e12307527ec13c68ef5fd2e378b8c2ef5867aa9b90",
+    "maturity/capabilities.yaml": "cbfde247d5867b6f33654b14b191bea1618499621badc86efef2eb58b162ca1c",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
   "product_levels": [
@@ -192,7 +192,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 243,
+      "evidence_path_count": 245,
       "limitation_count": 10
     },
     {
@@ -1534,11 +1534,13 @@
             "BarBacktestAssembly::new takes initial_cash as a required argument and the field is private, so a fourth chain cannot skip the question nor overwrite the answer after the fact; the whole qx-cli production tree scans clean of a from_i64(100_000) literal (V11 Q72)",
             "all three single-leg chains read strategy.initial_cash_raw and print their booked principal plus source before the result line ([Strategy/Builtin/Depth · Account]); the built-in chain writes no summary, so that stdout line is its only exit for the number (V11 Q72)",
             "summary schema v4 lands an account block whose two keys are taken from the account base actually booked, and a new summary-writing chain must answer the required account_base field to compile (V11 Q72)",
-            "crates/qx-app/src/artifact_store/backtest_summary.rs publishes summary v8 and versioned .v8 artifact names; report reads legacy v5/v6/v7 and current v8, while v6 added the optional A-share analysis block and v8 exposes max_drawdown_raw",
-            "`BacktestReport.max_drawdown_raw` is serialized as an i128-safe decimal string in summary v8 metrics, and the shared CLI report reader prints the same value without narrowing; `backtest_entries` and `report_readout` tests cover publication and readback (V13 §9.594)",
+            "crates/qx-app/src/artifact_store/backtest_summary.rs publishes summary v9 and versioned .v9 artifact names; report reads v5-v8 and current v9, while v6 added the optional A-share analysis block and v8 exposes max_drawdown_raw",
+            "`BacktestReport.max_drawdown_raw` is serialized as an i128-safe decimal string in summary v9 metrics, and the shared CLI report reader prints the same value without narrowing; `backtest_entries` and `report_readout` tests cover publication and readback (V13 §9.594)",
+            "backtest admission rejections carry a replay-digested order snapshot and as-of reference price; summary v9 exposes up to 100 request-level rejection details and separately counts older/venue events without snapshots",
+            "crates/qx-cli/tests/backtest_contracts.rs verifies order identity, instrument, side, quantity scale and reason through the published summary; report_fidelity renders escaped per-order details",
             "`qx-data::fingerprint_bars` is the canonical Bar content fingerprint; its BarFrame adapter delegates to that algorithm, and qx-app + Python A-share manifests publish the same content identity (WP-6.1, 2026-10-15)",
-            "crates/qx-cli/src/report_command.rs accepts v5/v6/v7/v8 and refuses unsupported summaries before report side effects; multi_builtin.rs emits separately replayable versioned leg artifacts",
-            "crates/qx-cli/tests/unit/blessed_artifacts.rs recursively checks every checked-in deploy/data summary: current v5-v8 or complete shared qx-app RunSummary v1 is accepted; legacy incomplete v1 summaries, including all 16 tracked files that still contain the retired replay_hash field, are explicitly refused with the command needed to regenerate a current v8 summary. The test never blesses or rewrites fixtures.",
+            "crates/qx-cli/src/report_command.rs accepts v5/v6/v7/v8/v9 and refuses unsupported summaries before report side effects; multi_builtin.rs emits separately replayable versioned leg artifacts",
+            "crates/qx-cli/tests/unit/blessed_artifacts.rs recursively checks every checked-in deploy/data summary: current v5-v9 or complete shared qx-app RunSummary v1 is accepted; legacy incomplete v1 summaries, including all 16 tracked files that still contain the retired replay_hash field, are explicitly refused with the command needed to regenerate a current v9 summary. The test never blesses or rewrites fixtures.",
             "crates/qx-cli/tests/backtest_account_base.rs five subprocess cases: the default is printed even when nothing is declared, the same config differing only in that one key must change fills 0 to 1 and the result_hash, a non-positive declaration exits 2, both summary chains land the principal they used, and the multi-leg entry refuses the key outright (V11 Q72)",
             "tools/check_architecture.py backtest_account_base_check holds 10 items over that literal ban, the three labels, assembly privacy, the per-chain reads and prints, the fail-closed gate, the v4 account block, the schema field shape, the question-mark-carrying multi-leg refusal and the eight case names (V11 Q72)",
             "crates/qx-cli/src/report_readout.rs is the only place the read model words an absent key: report and status share report_readout_lines and latest_backtest_readout_lines, a missing key prints absent while a declared zero still prints 0, and summary_generation_note separates \"that generation had no such block\" from \"this block is missing in this generation\" (V12 R1)",
