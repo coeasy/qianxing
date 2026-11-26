@@ -65,13 +65,13 @@ class CriterionPlanTests(unittest.TestCase):
                 self.assertEqual(len(required), 74)
                 self.assertEqual(len([command for command in commands if command[3] == "qx-core"]), 1)
 
-    def test_multiple_benchmarked_package_changes_use_the_representative_profile(self) -> None:
-        self.assertEqual(
-            criterion_profile_for_changed_files(
-                ["crates/qx-runtime/src/pipeline.rs", "crates/qx-xingban/src/backtest.rs"]
-            ),
-            "pr",
-        )
+    def test_multiple_or_unbenchmarked_package_changes_use_the_representative_profile(self) -> None:
+        for changed in (
+            ["crates/qx-runtime/src/pipeline.rs", "crates/qx-xingban/src/backtest.rs"],
+            ["crates/qx-runtime/src/pipeline.rs", "crates/qx-service/src/orders.rs"],
+        ):
+            with self.subTest(changed=changed):
+                self.assertEqual(criterion_profile_for_changed_files(changed), "pr")
 
     def test_pr_profile_covers_registered_performance_regression_families(self) -> None:
         required, commands = criterion_plan("cargo", "pr")
