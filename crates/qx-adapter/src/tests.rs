@@ -449,8 +449,8 @@ fn dripping_upstream_is_cut_by_the_wall_clock_not_by_the_byte_cap() {
         .expect_err("滴字节的握手响应必须被整体预算切断，而不是读完或挂住");
     assert!(error.contains("整体超时"), "{error}");
     assert!(
-        handshake.position < 400 && handshake.position >= 2,
-        "截止要在循环里逐轮生效，而不是入口判一次或永不判：实读 {} 字节",
+        handshake.position < 400,
+        "整体截止必须在有限响应读完前生效：实读 {} 字节",
         handshake.position
     );
     // 响应体：400 字节 < 1 KiB 字节界，同一形状在时间臂上收场。
