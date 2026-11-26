@@ -11,7 +11,7 @@ WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 
 
 class PerformanceWorkflowTests(unittest.TestCase):
-    def test_parent_and_candidate_benchmarks_use_the_shared_cargo_target(self) -> None:
+    def test_parent_and_candidate_benchmarks_use_separate_cargo_targets(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
         baseline_start = workflow.index("- name: Build and measure the parent revision on this runner")
         candidate_start = workflow.index("- name: Build release CLI", baseline_start)
@@ -31,14 +31,16 @@ class PerformanceWorkflowTests(unittest.TestCase):
         candidate_step = workflow[candidate_start:candidate_build_end]
         candidate_benchmark = workflow[candidate_benchmark_start:candidate_benchmark_end]
 
-        target_dir = "CARGO_TARGET_DIR: ${{ github.workspace }}/target"
-        self.assertIn(target_dir, baseline_step)
-        self.assertIn(target_dir, candidate_step)
-        self.assertIn('ln -s "$GITHUB_WORKSPACE/target" "$base_dir/target"', baseline_step)
+        self.assertIn(
+            "CARGO_TARGET_DIR: ${{ runner.temp }}/qianxing-performance-baseline-target",
+            baseline_step,
+        )
+        self.assertIn("CARGO_TARGET_DIR: ${{ github.workspace }}/target", candidate_step)
+        self.assertNotIn('ln -s "$GITHUB_WORKSPACE/target" "$base_dir/target"', baseline_step)
+        self.assertNotIn('mkdir -p "$base_dir/target"', baseline_step)
         self.assertIn('--workspace-root "$base_dir"', baseline_step)
         self.assertIn('--target-dir "$CARGO_TARGET_DIR"', baseline_step)
         self.assertIn('--target-dir "$CARGO_TARGET_DIR"', candidate_benchmark)
-        self.assertIn("paired reports remain available in the uploaded artifact", workflow)
 
     def test_regression_gate_runs_only_when_measured_inputs_changed(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
@@ -57,13 +59,7 @@ class PerformanceWorkflowTests(unittest.TestCase):
             '"${{ steps.measured_source.outputs.changed }}" == "true" ]]; then',
             comparison_step,
         )
-<<<<<<< HEAD
         self.assertIn("paired reports remain available in the uploaded artifact", comparison_step)
-=======
-        self.assertIn('--target-dir "$CARGO_TARGET_DIR"', baseline_step)
-        self.assertIn('--target-dir "$CARGO_TARGET_DIR"', candidate_benchmark)
-        self.assertNotIn('ln -s "$GITHUB_WORKSPACE/target" "$base_dir/target"', baseline_step)
->>>>>>> 2ed4bfa8 (ci: route benchmarks to isolated cargo targets)
 
 
 if __name__ == "__main__":
