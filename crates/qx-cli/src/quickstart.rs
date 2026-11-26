@@ -112,7 +112,7 @@ pub(crate) fn project_file_count(dir: &Path, budget: usize) -> (usize, bool) {
     (files, false)
 }
 
-/// `qx-cli quickstart [目录] [--profile builtin|ashare] [--strategy KIND] [--html] [--force]` 的实现体。
+/// `qx-cli quickstart [目录] [--profile builtin|ashare|ccxt|paper] [--strategy KIND] [--html] [--force]` 的实现体。
 /// 失败自行以 2 退出，成功印收尾指引后返回。
 pub(crate) fn run(
     project: Option<PathBuf>,
@@ -188,6 +188,22 @@ pub(crate) fn run(
                 std::process::exit(2);
             }
             (None, Some("ccxt"), Some(kind.name().to_owned()))
+        }
+        cli_args::QuickstartProfile::Paper => {
+            if html || strategy.is_some() {
+                eprintln!("[止步] paper profile 不接受 --html 或 --strategy；它运行本地 Paper 链路，不生成回测报告");
+                std::process::exit(2);
+            }
+            if force {
+                eprintln!("[止步] Paper 首跑会保留本地订单与账本事实，不覆盖或清空已有状态；请改用一个新的项目目录（不支持 --force）");
+                std::process::exit(2);
+            }
+            if let Err(error) = validate_fresh_paper_project(&absolute) {
+                eprintln!("[止步] {error}");
+                std::process::exit(2);
+            }
+            run_paper_quickstart(&absolute, &runtime, &runtime_text, &root_text);
+            return;
         }
     };
     let ccxt_preflight = if profile == cli_args::QuickstartProfile::Ccxt {
@@ -437,6 +453,7 @@ pub(crate) fn run(
         cli_args::QuickstartProfile::Builtin => "ashare",
         cli_args::QuickstartProfile::Ashare => "ccxt",
         cli_args::QuickstartProfile::Ccxt => "crypto-sandbox-acceptance",
+        cli_args::QuickstartProfile::Paper => "paper",
     };
     for step in [
         command_line(&["report", &runtime_text, "--json"]),
@@ -465,6 +482,126 @@ pub(crate) fn run(
         command_line(&["help"]),
         command_line(&["version"])
     );
+}
+
+/// Local, credential-free Paper onboarding is intentionally a separate workflow from
+/// historical backtesting. It uses the canonical `paper` runtime template and the same
+/// Scheduler → Strategy → Paper Execution → Ledger pipeline as `paper-check`.
+fn run_paper_quickstart(absolute: &Path, runtime: &Path, runtime_text: &str, root_text: &str) {
+    let retry_path = format!("{root_text}-retry");
+    let retry = command_line(&["quickstart", &retry_path, "--profile", "paper"]);
+    println!(
+        "quickstart 使用 paper profile，依次执行 4 步（建项目 → 静态检查 → Paper 主链路 → 安全状态），只写 {}：",
+        absolute.display()
+    );
+    println!("[数据说明] 使用本地合成 L1 报价驱动 Paper 撮合；不联网、不读取密钥、不连接交易所、不发送实盘订单。Paper 成交不代表真实市场成交或收益。 ");
+
+    let init_command = command_line(&["init", runtime_text, "--profile", "paper"]);
+    if let Err(error) = run_init_with_profile(runtime, false, None, Some("paper"), false) {
+        paper_quickstart_stop("建项目", &init_command, &retry, &error);
+    }
+    println!("[完成] 建项目：{init_command}");
+
+    let doctor_command = command_line(&["doctor", runtime_text]);
+    if let Err(error) = run_doctor(runtime, false) {
+        paper_quickstart_stop("静态检查", &doctor_command, &retry, &error);
+    }
+    println!("[完成] 静态检查：{doctor_command}");
+
+    let paper_command = command_line(&["paper-check", runtime_text]);
+    let outcome = match crate::venue_runtime::run_paper_pipeline_once_with_report(runtime, true) {
+        Ok(outcome) if outcome.new_orders > 0 => outcome,
+        Ok(_) => paper_quickstart_stop(
+            "Paper 主链路",
+            &paper_command,
+            &retry,
+            "本轮没有新增 Paper 订单；为避免把旧账本事实误报为新验收，请使用一个新的项目目录",
+        ),
+        Err(error) => paper_quickstart_stop("Paper 主链路", &paper_command, &retry, &error),
+    };
+    println!("[完成] Paper 主链路：{paper_command}");
+
+    let status_command = command_line(&["status", runtime_text]);
+    if let Err(error) = run_status(runtime, false) {
+        paper_quickstart_stop("安全状态", &status_command, &retry, &error);
+    }
+    println!("[完成] 安全状态：{status_command}");
+
+    let result = serde_json::json!({
+        "profile": "paper",
+        "orders_total": outcome.orders_total,
+        "new_orders": outcome.new_orders,
+        "ledger_entries_total": outcome.ledger_entries_total,
+        "new_ledger_entries": outcome.new_ledger_entries,
+        "scheduler_worker": outcome.scheduler_id,
+        "strategy_workers": outcome.strategy_ids,
+        "execution_worker": outcome.execution_id,
+        "quote_source": "local_synthetic_l1",
+        "network_accessed": false,
+        "credentials_loaded": false,
+        "live_orders_submitted": false,
+    });
+    match serde_json::to_string(&result) {
+        Ok(json) => println!("[QuickstartPaperResult] {json}"),
+        Err(error) => paper_quickstart_stop(
+            "输出 Paper 首跑摘要",
+            "qx-cli quickstart",
+            &retry,
+            &error.to_string(),
+        ),
+    }
+
+    let (files, truncated) = project_file_count(absolute, PROJECT_FILE_COUNT_BUDGET);
+    let counted = if truncated {
+        format!("项目里共 {files} 份文件（已在 {PROJECT_FILE_COUNT_BUDGET} 个目录的计数预算处截断，实际可能更多）")
+    } else {
+        format!("项目里共 {files} 份文件")
+    };
+    println!("\n你刚完成了 4 步：建项目 → 静态检查 → Paper 主链路 → 安全状态，{counted}。\nPaper 订单与 Ledger 事实保存在 {} 下。", absolute.join("data").display());
+    println!(
+        "下一步三条命令：\n  {}\n  {}\n  {}",
+        command_line(&["status", runtime_text]),
+        command_line(&["paper-check", runtime_text, "--json"]),
+        command_line(&["help"]),
+    );
+}
+
+fn validate_fresh_paper_project(project: &Path) -> Result<(), String> {
+    let metadata = match std::fs::symlink_metadata(project) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(format!(
+                "无法检查 Paper 项目目录 {}: {error}",
+                project.display()
+            ))
+        }
+    };
+    if metadata.file_type().is_symlink() {
+        return Err(format!(
+            "Paper 首跑拒绝使用目录符号链接，以免把持久账本写到不明确的位置: {}",
+            project.display()
+        ));
+    }
+    if !metadata.is_dir() {
+        return Err(format!("Paper 首跑路径不是目录: {}", project.display()));
+    }
+    let mut entries = std::fs::read_dir(project)
+        .map_err(|error| format!("无法读取 Paper 项目目录 {}: {error}", project.display()))?;
+    if entries.next().is_some() {
+        return Err(format!(
+            "Paper 首跑会保留本地订单与账本事实，不覆盖或清空已有状态；请改用一个新的空目录（不支持 --force）: {}",
+            project.display()
+        ));
+    }
+    Ok(())
+}
+
+fn paper_quickstart_stop(label: &str, command: &str, retry: &str, error: &str) -> ! {
+    eprintln!("[止步] {label} 失败：{error}");
+    eprintln!("  这一步的原文命令：{command}");
+    eprintln!("  Paper 账本是持久状态，不支持覆盖重跑；请检查本目录后改用一个新的项目目录。整条链路命令：{retry}");
+    std::process::exit(2);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
