@@ -16069,7 +16069,7 @@ def performance_baseline_check() -> None:
         and all(f'"{profile}"' in bench_driver_source for profile in ("pr-runtime", "pr-xingban", "pr-zhenlu"))
         and "test_single_package_change_only_runs_its_own_benchmarks" in (ROOT / "benchmarks/tests/test_run_rust_bench.py").read_text(encoding="utf-8")
         and "test_shared_inputs_or_core_changes_include_the_shared_dependency_suite" in (ROOT / "benchmarks/tests/test_run_rust_bench.py").read_text(encoding="utf-8")
-        and "test_multiple_benchmarked_package_changes_use_the_representative_profile" in (ROOT / "benchmarks/tests/test_run_rust_bench.py").read_text(encoding="utf-8"),
+        and "test_multiple_or_unbenchmarked_package_changes_use_the_representative_profile" in (ROOT / "benchmarks/tests/test_run_rust_bench.py").read_text(encoding="utf-8"),
         "Criterion 选择器有单 crate、共享 core 与多 crate 的行为覆盖",
         "Criterion 选择器缺少按变更范围选择 profile 的行为覆盖",
     )
