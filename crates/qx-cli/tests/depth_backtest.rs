@@ -72,7 +72,7 @@ fn artifacts(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
     (
         manifest,
         runs.join(format!("{stem}.v9.summary.json")),
-        runs.join(format!("{stem}.v8.equity.csv")),
+        runs.join(format!("{stem}.v9.equity.csv")),
     )
 }
 

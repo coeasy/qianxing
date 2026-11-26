@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn cross_language_strategy_backtest_publishes_the_v8_artifact_contract() {
+fn cross_language_strategy_backtest_publishes_the_v9_artifact_contract() {
     let (deploy, frame, template) = builtin_backtest_example_paths();
     let mut base = read_runtime_config(&template).unwrap();
     let python_strategy = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -15,7 +15,7 @@ fn cross_language_strategy_backtest_publishes_the_v8_artifact_contract() {
     run_strategy_backtest(&runtime, &frame, None).expect("跨语言策略经 qx-app 执行");
 
     let summaries = list_backtest_summary_paths(&root.join("runs")).unwrap();
-    assert_eq!(summaries.len(), 1, "应只发布一份 v8 摘要");
+    assert_eq!(summaries.len(), 1, "应只发布一份 v9 摘要");
     assert!(
         summaries[0]
             .file_name()
@@ -32,7 +32,7 @@ fn cross_language_strategy_backtest_publishes_the_v8_artifact_contract() {
     assert_eq!(summary["result_hash"], summary["replay"]["log_digest"]);
     assert!(
         summary["metrics"]["max_drawdown_raw"].as_str().is_some(),
-        "v8 publishes the fixed-point max drawdown amount without narrowing i128"
+        "v9 preserves the fixed-point max drawdown amount without narrowing i128"
     );
     assert!(Path::new(summary["run_record"].as_str().unwrap()).is_file());
     let manifests = std::fs::read_dir(root.join("runs"))
@@ -41,7 +41,7 @@ fn cross_language_strategy_backtest_publishes_the_v8_artifact_contract() {
         .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
         .filter(|entry| entry.file_name().to_string_lossy().ends_with(".run.json"))
         .count();
-    assert_eq!(manifests, 1, "RunManifest 仍与 v8 摘要一同发布");
+    assert_eq!(manifests, 1, "RunManifest 仍与 v9 摘要一同发布");
 
     let _ = std::fs::remove_dir_all(&root);
 }
