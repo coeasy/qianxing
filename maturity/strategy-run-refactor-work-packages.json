@@ -1495,14 +1495,16 @@
       "title": "验收台账与证据治理",
       "status": "partial",
       "blockers": [
-        "The acceptance registry, run identities, source manifests, and hashed artifacts are machine-checked; R23-AC01 still requires explicit human review before it can be marked accepted."
+        "The acceptance registry, run identities, source manifests, and hashed artifacts are machine-checked; R23-AC01 and R23-AC02 still require explicit human review before either can be marked accepted."
       ],
-      "next_action": "Have the project owner review R23-AC01 and update its status only after approval; keep the registry checker wired into CI.",
+      "next_action": "Have the project owner review R23-AC01 and R23-AC02 and update their statuses only after approval; keep the registry checker and status-sync regression wired into CI.",
       "code_paths": [
         "maturity/strategy-run-acceptance-v1.json",
         "schemas/strategy-run-acceptance-v1.json",
         "tools/record_strategy_acceptance.py",
         "tools/check_strategy_refactor_ledger.py",
+        "tools/test_strategy_refactor_ledger.py",
+        "docs/architecture-local-server-refactor-review-2026-10-28.md",
         "docs/strategy-project-runs.md"
       ],
       "evidence_paths": [
@@ -1510,7 +1512,11 @@
         "schemas/strategy-run-acceptance-v1.json",
         "tools/record_strategy_acceptance.py",
         "tools/check_strategy_refactor_ledger.py",
+        "tools/test_strategy_refactor_ledger.py",
+        "docs/architecture-local-server-refactor-review-2026-10-28.md",
         "docs/strategy-project-runs.md",
+        "maturity/acceptance-artifacts/9ddad915-c443-482b-a097-a39c0a6230bd.log",
+        "maturity/acceptance-artifacts/9ddad915-c443-482b-a097-a39c0a6230bd.source-tree.json",
         "maturity/acceptance-artifacts/caca4fb9-3793-4f59-ab1c-572aac0b7e83.log",
         "maturity/acceptance-artifacts/caca4fb9-3793-4f59-ab1c-572aac0b7e83.source-tree.json",
         "maturity/acceptance-artifacts/32129168-2bec-4a05-abb0-f6baf1fed5a1.log",

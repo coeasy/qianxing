@@ -767,6 +767,22 @@
         "maturity/acceptance-artifacts/<run_id>.log",
         "maturity/acceptance-artifacts/<run_id>.source-tree.json"
       ]
+    },
+    {
+      "acceptance_id": "R23-AC02",
+      "work_package": "R23",
+      "status": "planned",
+      "acceptance_criteria": [
+        "The architecture plan status for every R01-R23 package matches the canonical work-package ledger. The checker rejects a stale status and a missing row; successful command execution records evidence but does not satisfy the separate human-review gate."
+      ],
+      "required_artifacts": [
+        "docs/architecture-local-server-refactor-review-2026-10-28.md",
+        "maturity/strategy-run-refactor-work-packages.json",
+        "tools/check_strategy_refactor_ledger.py",
+        "tools/test_strategy_refactor_ledger.py",
+        "maturity/acceptance-artifacts/<run_id>.log",
+        "maturity/acceptance-artifacts/<run_id>.source-tree.json"
+      ]
     }
   ],
   "runs": [
@@ -21308,6 +21324,146 @@
         }
       ],
       "notes": "Focused read-model summary contract only; does not close the broader R18 authorization and live-readiness gaps."
+    },
+    {
+      "run_id": "9ddad915-c443-482b-a097-a39c0a6230bd",
+      "acceptance_id": "R23-AC02",
+      "recorded_at_utc": "2026-11-26T23:43:57.561465Z",
+      "source_revision": "6622a268cf258e5a232cf3a5289029f2c50097da",
+      "source_tree_sha256": "4b1c3e5c3b8937929560a091b9f51c1a5b8b85a154a6e42897f23ff53f3bed6b",
+      "source_manifest": "maturity/acceptance-artifacts/9ddad915-c443-482b-a097-a39c0a6230bd.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "python",
+        "-m",
+        "unittest",
+        "tools.test_strategy_refactor_ledger",
+        "-q"
+      ],
+      "inputs": [],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/9ddad915-c443-482b-a097-a39c0a6230bd.log",
+          "sha256": "ae93b88c2ac7c4975b194be6b78801cabe16a05b31c74bb279e14882aee09374"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/9ddad915-c443-482b-a097-a39c0a6230bd.source-tree.json",
+          "sha256": "27b534f3ffdf93f2b7628d9c1af44879c4ae3c8134a7db5756a4f804ed0135c3"
+        }
+      ],
+      "notes": "Windows candidate test verifies all 23 documented package statuses against the canonical ledger and rejects stale or missing rows; this is evidence only, not human acceptance."
+    },
+    {
+      "run_id": "dffe5340-4a0f-40e1-8e83-08070040c351",
+      "acceptance_id": "R23-AC02",
+      "recorded_at_utc": "2026-11-26T23:45:08.197804Z",
+      "source_revision": "6622a268cf258e5a232cf3a5289029f2c50097da",
+      "source_tree_sha256": "01733595bd6214f713fc7b0f64ccded27d6ed0386c27cc7234ed15e4c6b59f9a",
+      "source_manifest": "maturity/acceptance-artifacts/dffe5340-4a0f-40e1-8e83-08070040c351.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "python",
+        "-m",
+        "unittest",
+        "tools.test_strategy_refactor_ledger",
+        "-q"
+      ],
+      "inputs": [],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/dffe5340-4a0f-40e1-8e83-08070040c351.log",
+          "sha256": "ae93b88c2ac7c4975b194be6b78801cabe16a05b31c74bb279e14882aee09374"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/dffe5340-4a0f-40e1-8e83-08070040c351.source-tree.json",
+          "sha256": "c05fd0a53529d7277d59ed7f709c586ae1b04adfeb27ff4c76f2e9b08a2d90e3"
+        }
+      ],
+      "notes": "Windows acceptance verifies all 23 plan statuses against the canonical ledger and rejects stale or missing rows; R23-AC02 evidence is not human acceptance."
+    },
+    {
+      "run_id": "743e97cd-07d1-43cc-8691-50fdb89040a2",
+      "acceptance_id": "R23-AC02",
+      "recorded_at_utc": "2026-11-26T23:45:48.129031Z",
+      "source_revision": "6622a268cf258e5a232cf3a5289029f2c50097da",
+      "source_tree_sha256": "7093e154b513e43d492f2bd81228531c99cbe880f8c618eb585fca5e36488c1b",
+      "source_manifest": "maturity/acceptance-artifacts/743e97cd-07d1-43cc-8691-50fdb89040a2.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "python",
+        "-m",
+        "unittest",
+        "tools.test_strategy_refactor_ledger",
+        "-q"
+      ],
+      "inputs": [],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/743e97cd-07d1-43cc-8691-50fdb89040a2.log",
+          "sha256": "ae93b88c2ac7c4975b194be6b78801cabe16a05b31c74bb279e14882aee09374"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/743e97cd-07d1-43cc-8691-50fdb89040a2.source-tree.json",
+          "sha256": "33fed42903fdaac2be294c0c9ace6b1b93c31f4097ed1dba747ffdfa93108091"
+        }
+      ],
+      "notes": "Windows acceptance covers complete, partial, blocked and not-started labels; the checker detects stale statuses and missing work-package rows. Evidence remains planned pending human review."
+    },
+    {
+      "run_id": "4453e4c5-e606-43dd-95c0-42a79f29a80e",
+      "acceptance_id": "R23-AC02",
+      "recorded_at_utc": "2026-11-26T23:47:04.853922Z",
+      "source_revision": "6622a268cf258e5a232cf3a5289029f2c50097da",
+      "source_tree_sha256": "46ecd71d43e3ca74c3a5f09cc8aaf160d30b5f2d0087128a9339f871e275bde7",
+      "source_manifest": "maturity/acceptance-artifacts/4453e4c5-e606-43dd-95c0-42a79f29a80e.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "python",
+        "-m",
+        "unittest",
+        "tools.test_strategy_refactor_ledger",
+        "-q"
+      ],
+      "inputs": [],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/4453e4c5-e606-43dd-95c0-42a79f29a80e.log",
+          "sha256": "ae93b88c2ac7c4975b194be6b78801cabe16a05b31c74bb279e14882aee09374"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/4453e4c5-e606-43dd-95c0-42a79f29a80e.source-tree.json",
+          "sha256": "b295185e383e94752b86856bd39b7706b2bff38eac1133e7a6b1240e5a3ab936"
+        }
+      ],
+      "notes": "Windows acceptance covers complete, partial, blocked and not-started labels; the checker detects stale statuses and missing work-package rows. Evidence remains planned pending human review."
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"

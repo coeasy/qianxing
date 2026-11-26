@@ -1,0 +1,10 @@
+$ python -m unittest tools.test_strategy_refactor_ledger -q
+exit_code=0
+
+[stdout]
+
+[stderr]
+----------------------------------------------------------------------
+Ran 3 tests in 0.000s
+
+OK

@@ -13,9 +13,68 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 LEDGER = ROOT / "maturity" / "strategy-run-refactor-work-packages.json"
 ACCEPTANCE = ROOT / "maturity" / "strategy-run-acceptance-v1.json"
+ARCHITECTURE_DOC = ROOT / "docs" / "architecture-local-server-refactor-review-2026-10-28.md"
 TEXT_ARTIFACT_SUFFIXES = {".json", ".log"}
 EXPECTED_IDS = {f"R{number:02}" for number in range(1, 24)}
 VALID_STATUSES = {"partial", "not_started", "blocked", "complete"}
+DOC_STATUS_LABELS = {
+    "partial": "部分",
+    "not_started": "待开发",
+    "blocked": "阻断",
+    "complete": "完成",
+}
+
+
+def validate_architecture_status_sync(
+    packages: list[object], markdown: str | None = None
+) -> list[str]:
+    """Keep the human-readable plan status aligned with the canonical ledger."""
+    if markdown is None:
+        try:
+            markdown = ARCHITECTURE_DOC.read_text(encoding="utf-8")
+        except OSError as error:
+            return [f"cannot read architecture plan: {error}"]
+
+    expected = {
+        item["id"]: item["status"]
+        for item in packages
+        if isinstance(item, dict)
+        and isinstance(item.get("id"), str)
+        and isinstance(item.get("status"), str)
+    }
+    observed: dict[str, str] = {}
+    errors: list[str] = []
+    for line in markdown.splitlines():
+        if not line.startswith("| R"):
+            continue
+        cells = line.split("|")
+        if len(cells) < 4:
+            continue
+        package_id = cells[1].strip()[:3]
+        if package_id not in EXPECTED_IDS:
+            continue
+        if package_id in observed:
+            errors.append(f"{package_id}: duplicate status row in architecture plan")
+            continue
+        status_cell = cells[2].strip()
+        observed[package_id] = status_cell.rsplit("/", 1)[-1].strip()
+
+    if set(observed) != EXPECTED_IDS:
+        missing = sorted(EXPECTED_IDS - set(observed))
+        extra = sorted(set(observed) - EXPECTED_IDS)
+        errors.append(
+            f"architecture plan status IDs mismatch; missing={missing}, extra={extra}"
+        )
+    for package_id, status in expected.items():
+        label = DOC_STATUS_LABELS.get(status)
+        if label is None:
+            continue
+        actual = observed.get(package_id)
+        if actual is not None and actual != label:
+            errors.append(
+                f"{package_id}: architecture plan status {actual!r} does not match ledger {status!r}"
+            )
+    return errors
 
 
 def validate_r23_scope(packages: list[object], scenarios: list[object]) -> list[str]:
@@ -129,6 +188,7 @@ def validate() -> list[str]:
     if seen != EXPECTED_IDS:
         missing, extra = sorted(EXPECTED_IDS - seen), sorted(seen - EXPECTED_IDS)
         errors.append(f"work package IDs mismatch; missing={missing}, extra={extra}")
+    errors.extend(validate_architecture_status_sync(packages))
 
     try:
         acceptance = json.loads(ACCEPTANCE.read_text(encoding="utf-8"))
