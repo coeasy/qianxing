@@ -119,8 +119,14 @@ fn backtest_preflight_reports_readiness_without_writing_artifacts() {
     let spec = backtest_spec("preflight-ready", &bars, &output_dir);
 
     let report = preflight_backtest_v1(&spec, &research("preflight-ready")).expect("预检成功");
+    let frame_payload = std::fs::read_to_string(&bars).expect("read the verified BarFrame");
+    let frame = qx_datastruct::BarFrame::from_json(&frame_payload).expect("parse BarFrame");
+    let reused_report =
+        qx_app::preflight_backtest_v1_with_frame(&spec, &frame, &research("preflight-ready"))
+            .expect("复用已验证 BarFrame 的预检成功");
 
     assert!(report.ready, "完整匹配的数据应通过: {:?}", report.checks);
+    assert_eq!(reused_report, report, "内存快照路径必须保持相同预检合同");
     assert_eq!(report.schema_version, 1);
     assert_eq!(report.run_id, "preflight-ready");
     assert_eq!(report.data.rows, 40);

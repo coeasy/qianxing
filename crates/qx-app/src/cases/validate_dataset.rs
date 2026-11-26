@@ -61,6 +61,31 @@ pub(super) fn inspect_dataset(spec: &DatasetSpec) -> Result<DatasetInspection, A
             format!("BarFrame 校验失败 {}: {error:?}", spec.bars_path),
         )
     })?;
+    inspection_from_validated_frame(&spec.dataset_id, &frame)
+}
+
+/// Build the same readiness facts from a frame that has already been read and validated.
+///
+/// The backtest command uses this after its canonical input reader has verified the frame
+/// against the Provider manifest. Reusing it avoids parsing and hashing the same JSON file a
+/// second time just to produce the preflight report.
+pub(super) fn inspect_bar_frame(
+    dataset_id: &str,
+    frame: &BarFrame,
+) -> Result<DatasetInspection, AppError> {
+    frame.validate().map_err(|error| {
+        AppError::new(
+            AppErrorCategory::InvalidInput,
+            format!("BarFrame 校验失败: {error:?}"),
+        )
+    })?;
+    inspection_from_validated_frame(dataset_id, frame)
+}
+
+fn inspection_from_validated_frame(
+    dataset_id: &str,
+    frame: &BarFrame,
+) -> Result<DatasetInspection, AppError> {
     let rows = frame.len();
     let content_fingerprint = format!(
         "barframe:{}",
@@ -79,7 +104,7 @@ pub(super) fn inspect_dataset(spec: &DatasetSpec) -> Result<DatasetInspection, A
     }
     Ok(DatasetInspection {
         verdict: DatasetVerdict {
-            dataset_id: spec.dataset_id.clone(),
+            dataset_id: dataset_id.to_owned(),
             instrument: frame.instrument.to_string(),
             rows: rows as u64,
             content_fingerprint,
@@ -88,7 +113,7 @@ pub(super) fn inspect_dataset(spec: &DatasetSpec) -> Result<DatasetInspection, A
         },
         first_ts: frame.ts.first().copied(),
         last_ts: frame.ts.last().copied(),
-        instrument: frame.instrument,
+        instrument: frame.instrument.clone(),
     })
 }
 
