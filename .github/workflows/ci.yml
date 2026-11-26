@@ -331,15 +331,7 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           git fetch --no-tags origin "$BASE_SHA"
-          if git diff --quiet "$BASE_SHA" "$GITHUB_SHA" -- \
-              Cargo.toml Cargo.lock rust-toolchain.toml .cargo/config.toml \
-              crates/qx-core/Cargo.toml crates/qx-core/src crates/qx-core/benches; then
-            echo "profile=pr" >> "$GITHUB_OUTPUT"
-            echo "qx-core and shared Rust build inputs are unchanged; using the scoped PR profile."
-          else
-            echo "profile=pr-core" >> "$GITHUB_OUTPUT"
-            echo "qx-core or shared Rust build inputs changed; including the full qx-core benchmark suite."
-          fi
+          python3 benchmarks/select_criterion_profile.py "$BASE_SHA" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
       - name: Measure end-to-end and kernel performance
         env:
           CRITERION_PROFILE: ${{ github.event_name == 'pull_request' && steps.criterion-scope.outputs.profile || 'full' }}
