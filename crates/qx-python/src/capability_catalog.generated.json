@@ -8,7 +8,7 @@
   },
   "source_sha256": {
     "maturity/capability-matrix.yaml": "c6927e2c6a1a4cc4fad188ca4a393fe1a0f85832738fd9fde55e88cd700d3575",
-    "maturity/capabilities.yaml": "4cfe4c5664fb0ad984b7b5d40e4ce87404cff2098bba2b7281f8863db73b9c07",
+    "maturity/capabilities.yaml": "fafd0958b925229d563458e12307527ec13c68ef5fd2e378b8c2ef5867aa9b90",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
   "product_levels": [
@@ -210,7 +210,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 86,
+      "evidence_path_count": 87,
       "limitation_count": 3
     },
     {
@@ -1953,7 +1953,8 @@
             "maturity/evidence/ccxt-public-quickstart-2026-11-13.json records run 43382383244 and the Bitget regression; maturity/evidence/ccxt-public-quickstart-2026-11-13-c6acd342.json records run 43390976787; maturity/evidence/ccxt-public-quickstart-2026-11-13-c435e3d3.json records run 43393595406; maturity/evidence/ccxt-public-quickstart-2026-11-13-ba2b717a.json records run 43397625762; maturity/evidence/ccxt-public-quickstart-2026-11-13-4290cd31.json records run 43408514771 on source 4290cd31. The latest run also verified that runtime workers and strategy venue match the selected exchange; private workers receive environment variable names only, with execution disabled. OKX and Bitget completed real public 30-day 1h OHLCV, quality manifest, public default fees, backtest, and HTML report with 720 bars, no gaps, 38 fills, and zero rejected orders. Binance passed scaffold initialization and public quickstart checks before public exchangeInfo returned HTTP 451 on this runner. No credentials or orders were used; private execution remains unverified.",
             "maturity/evidence/ccxt-public-quickstart-2026-11-13-long-window.json",
             "maturity/evidence/ccxt-public-quickstart-2026-11-13-run44.json",
-            "tools/backtest_acceptance.py creates `report --evidence` bundles for every crypto quickstart and A-share example rerun, then requires `evidence verify-run` before recording the five artifact SHA-256 values; same-directory reruns compare bundle bytes and independent directories compare normalized bundle contents with referenced artifact digests rebound after verification; maturity/backtest_acceptance.yaml and maturity/ashare_example_backtest_acceptance.yaml record verified bundle hashes; python/tests/test_backtest_acceptance.py checks path/config normalization without erasing run identity"
+            "tools/backtest_acceptance.py creates `report --evidence` bundles for every crypto quickstart and A-share example rerun, then requires `evidence verify-run` before recording the five artifact SHA-256 values; same-directory reruns compare bundle bytes and independent directories compare normalized bundle contents with referenced artifact digests rebound after verification; maturity/backtest_acceptance.yaml and maturity/ashare_example_backtest_acceptance.yaml record verified bundle hashes; python/tests/test_backtest_acceptance.py checks path/config normalization without erasing run identity",
+            "maturity/evidence/python-project-evidence-quickstart-2026-11-26.json records a local Windows integration of Python sample quickstart through HTML/JSON reporting, EvidenceBundle creation and `evidence verify-run`; the Python report status binds the bundle path and SHA-256, and refuses path mismatch or failed input identity verification. This is a dirty debug build, not clean-wheel or hosted cross-platform acceptance."
           ],
           "limitations_count": 3
         }

@@ -92,7 +92,7 @@ class NativeProjectRunTests(unittest.TestCase):
         project = Path(self.temp.name) / "python quickstart"
         with contextlib.redirect_stdout(io.StringIO()) as output, contextlib.redirect_stderr(io.StringIO()) as errors:
             code = self.cli.main([
-                "quickstart", str(project), "--rows", "80", "--cli", renderer,
+                "quickstart", str(project), "--rows", "80", "--format", "html,json", "--cli", renderer,
             ])
         self.assertEqual(code, 0, errors.getvalue())
         result = json.loads(output.getvalue())
@@ -104,6 +104,10 @@ class NativeProjectRunTests(unittest.TestCase):
         self.assertTrue(result["artifacts_verified"])
         self.assertEqual(result["report"]["status"], "succeeded")
         self.assertTrue(Path(result["report"]["report_paths"]["html"]).is_file())
+        self.assertTrue(result["run_evidence"]["integrity_verified"])
+        self.assertTrue(result["run_evidence"]["input_identity_recomputed"])
+        self.assertTrue(Path(result["run_evidence"]["bundle_path"]).is_file())
+        self.assertTrue(Path(result["report"]["report_artifacts"]["json"]["path"]).is_file())
         record = self.runs.project_run_status(project, result["project_run_id"])
         self.assertEqual(record["status"], "succeeded")
         self.assertTrue(self.runs.verify_project_artifacts(project, result["project_run_id"])["verified"])

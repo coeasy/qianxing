@@ -216,7 +216,7 @@ identity changes have not yet received a new runtime acceptance pass. Native tes
 
 ## Generate a verified report
 
-Use `qianxing project report PROJECT PROJECT_RUN_ID` to generate the completed run report. It checks indexed artifact bytes before invoking Rust. The default HTML, `report.log` and `report-status.json` live beside the run receipt; `-o` chooses an HTML path relative to the project root. See [report layout and details](backtest-report-layout.md).
+Use `qianxing project report PROJECT PROJECT_RUN_ID` to generate the completed run report. It checks indexed artifact bytes before invoking Rust. Add `--evidence` to create a run EvidenceBundle and have the bundled Rust CLI verify its file digests and input identity offline. The default HTML, `report.log` and `report-status.json` live beside the run receipt; `-o` chooses an HTML path relative to the project root. See [report layout and details](backtest-report-layout.md).
 
 The renderer is the shared Rust `qx-cli`, selected by one chain with no silent substitute:
 `--cli PATH` always wins, otherwise the copy bundled inside the installed wheel

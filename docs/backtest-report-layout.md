@@ -31,11 +31,12 @@
 
 ```sh
 qianxing project report ./my-project PROJECT_RUN_ID
+qianxing project report ./my-project PROJECT_RUN_ID --evidence
 qianxing project report ./my-project PROJECT_RUN_ID -o reports/run.html
 qianxing project report ./my-project PROJECT_RUN_ID --cli /path/to/qx-cli   # 显式指定渲染器
 ```
 
-默认输出到该运行的 `.qianxing/runs/PROJECT_RUN_ID/report.html`。命令先核对已登记产物的字节摘要，再调用 Rust 进行报告校验和生成，保留独立的 `report.log` / `report-status.json`。生成报告失败不修改原回测终态。渲染器按「`--cli` > wheel 内置的 `qianxing/_bin/qx-cli` > PATH 上的 `qx-cli`」单链选中即用，不做静默替换；三个落点都不存在时报告阶段以 `report_renderer_missing` 失败并给出 `--cli PATH` 的修法，回测本身的状态不变。发布 wheel 前由构建脚本把宿主平台 `qx-cli` 装进包内，所以干净 venv 只装 wheel 也能出报告（见 [SDK 项目运行](strategy-project-runs.md) 的报告一节）。不支持的 outcome 应使用其专用报告入口。
+默认输出到该运行的 `.qianxing/runs/PROJECT_RUN_ID/report.html`。命令先核对已登记产物的字节摘要，再调用 Rust 进行报告校验和生成，保留独立的 `report.log` / `report-status.json`。`--evidence` 会要求 Rust 从本轮 summary 生成同路径 EvidenceBundle，再调用匹配 CLI 执行 `evidence verify-run`；路径、输入身份或文件摘要不匹配时，报告状态失败并保留工件摘要。该校验不重跑策略，因此 `result_recomputed` 仍为 false。报告输出不得覆盖证据包路径。生成报告失败不修改原回测终态。渲染器按「`--cli` > wheel 内置的 `qianxing/_bin/qx-cli` > PATH 上的 `qx-cli`」单链选中即用，不做静默替换；三个落点都不存在时报告阶段以 `report_renderer_missing` 失败并给出 `--cli PATH` 的修法，回测本身的状态不变。发布 wheel 前由构建脚本把宿主平台 `qx-cli` 装进包内，所以干净 venv 只装 wheel 也能出报告（见 [SDK 项目运行](strategy-project-runs.md) 的报告一节）。不支持的 outcome 应使用其专用报告入口。
 
 ## 验证与边界
 

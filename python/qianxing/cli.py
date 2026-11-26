@@ -392,6 +392,10 @@ def _parser() -> argparse.ArgumentParser:
         "--format", default="html", metavar="LIST",
         help="comma-separated report formats: html, xlsx, json (default: html)",
     )
+    project_report.add_argument(
+        "--evidence", action="store_true",
+        help="create and offline-verify a run EvidenceBundle alongside the report",
+    )
     deployments = project_commands.add_parser("deployments", help="query observed server strategy processes")
     deployments.add_argument("project_path")
     deployments.add_argument("--api-url", required=True, help="Qianxing API origin")
@@ -814,6 +818,7 @@ def _run_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any] | Non
             executable=args.cli,
             output=args.report_output,
             formats=formats,
+            evidence=True,
         )
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         raise ValueError(
@@ -838,6 +843,7 @@ def _run_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any] | Non
         "project_run_id": run_id,
         "artifacts_verified": integrity["verified"],
         "report": report,
+        "run_evidence": report["run_evidence"],
     }
 
 
@@ -1161,7 +1167,8 @@ def _dispatch_command(argv: Sequence[str] | None = None) -> int:
                     root, _manifest = load_strategy_project(args.project_path)
                     run_id = args.run_id if args.run_id is not None else latest_project_run_id(root)
                     result = generate_project_report(root, run_id, executable=args.cli,
-                                                     output=args.output, formats=args.format)
+                                                     output=args.output, formats=args.format,
+                                                     evidence=args.evidence)
                 elif args.project_command == "deployments":
                     context = None
                     if args.client_key and not args.client_cert:
