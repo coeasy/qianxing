@@ -111,6 +111,11 @@ def criterion_estimate_path(benchmark: str, criterion_root: Path | None = None) 
     return nested
 
 
+def cargo_target_root(workspace_root: Path, target_dir: Path | None = None) -> Path:
+    """Resolve Cargo's output directory for source-specific benchmark artifacts."""
+    return (target_dir or workspace_root / "target").resolve()
+
+
 def criterion_plan(cargo: str, profile: str) -> tuple[set[str], list[list[str]]]:
     if profile not in {"full", "pr"}:
         raise ValueError(f"unsupported Criterion profile: {profile}")
@@ -143,12 +148,14 @@ def criterion_plan(cargo: str, profile: str) -> tuple[set[str], list[list[str]]]
     return required, commands
 
 
-def criterion_estimates(required: set[str] = CRITERION_REQUIRED) -> list[dict]:
+def criterion_estimates(
+    required: set[str] = CRITERION_REQUIRED, criterion_root: Path | None = None
+) -> list[dict]:
     records = []
     for benchmark in sorted(required):
         # Workspace Criterion groups share target/criterion; crate-owned groups use
         # distinct benchmark ids so one package cannot overwrite another package's sample.
-        path = criterion_estimate_path(benchmark)
+        path = criterion_estimate_path(benchmark, criterion_root)
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except OSError as error:
@@ -235,8 +242,17 @@ def steady_state_tick_curve(records: list[dict]) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--out", type=Path)
     parser.add_argument(
-        "--out", type=Path, default=ROOT / "benchmarks" / "results" / "rust-micro.json"
+        "--workspace-root",
+        type=Path,
+        default=ROOT,
+        help="workspace whose source and benchmark targets are measured",
+    )
+    parser.add_argument(
+        "--target-dir",
+        type=Path,
+        help="Cargo output directory when it differs from <workspace-root>/target",
     )
     parser.add_argument("--cargo", default="cargo")
     parser.add_argument(
@@ -251,11 +267,14 @@ def main() -> int:
         help="full runs the complete benchmark ledger; pr measures the stable core hot-path subset",
     )
     args = parser.parse_args()
+    workspace_root = args.workspace_root.resolve()
+    criterion_root = cargo_target_root(workspace_root, args.target_dir) / "criterion"
+    output_path = args.out or workspace_root / "benchmarks" / "results" / "rust-micro.json"
     required_criterion, criterion_commands = criterion_plan(args.cargo, args.profile)
     for criterion_command in (() if args.skip_criterion else criterion_commands):
         criterion_process = subprocess.run(
             criterion_command,
-            cwd=ROOT,
+            cwd=workspace_root,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -266,13 +285,13 @@ def main() -> int:
             sys.stderr.write(criterion_process.stderr)
             return criterion_process.returncode
     try:
-        criterion_records = criterion_estimates(required_criterion)
+        criterion_records = criterion_estimates(required_criterion, criterion_root)
     except (OSError, KeyError, json.JSONDecodeError) as error:
         benchmark = str(error).split(":", 1)[0]
         group = benchmark.split("/", 1)[0]
-        group_root = ROOT / "target" / "criterion" / group
+        group_root = criterion_root / group
         found = sorted(
-            str(path.relative_to(ROOT / "target" / "criterion"))
+            str(path.relative_to(criterion_root))
             for path in group_root.rglob("estimates.json")
             if path.parent.name == "new"
         ) if group_root.is_dir() else []
@@ -293,7 +312,7 @@ def main() -> int:
     ]
     process = subprocess.run(
         command,
-        cwd=ROOT,
+        cwd=workspace_root,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -325,7 +344,7 @@ def main() -> int:
         "schema_version": 1,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "hardware": hardware_fingerprint(),
-        "measurement_source_fingerprint": measurement_source_fingerprint(ROOT),
+        "measurement_source_fingerprint": measurement_source_fingerprint(workspace_root),
         "measurement_source_fingerprint_schema": MEASUREMENT_SOURCE_FINGERPRINT_SCHEMA,
         "command": command,
         "criterion_commands": criterion_commands,
@@ -335,9 +354,11 @@ def main() -> int:
         "records": records,
         "steady_state_tick_curve": steady_state_tick_curve(records),
     }
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(f"saved {len(records)} Rust benchmark records to {args.out}")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    print(f"saved {len(records)} Rust benchmark records to {output_path}")
     return 0
 
 
