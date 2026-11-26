@@ -696,6 +696,8 @@ impl OrderBookBacktestEngine {
                         EventKind::Rejected {
                             client_order_id: order.client_id,
                             reason: "订单账户或标的与回测配置不一致".into(),
+                            reference_price_exact: None,
+                            order_snapshot: None,
                         },
                     );
                     continue;
@@ -708,6 +710,8 @@ impl OrderBookBacktestEngine {
                         EventKind::Rejected {
                             client_order_id: order.client_id,
                             reason: "DepthFrame v2 精确盘口要求精确数量订单；拒绝把 legacy 1e-9 订单回退到盘口投影".into(),
+                            reference_price_exact: None,
+                            order_snapshot: None,
                         },
                     );
                     continue;
@@ -722,6 +726,8 @@ impl OrderBookBacktestEngine {
                         EventKind::Rejected {
                             client_order_id: order.client_id,
                             reason: "精确订单要求策略实现 exact hooks 且当前盘口为 DepthFrame v2；否则拒绝将精确持仓或盘口折算为 1e-9".into(),
+                            reference_price_exact: None,
+                            order_snapshot: None,
                         },
                     );
                     continue;
@@ -734,6 +740,8 @@ impl OrderBookBacktestEngine {
                         EventKind::Rejected {
                             client_order_id: order.client_id,
                             reason: "精确盘口撮合暂不支持队列位置估算模型".into(),
+                            reference_price_exact: None,
+                            order_snapshot: None,
                         },
                     );
                     continue;
@@ -752,6 +760,8 @@ impl OrderBookBacktestEngine {
                             EventKind::Rejected {
                                 client_order_id: order.client_id,
                                 reason: "衍生品订单必须显式携带 OrderPolicy".into(),
+                                reference_price_exact: None,
+                                order_snapshot: None,
                             },
                         );
                         continue;
@@ -807,6 +817,8 @@ impl OrderBookBacktestEngine {
                             EventKind::Rejected {
                                 client_order_id: order.client_id,
                                 reason: error.to_string(),
+                                reference_price_exact: None,
+                                order_snapshot: None,
                             },
                         );
                         continue;
@@ -948,6 +960,8 @@ impl OrderBookBacktestEngine {
                             EventKind::Rejected {
                                 client_order_id: order.client_id,
                                 reason,
+                                reference_price_exact: None,
+                                order_snapshot: None,
                             },
                         );
                         continue;
@@ -981,6 +995,8 @@ impl OrderBookBacktestEngine {
                                 EventKind::Rejected {
                                     client_order_id: order.client_id,
                                     reason: "衍生品组合保证金计算缺少参考价".into(),
+                                    reference_price_exact: None,
+                                    order_snapshot: None,
                                 },
                             );
                             continue;
@@ -1001,6 +1017,8 @@ impl OrderBookBacktestEngine {
                             EventKind::Rejected {
                                 client_order_id: order.client_id,
                                 reason: "衍生品组合保证金计算缺少参考价".into(),
+                                reference_price_exact: None,
+                                order_snapshot: None,
                             },
                         );
                         continue;
@@ -1038,6 +1056,8 @@ impl OrderBookBacktestEngine {
                         EventKind::Rejected {
                             client_order_id: order.client_id,
                             reason: error.to_string(),
+                            reference_price_exact: None,
+                            order_snapshot: None,
                         },
                     );
                     continue;
@@ -1072,6 +1092,8 @@ impl OrderBookBacktestEngine {
                         EventKind::Rejected {
                             client_order_id: order.client_id,
                             reason: error.to_string(),
+                            reference_price_exact: None,
+                            order_snapshot: None,
                         },
                     );
                     continue;

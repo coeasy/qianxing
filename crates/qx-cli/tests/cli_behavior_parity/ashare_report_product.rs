@@ -384,7 +384,7 @@ fn ashare_runs_export_documents_and_compare_on_the_same_input() {
         let report: Value =
             serde_json::from_str(&stdout).expect("report --json emits one JSON value");
         assert_eq!(report["input_check"]["verdict"], "verified");
-        assert_eq!(report["summary"]["schema_version"], 8);
+        assert_eq!(report["summary"]["schema_version"], 9);
         assert_eq!(
             report["summary"]["ashare_analysis"]["issuer_capital_at_end"]["total_shares_raw"],
             "1000000000000"

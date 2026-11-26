@@ -509,7 +509,7 @@ fn depth_backtest_rejects_exact_orders_for_legacy_strategies() {
     assert!(report.fills.is_empty());
     assert!(report.event_log.events().iter().any(|event| matches!(
         &event.kind,
-        EventKind::Rejected { client_order_id: 77, reason }
+        EventKind::Rejected { client_order_id: 77, reason, .. }
             if reason.contains("策略实现 exact hooks")
     )));
 }
@@ -525,7 +525,7 @@ fn depth_backtest_rejects_legacy_orders_on_exact_books_at_admission() {
     assert!(report.fills.is_empty());
     assert!(report.event_log.events().iter().any(|event| matches!(
         &event.kind,
-        EventKind::Rejected { client_order_id: 1, reason }
+        EventKind::Rejected { client_order_id: 1, reason, .. }
             if reason.contains("要求精确数量订单")
     )));
 }
@@ -903,7 +903,7 @@ fn exact_derivative_depth_rejects_margin_that_raw_quantity_projection_would_hide
     assert!(report.fills.is_empty());
     assert!(report.event_log.events().iter().any(|event| matches!(
         &event.kind,
-        EventKind::Rejected { client_order_id: 780, reason }
+        EventKind::Rejected { client_order_id: 780, reason, .. }
             if reason.contains("初始保证金")
     )));
 }
@@ -1093,7 +1093,7 @@ fn exact_spot_sell_reserves_inventory_across_competing_orders() {
     assert_eq!(report.fills[1].order_id, 900);
     assert!(report.event_log.events().iter().any(|event| matches!(
         &event.kind,
-        EventKind::Rejected { client_order_id: 901, reason }
+        EventKind::Rejected { client_order_id: 901, reason, .. }
             if reason.contains("扣除待成交卖单后的可用持仓")
     )));
     assert_eq!(
@@ -1156,6 +1156,7 @@ fn exact_spot_pending_orders_reserve_shared_cash_before_acceptance() {
             EventKind::Rejected {
                 client_order_id,
                 reason,
+                ..
             } if reason.contains("超过订单簿回测可用现金") => Some(*client_order_id),
             _ => None,
         })
@@ -1198,7 +1199,7 @@ fn exact_spot_order_rejects_queue_position_estimation() {
     assert!(report.fills.is_empty());
     assert!(report.event_log.events().iter().any(|event| matches!(
         &event.kind,
-        EventKind::Rejected { client_order_id: 78, reason }
+        EventKind::Rejected { client_order_id: 78, reason, .. }
             if reason.contains("暂不支持队列位置估算模型")
     )));
 }
@@ -1384,6 +1385,8 @@ fn derivative_orders_share_one_projected_portfolio_margin_budget() {
             EventKind::Rejected {
                 client_order_id: 102,
                 reason,
+                reference_price_exact: None,
+                order_snapshot: None,
             } => Some(reason),
             _ => None,
         })

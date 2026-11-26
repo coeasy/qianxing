@@ -734,6 +734,8 @@ impl LiveEventPipeline {
                     EventKind::Rejected {
                         client_order_id: *client_order_id,
                         reason: reason.clone(),
+                        reference_price_exact: None,
+                        order_snapshot: None,
                     },
                     Priority::FEEDBACK,
                 )

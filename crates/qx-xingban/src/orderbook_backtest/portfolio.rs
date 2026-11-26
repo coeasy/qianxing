@@ -763,6 +763,8 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                                 EventKind::Rejected {
                                     client_order_id: global_id,
                                     reason: "策略本地 client_id 必须为正且在本市场唯一".into(),
+                                    reference_price_exact: None,
+                                    order_snapshot: None,
                                 },
                             );
                             continue;
@@ -780,6 +782,8 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                                 EventKind::Rejected {
                                     client_order_id: global_id,
                                     reason: "订单账户或标的与共享订单簿市场不一致".into(),
+                                    reference_price_exact: None,
+                                    order_snapshot: None,
                                 },
                             );
                             continue;
@@ -793,6 +797,8 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                                 EventKind::Rejected {
                                     client_order_id: global_id,
                                     reason: "共享多市场 DepthFrame v2 精确盘口要求精确数量订单；拒绝把 legacy 1e-9 订单回退到盘口投影".into(),
+                                    reference_price_exact: None,
+                                    order_snapshot: None,
                                 },
                             );
                             continue;
@@ -808,6 +814,8 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                                 EventKind::Rejected {
                                     client_order_id: global_id,
                                     reason: "共享订单簿精确订单要求 DepthFrame v2 且策略实现 exact hooks".into(),
+                                    reference_price_exact: None,
+                                    order_snapshot: None,
                                 },
                             );
                             continue;
@@ -822,6 +830,8 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                                 EventKind::Rejected {
                                     client_order_id: global_id,
                                     reason: "共享精确盘口撮合暂不支持队列位置估算模型".into(),
+                                    reference_price_exact: None,
+                                    order_snapshot: None,
                                 },
                             );
                             continue;
@@ -841,6 +851,8 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                                 EventKind::Rejected {
                                     client_order_id: global_id,
                                     reason: "共享衍生订单必须显式携带 OrderPolicy".into(),
+                                    reference_price_exact: None,
+                                    order_snapshot: None,
                                 },
                             );
                             continue;
@@ -889,6 +901,8 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                                 EventKind::Rejected {
                                     client_order_id: global_id,
                                     reason: error.to_string(),
+                                    reference_price_exact: None,
+                                    order_snapshot: None,
                                 },
                             );
                             continue;
@@ -1032,6 +1046,8 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                                     EventKind::Rejected {
                                         client_order_id: global_id,
                                         reason,
+                                        reference_price_exact: None,
+                                        order_snapshot: None,
                                     },
                                 );
                                 continue;
@@ -1052,6 +1068,8 @@ impl<'a> OrderBookPortfolioBacktestEngine<'a> {
                                 EventKind::Rejected {
                                     client_order_id: global_id,
                                     reason: error.to_string(),
+                                    reference_price_exact: None,
+                                    order_snapshot: None,
                                 },
                             );
                             continue;

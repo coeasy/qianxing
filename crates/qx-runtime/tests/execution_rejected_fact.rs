@@ -56,7 +56,8 @@ fn execution_rejection_is_persisted_and_replayed_into_oms() {
         &event.kind,
         EventKind::Rejected {
             client_order_id: 7001,
-            reason
+            reason,
+            ..
         } if reason == "filter failure"
     )));
     let reopened = LiveEventPipeline::open(&root, "port-main", "USDT").unwrap();

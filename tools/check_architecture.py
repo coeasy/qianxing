@@ -4212,12 +4212,13 @@ def replay_kernel_check() -> None:
     )
     check(
         '"schema_version": BACKTEST_SUMMARY_SCHEMA_VERSION' in artifact
-        and "pub const BACKTEST_SUMMARY_SCHEMA_VERSION: u32 = 8" in artifact
+        and "pub const BACKTEST_SUMMARY_SCHEMA_VERSION: u32 = 9" in artifact
+        and '"rejection_detail_readout"' in artifact
         and '"max_drawdown_raw": input.max_drawdown_raw.to_string()' in artifact
         and '"log_digest"' in artifact
         and '"ledger_entries"' in artifact
         and '"run_ledger_entries"' in artifact,
-        "v8 摘要写入重放证据和无损原始最大回撤金额",
+        "v9 摘要写入重放证据、无损原始最大回撤金额和逐笔拒单详情",
         "replay 结论块缺键或 schema 版本回退",
     )
     depth = production_text((ROOT / REPLAY_ENGINE_FILES[1]).read_text(encoding="utf-8"))
@@ -8779,9 +8780,9 @@ def backtest_account_base_check() -> None:
         summary.count(SUMMARY_ACCOUNT_BLOCK) == 1
         and summary.count("input.account_base.cash.raw()") == 1
         and '"schema_version": BACKTEST_SUMMARY_SCHEMA_VERSION' in summary
-        and "pub const BACKTEST_SUMMARY_SCHEMA_VERSION: u32 = 8" in summary
+        and "pub const BACKTEST_SUMMARY_SCHEMA_VERSION: u32 = 9" in summary
         and '"max_drawdown_raw": input.max_drawdown_raw.to_string()' in summary,
-        "摘要以 v8 保留 account 块并扩展风险比率/RunRecord/A 股分析/逐单执行记录和原始最大回撤金额，期初本金仍取自真正记账的那一份",
+        "摘要以 v9 保留 account 块并扩展风险比率/RunRecord/A 股分析/逐单执行记录、原始最大回撤金额和逐笔拒单详情，期初本金仍取自真正记账的那一份",
         f"来源格 {summary.count(SUMMARY_ACCOUNT_BLOCK)} / 本金格 {summary.count('input.account_base.cash.raw()')}",
     )
     # 4. 配置面：省略时序列化字节不变，已 bless 的 config_fingerprint 才不会集体失真。
@@ -19069,15 +19070,15 @@ def artifact_migration_check() -> None:
     refusal_test_path = ROOT / "crates/qx-cli/tests/unit/blessed_artifacts.rs"
     refusal_test_text = refusal_test_path.read_text(encoding="utf-8") if refusal_test_path.is_file() else ""
     check(
-        summary_value("current_version") == "8"
+        summary_value("current_version") == "9"
         and summary_value("writer_const") == "BACKTEST_SUMMARY_SCHEMA_VERSION"
-        and f"pub const {summary_value('writer_const')}: u32 = 8;" in writer_text
-        and "!(5..=8).contains(&schema)" in reader_text
-        and summary_value("report_accepts") == "5,6,7,8"
+        and f"pub const {summary_value('writer_const')}: u32 = 9;" in writer_text
+        and "!(5..=9).contains(&schema)" in reader_text
+        and summary_value("report_accepts") == "5,6,7,8,9"
         and summary_value("acceptance_case") in summary_test_text
         and summary_value("refusal_case") in refusal_test_text,
         "回测 summary 世代矩阵与当前 writer、report reader 及真实兼容/拒绝用例一致",
-        "summary schema 矩阵缺项或与 v8 writer / v5-v8 reader / 常驻用例漂移",
+        "summary schema 矩阵缺项或与 v9 writer / v5-v9 reader / 常驻用例漂移",
     )
     expected_summary_versions = {
         "v1": "refuse",
@@ -19087,8 +19088,8 @@ def artifact_migration_check() -> None:
         "v5": "read",
         "v6": "read",
         "v7": "read",
-        "v8": "read_write",
-        "v9": "refuse",
+        "v8": "read",
+        "v9": "read_write",
         "future": "refuse",
     }
     expected_summary_features = {
@@ -19099,6 +19100,7 @@ def artifact_migration_check() -> None:
         "ashare_analysis": "6",
         "execution_attempts": "7",
         "max_drawdown_raw": "8",
+        "rejection_detail_readout": "9",
     }
     check(
         {key: row.get("report") for key, row in summary_versions.items()}
@@ -19107,7 +19109,7 @@ def artifact_migration_check() -> None:
             key: row.get("introduced_in") for key, row in summary_features.items()
         }
         == expected_summary_features,
-        "回测 summary v1-v9 可读性和 v2-v8 能力字段引入世代完整登记",
+        "回测 summary v1-v9 可读性和 v2-v9 能力字段引入世代完整登记",
         f"版本矩阵={summary_versions} / 字段矩阵={summary_features}",
     )
 

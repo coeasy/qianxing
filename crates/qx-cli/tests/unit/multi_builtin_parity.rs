@@ -153,7 +153,7 @@ fn multi_builtin_backtest_entry_writes_spread_attribution_from_leg_fills() {
             assert!(summary["run_manifest"].as_str().is_some());
         } else {
             assert_eq!(
-                summary["schema_version"], 8,
+                summary["schema_version"], 9,
                 "腿级回测摘要使用当前 v8 schema"
             );
             assert_eq!(summary["replay"]["log_digest"], summary["result_hash"]);
