@@ -9,6 +9,7 @@ import json
 import os
 import platform
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -94,6 +95,34 @@ def repo_file(raw: str) -> tuple[Path, str]:
     if not path.is_file():
         raise ValueError(f"file does not exist: {raw}")
     return path, relative
+
+
+def stage_ci_acceptance_artifacts(
+    artifact_paths: list[Path],
+    *,
+    repository_root: Path = ROOT,
+    runner_temp: str | Path | None = None,
+) -> Path | None:
+    """Copy only this run's evidence and current ledger to the Actions temp area."""
+    if runner_temp is None:
+        runner_temp = os.environ.get("RUNNER_TEMP")
+    if not runner_temp:
+        return None
+
+    repository_root = repository_root.resolve()
+    staging_root = Path(runner_temp) / "qianxing-acceptance-evidence"
+    for raw_path in artifact_paths:
+        source = Path(raw_path).resolve()
+        try:
+            relative = source.relative_to(repository_root)
+        except ValueError as error:
+            raise ValueError(f"acceptance artifact must stay inside the repository: {raw_path}") from error
+        if not source.is_file():
+            raise ValueError(f"acceptance artifact does not exist: {raw_path}")
+        destination = staging_root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+    return staging_root
 
 
 @contextmanager
@@ -212,6 +241,8 @@ def main() -> int:
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)
+
+    stage_ci_acceptance_artifacts((log_path, source_manifest_path, CATALOG))
 
     print(f"{record['outcome']}: {args.acceptance_id} ({run_id})")
     print(f"Evidence: {record['artifacts'][0]['path']}")
