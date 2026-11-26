@@ -15607,6 +15607,26 @@ def release_supply_chain_check() -> None:
         f"PyPI-before-public-GitHub={pypi_publish_after_draft}",
     )
     publish_job = release_job_sections["publish-python"]
+    checks_source = "release_sha: ${{ needs.version-consistency.outputs.release_sha }}"
+    check(
+        checks_source in quality_job
+        and checks_source in text.split("    uses: ./.github/workflows/public-ccxt-quickstart.yml", 1)[-1].split("\n  binary:", 1)[0]
+        and "QX_EXPECTED_RELEASE_SHA" in wheel_job
+        and 'qianxing.doctor()["report_renderer"]' in wheel_job,
+        "发布验收与 wheel 内置 CLI 核对冻结标签提交",
+        "CI、公共行情验收或已安装 wheel 的发布提交检查缺失",
+    )
+    draft_job = release_job_sections["release"]
+    wheel_artifact_pattern = "pattern: wheel-*"
+    check(
+        "pattern: '!python-wheel-*'" in draft_job
+        and wheel_artifact_pattern in draft_job
+        and wheel_artifact_pattern in publish_job
+        and 'gh release download "$QX_RELEASE_TAG" --pattern \'*.whl\'' in draft_job
+        and 'diff -qr "$RUNNER_TEMP/pypi-wheels" "$RUNNER_TEMP/draft-wheels"' in draft_job,
+        "草稿 Release 排除 CI 测试 wheel，并在上传 PyPI 前逐文件比对两个渠道",
+        "草稿 Release 的 wheel 来源或两个渠道的文件比对缺失",
+    )
     pyproject = ROOT / "python" / "pyproject.toml"
     pyproject_text = pyproject.read_text(encoding="utf-8") if pyproject.is_file() else ""
     check(
