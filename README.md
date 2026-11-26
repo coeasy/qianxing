@@ -167,6 +167,8 @@ cargo run -p qx-cli -- status qianxing.runtime.json
 cargo run -p qx-cli -- report qianxing.runtime.json
 cargo run -p qx-cli -- report qianxing.runtime.json --json
 qx-cli quickstart my-qx --strategy macd --html
+# 本地完成 Scheduler → Strategy → Paper Execution → Ledger；使用合成报价，不联网或实盘下单
+qx-cli quickstart my-paper --profile paper
 cargo run -p qx-cli -- builtin-strategies
 cargo run -p qx-cli -- strategy list
 cargo run -p qx-cli -- strategy init macd qianxing.strategy.macd.json

@@ -21,6 +21,7 @@ pub(crate) enum QuickstartProfile {
     Builtin,
     Ashare,
     Ccxt,
+    Paper,
 }
 
 impl QuickstartProfile {
@@ -29,6 +30,7 @@ impl QuickstartProfile {
             Self::Builtin => "builtin",
             Self::Ashare => "ashare",
             Self::Ccxt => "ccxt",
+            Self::Paper => "paper",
         }
     }
 }
@@ -59,7 +61,7 @@ pub(crate) enum Command {
     #[command(name = "quickstart")]
     Quickstart {
         project: Option<PathBuf>,
-        /// 首跑场景；ashare 使用本地 A 股样例，ccxt 使用真实公开行情只读回测。
+        /// 首跑场景；paper 在本地完成合成行情的 Paper 链路，不连交易所、不发实盘单。
         #[arg(long, value_enum, default_value_t = QuickstartProfile::Builtin)]
         profile: QuickstartProfile,
         /// 额外生成自包含 HTML 报告与三张 SVG 图表。
