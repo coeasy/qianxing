@@ -898,8 +898,10 @@ async function refreshReadModels() {
         Array.isArray(deployment.blocking_reasons) ? deployment.blocking_reasons.join(", ") : "响应缺少阻塞原因"]);
       const reconciliation = deployment.reconciliation;
       if (reconciliation) {
+        const freshnessAge = reconciliation.freshest_age_ms;
+        const freshnessAgeText = freshnessAge === null || freshnessAge === undefined ? "—" : `${freshnessAge}ms`;
         deploymentRows.push([`${deployment.worker_id} / 账户对账`,
-          `${reconciliation.state}; fresh=${reconciliation.fresh_report_count}/${reconciliation.matching_report_count}; age=${reconciliation.freshest_age_ms === null ? "—" : `${reconciliation.freshest_age_ms}ms`}`]);
+          `${reconciliation.state}; fresh=${reconciliation.fresh_report_count}/${reconciliation.matching_report_count}; age=${freshnessAgeText}`]);
         if (Array.isArray(reconciliation.blocking_reasons) && reconciliation.blocking_reasons.length) {
           deploymentRows.push([`${deployment.worker_id} / 对账阻塞`, reconciliation.blocking_reasons.join(", ")]);
         }

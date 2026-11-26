@@ -123,6 +123,12 @@ test("deployment rows keep missing trading authorization unevaluated", async () 
       desired_running: true,
       observed_at_ms: 1_000,
       blocking_reasons: [],
+      reconciliation: {
+        state: "unknown",
+        fresh_report_count: 0,
+        matching_report_count: 0,
+        blocking_reasons: [],
+      },
     },
     {
       worker_id: "blocked-worker",
@@ -133,10 +139,33 @@ test("deployment rows keep missing trading authorization unevaluated", async () 
       trading_enabled: false,
       blocking_reasons: ["operator authorization missing"],
     },
+    {
+      worker_id: "null-worker",
+      state: "unknown",
+      desired_revision: null,
+      desired_running: null,
+      observed_at_ms: null,
+      trading_enabled: null,
+      blocking_reasons: [],
+      reconciliation: {
+        state: "unknown",
+        fresh_report_count: 0,
+        matching_report_count: 0,
+        freshest_age_ms: null,
+        blocking_reasons: [],
+      },
+    },
   ]);
   const legacy = rows.deploymentRows.find(([label]) => label === "legacy-worker");
   const blocked = rows.deploymentRows.find(([label]) => label === "blocked-worker");
+  const unknown = rows.deploymentRows.find(([label]) => label === "null-worker");
   assert.match(legacy[1], /trading_enabled=未评估/);
   assert.doesNotMatch(legacy[1], /undefined/);
+  const oldReconciliation = rows.deploymentRows.find(([label]) => label === "legacy-worker / 账户对账");
+  assert.match(oldReconciliation[1], /age=—/);
+  assert.doesNotMatch(oldReconciliation[1], /undefinedms/);
   assert.match(blocked[1], /trading_enabled=false/);
+  assert.match(unknown[1], /trading_enabled=未评估/);
+  const nullReconciliation = rows.deploymentRows.find(([label]) => label === "null-worker / 账户对账");
+  assert.match(nullReconciliation[1], /age=—/);
 });
