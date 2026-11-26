@@ -1388,6 +1388,7 @@ pub(crate) fn append_rejection(
     reason: &str,
     reference_price_exact: Option<qx_core::ExactDecimal>,
 ) -> u64 {
+    let retain_details = log.can_record_rejection_detail();
     let seq = log.alloc_seq();
     log.append(Event::new(
         seq,
@@ -1396,8 +1397,12 @@ pub(crate) fn append_rejection(
         EventKind::Rejected {
             client_order_id: order.client_id,
             reason: reason.into(),
-            reference_price_exact,
-            order_snapshot: Some(Box::new(order.clone())),
+            reference_price_exact: if retain_details {
+                reference_price_exact
+            } else {
+                None
+            },
+            order_snapshot: retain_details.then(|| Box::new(order.clone())),
         },
     ));
     seq
