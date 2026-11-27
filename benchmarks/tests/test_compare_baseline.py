@@ -356,6 +356,35 @@ class CompareBaselineTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("registered limit +10%", result.stdout)
 
+    def test_legacy_reverse_scan_criterion_regression_is_diagnostic(self) -> None:
+        base = {"schema_version": 1, "hardware": {"cpu": "same"}, "records": []}
+        result = self.compare_reports(
+            {
+                **base,
+                "criterion_records": [
+                    {
+                        "benchmark": "qx_runtime_latest_quote_lookup/legacy_reverse_scan/1000",
+                        "mean_ns": 4300,
+                        "mean_ci95_ns": [4100, 4400],
+                    }
+                ],
+            },
+            {
+                **base,
+                "criterion_records": [
+                    {
+                        "benchmark": "qx_runtime_latest_quote_lookup/legacy_reverse_scan/1000",
+                        "mean_ns": 5400,
+                        "mean_ci95_ns": [5200, 5600],
+                    }
+                ],
+            },
+            "benchmark_regression_thresholds:\n  criterion: 0.10\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("[DIAGNOSTIC]", result.stdout)
+        self.assertIn("production regression gates use indexed queries", result.stdout)
+
     def test_short_criterion_estimate_without_confidence_intervals_is_diagnostic(self) -> None:
         base = {"schema_version": 1, "hardware": {"cpu": "same"}, "records": []}
         result = self.compare_reports(
