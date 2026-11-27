@@ -18,11 +18,17 @@ from .app import (
     start_multi_market_backtest_with_strategy_slots,
     validate_strategy_execution_preflight_v1,
 )
-from .project_runs import prepare_project_input, wait_project_run
+from .project_runs import (
+    _read_stable_run_input,
+    prepare_project_input,
+    verify_project_plan_binding,
+    wait_project_run,
+)
 from .strategy_project import (
     apply_parameter_defaults,
     build_module_manifest,
     load_strategy_file,
+    _json_object_bytes,
     strategy_config_targets,
     validate_strategy_config,
 )
@@ -324,9 +330,15 @@ def run_project_strategy(
 ) -> Any:
     """Execute a project snapshot after its immutable local preflight has succeeded."""
     from .project_runs import record_project_result
-    from .strategy_project import _json_object
 
-    payload = _json_object(input_path, "strategy input spec")
+    input_source = input_path.expanduser().resolve(strict=True)
+    input_bytes = _read_stable_run_input(input_source)
+    verify_project_plan_binding(
+        dict(run_plan),
+        input_spec_path=input_source,
+        input_spec_bytes=input_bytes,
+    )
+    payload = _json_object_bytes(input_bytes, "strategy input spec")
     result = run_strategy_file(
         payload,
         run_plan["strategy_file"],

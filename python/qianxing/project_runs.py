@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import binascii
 import contextlib
+import copy
 import csv
 import hashlib
 import io
@@ -1775,12 +1776,22 @@ def record_project_error(error: Any) -> None:
         run.save()
 
 
-def record_project_plan(plan: dict) -> None:
+def _project_plan_sha256(plan: dict) -> str:
+    try:
+        encoded = json.dumps(
+            plan, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode("utf-8")
+    except (TypeError, ValueError) as error:
+        raise ValueError("managed project preflight plan must be JSON-serializable") from error
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def record_project_plan(plan: dict) -> dict:
     run = _ACTIVE.get()
+    if not isinstance(plan, dict):
+        raise ValueError("managed project preflight plan must be an object")
+    plan = copy.deepcopy(plan)
     if run is not None:
-        if not isinstance(plan, dict):
-            raise ValueError("managed project preflight plan must be an object")
-        plan = dict(plan)
         dependency_lock = run.record.get("dependency_lock")
         if isinstance(dependency_lock, dict):
             expected_lock = dependency_lock.get("sha256")
@@ -1826,8 +1837,47 @@ def record_project_plan(plan: dict) -> None:
                 or plan.get("input_spec_sha256") != run.record.get("preflight_input_sha256")
             ):
                 raise ValueError("preflight plan does not bind to the frozen input snapshot")
-        run.record["plan"] = plan
+        plan_sha256 = _project_plan_sha256(plan)
+        run.record["plan"] = copy.deepcopy(plan)
+        run.record["plan_sha256"] = plan_sha256
         run.save()
+    return plan
+
+
+def verify_project_plan_binding(
+    plan: dict,
+    *,
+    input_spec_path: Path | None = None,
+    input_spec_bytes: bytes | None = None,
+) -> None:
+    """Fail closed if a managed run no longer matches its recorded preflight."""
+    run = _ACTIVE.get()
+    if run is None:
+        return
+    recorded_plan = run.record.get("plan")
+    expected_sha256 = run.record.get("plan_sha256")
+    if (
+        not isinstance(recorded_plan, dict)
+        or not isinstance(expected_sha256, str)
+        or _project_plan_sha256(recorded_plan) != expected_sha256
+        or _project_plan_sha256(plan) != expected_sha256
+    ):
+        raise ValueError("managed project execution plan changed after preflight")
+    expected_input = recorded_plan.get("input_spec")
+    expected_input_sha256 = recorded_plan.get("input_spec_sha256")
+    if input_spec_path is not None:
+        if not isinstance(expected_input, str):
+            raise ValueError("managed project execution plan is missing its input spec path")
+        expected_path = Path(expected_input).expanduser().resolve(strict=True)
+        actual_path = input_spec_path.expanduser().resolve(strict=True)
+        if actual_path != expected_path:
+            raise ValueError("managed project execution input path differs from its preflight plan")
+    if input_spec_bytes is not None:
+        if not isinstance(expected_input_sha256, str):
+            raise ValueError("managed project execution plan is missing its input spec digest")
+        actual_input_sha256 = hashlib.sha256(input_spec_bytes).hexdigest()
+        if actual_input_sha256 != expected_input_sha256:
+            raise ValueError("managed project input spec changed after preflight")
 
 
 def prepare_project_input(payload: dict) -> dict:

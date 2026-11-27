@@ -74,6 +74,18 @@ def _json_object(path: Path, label: str) -> dict[str, Any]:
     return value
 
 
+def _json_object_bytes(payload: bytes, label: str) -> dict[str, Any]:
+    try:
+        value = json.loads(payload.decode("utf-8"))
+    except UnicodeDecodeError as error:
+        raise ValueError(f"{label} is not UTF-8: {error}") from error
+    except json.JSONDecodeError as error:
+        raise ValueError(f"{label} JSON is invalid at line {error.lineno}: {error.msg}") from error
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be a JSON object")
+    return value
+
+
 def _relative_or_absolute(root: Path, raw: str | None, label: str) -> str | None:
     if raw is None:
         return None
