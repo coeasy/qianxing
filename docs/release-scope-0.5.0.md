@@ -63,7 +63,7 @@ Windows workspace 验收之外，已用本地 Podman 启动 Linux Rust 1.98.1 �
 
 ## 当前候选树复核（2026-11-27）
 
-- 候选分支 `codex/release-0.5.0-prep` 当前 HEAD 为 `6b269726`，已包含开放 PR #37、#38、#39、#42–#47、#49–#53 的当前 head。复核时 14 个 PR 均仍为 open、GitHub 标记可合并，关联 CI/公共行情 workflow 均为 success；依赖链 #37 → #38 → #39 已按顺序集成到本地候选树。该操作没有合并到 `main`。
+- 候选分支 `codex/release-0.5.0-prep` 的代码集成点为 `6b269726`，已包含开放 PR #37、#38、#39、#42–#47、#49–#53 的当前 head；随后只追加了本节验收状态文档。复核时 14 个 PR 均仍为 open、GitHub 标记可合并，关联 CI/公共行情 workflow 均为 success；依赖链 #37 → #38 → #39 已按顺序集成到本地候选树。该操作没有合并到 `main`。
 - 此次刷新带入 PR #39 的最终 Windows fixture 清理回归，以及 PR #42 的最新性能证据比较门禁。回归结果：性能基线、测量输入与 Rust benchmark runner 共 39 项通过；架构快检四片覆盖 378 项、无重复；能力目录 `--check` 通过；`git diff --check` 通过。
 - 对应托管检查为 PR #37/#38/#39 的 CI run #916/#917/#941，PR #42 的 CI run #942，PR #43/#44 的 CI 与公共 CCXT run #919/#163、#907/#162，PR #45–#47 的 CI run #908/#909/#930，PR #49/#50 的 CI 与公共行情 run #901/#158、#903/#160，PR #51–#53 的 CI 与公共行情 run #928/#932/#938/#169；均成功。凭据保护的 Binance testnet 子步骤依然是 skipped，不构成测试网下单验收。
 - 候选源代码快照 `f2a657c5` 上的本地 Podman/Linux 实验通过 25 项服务与恢复检查：PostgreSQL/NATS 被忽略契约 13 项、NATS 有界等待 8 项、R12 worker 跨进程 Unknown 恢复 1 项、R13 cursor/blob/runtime-cache 3 项。R12/R13 运行输入文件与当前候选之间无差异；验收记录仍如实绑定到其实际运行的 `f2a657c5`。首次 R12 因测试夹具目录只读失败，调整容器挂载后复跑通过，首次失败和最终通过均保留在台账。
