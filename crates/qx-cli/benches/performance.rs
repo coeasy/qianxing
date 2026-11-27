@@ -48,10 +48,17 @@ fn median(mut samples: Vec<Duration>) -> Duration {
     samples[samples.len() / 2]
 }
 
-/// Return the median per-operation duration, calibrating fast operations so each sample
-/// spans long enough to survive coarse platform timer resolution. Without batching, cached
-/// EventLog::digest() can round to 0 ms on Windows and produce meaningless throughput.
-fn measure(mut operation: impl FnMut(), repeats: usize) -> Duration {
+fn median_seconds(mut samples: Vec<f64>) -> f64 {
+    samples.sort_by(f64::total_cmp);
+    samples[samples.len() / 2]
+}
+
+/// Return the median per-operation duration in seconds, calibrating fast operations so each
+/// sample spans long enough to survive coarse platform timer resolution. Keep the per-operation
+/// value as `f64`: converting it to `Duration` rounds each sample to a whole nanosecond, which
+/// makes cached operations around 10 ns appear to jump by 10–20% from a one-nanosecond rounding
+/// difference even though the batch timer measured millions of iterations over 10 ms.
+fn measure(mut operation: impl FnMut(), repeats: usize) -> f64 {
     operation(); // warm up code and data before calibration
     let mut iterations = 1usize;
     loop {
@@ -70,15 +77,12 @@ fn measure(mut operation: impl FnMut(), repeats: usize) -> Duration {
         for _ in 0..iterations {
             operation();
         }
-        samples.push(Duration::from_secs_f64(
-            start.elapsed().as_secs_f64() / iterations as f64,
-        ));
+        samples.push(start.elapsed().as_secs_f64() / iterations as f64);
     }
-    median(samples)
+    median_seconds(samples)
 }
 
-fn report(name: &str, n: usize, duration: Duration) {
-    let seconds = duration.as_secs_f64();
+fn report(name: &str, n: usize, seconds: f64) {
     let iterations_per_second = if seconds > 0.0 { 1.0 / seconds } else { 0.0 };
     // `EventLog::digest()` is a cached O(1) read, so dividing the log's event count by
     // its duration would falsely report billions of events scanned per second.
@@ -88,7 +92,7 @@ fn report(name: &str, n: usize, duration: Duration) {
         format!(",\"operations_per_second\":{:.1}", n as f64 / seconds)
     };
     println!(
-        "{{\"benchmark\":\"{name}\",\"operations\":{n},\"median_ns\":{:.1},\"median_ms\":{:.6},\"iterations_per_second\":{iterations_per_second:.1}{throughput}}}",
+        "{{\"benchmark\":\"{name}\",\"operations\":{n},\"median_ns\":{:.3},\"median_ms\":{:.9},\"iterations_per_second\":{iterations_per_second:.1}{throughput}}}",
         seconds * 1_000_000_000.0,
         seconds * 1_000.0,
     );
@@ -257,7 +261,7 @@ fn bench_full_vs_incremental_replay() {
         "{{\"benchmark\":\"full_vs_incremental_replay\",\"events\":{EVENT_COUNT},\"chunks\":{},\"incremental_refresh_p50_ms\":{:.3},\"full_replay_median_ms\":{:.3},\"digests_equal\":true}}",
         EVENT_COUNT / CHUNK,
         incremental_median.as_secs_f64() * 1_000.0,
-        full_replay.as_secs_f64() * 1_000.0,
+        full_replay * 1_000.0,
     );
     let _ = std::fs::remove_file(&database);
     let _ = std::fs::remove_file(root.join("events.sqlite-wal"));

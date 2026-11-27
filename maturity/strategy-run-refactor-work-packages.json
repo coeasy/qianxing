@@ -2,7 +2,7 @@
   "work_packages": [
     {
       "id": "R01",
-      "title": null,
+      "title": "环境身份与兼容检查",
       "status": "complete",
       "blockers": [
         "No remaining R01 acceptance gaps; keep the cross-platform clean wheel/CLI acceptance wired into CI."
@@ -34,7 +34,7 @@
     },
     {
       "id": "R02",
-      "title": null,
+      "title": "PathResolver 与执行上下文",
       "status": "complete",
       "blockers": [
         "No known R02 acceptance gaps remain; the Windows runtime check proves concurrent imports preserve project-specific helpers/data and leave cwd, sys.path, and sys.modules clean."
@@ -54,7 +54,7 @@
     },
     {
       "id": "R03",
-      "title": null,
+      "title": "项目应用服务",
       "status": "complete",
       "blockers": [
         "No remaining R03 acceptance gap; strategy search and reporting remain CLI-owned commands outside the project run application service."
@@ -73,7 +73,7 @@
     },
     {
       "id": "R04",
-      "title": null,
+      "title": "静态与动态 doctor 进程边界",
       "status": "complete",
       "blockers": [
         "Windows 11 and Debian 12 Linux Podman dynamic acceptances pass after parent normal return and timeout; the detached POSIX new-session boundary is explicitly verified and its fixture is reaped."
@@ -104,7 +104,7 @@
     },
     {
       "id": "R05",
-      "title": null,
+      "title": "不可变计划与输入快照",
       "status": "partial",
       "blockers": [
         "End-to-end Windows managed-run acceptance now covers removed file modules, removed ZIP modules, opaque-importer rejection, and synthetic lock/wheel snapshot mutation detection. The run-scoped import proxy now delegates `find_distributions` and `invalidate_caches` to `PathFinder`, so installing the audit hook no longer empties the distribution inventory recorded for a managed run (a regression test pins the count). Provenance-backed HS300 history/calendar acceptance remains outstanding."
@@ -133,7 +133,7 @@
     },
     {
       "id": "R06",
-      "title": null,
+      "title": "报告输出保护",
       "status": "complete",
       "blockers": [
         "No known R06 acceptance gaps remain; keep the recovery and path-alias coverage current as formats evolve."
@@ -154,7 +154,7 @@
     },
     {
       "id": "R07",
-      "title": null,
+      "title": "运行状态与产物完整性",
       "status": "complete",
       "blockers": [
         "No remaining R07 acceptance gaps: disk-full/process identity coverage and native Windows, Linux, and macOS checks pass in hosted CI."
@@ -189,10 +189,10 @@
     },
     {
       "id": "R08",
-      "title": null,
+      "title": "宿主能力协商一致性",
       "status": "complete",
       "blockers": [
-        "Host capability acceptance matrix is complete for Windows and hosted Linux/POSIX; any venue sandbox/live maturity remains tracked separately under R23."
+        "Host capability acceptance matrix is complete for Windows and hosted Linux/POSIX; venue sandbox/live maturity is tracked separately under R10, R12, and R22."
       ],
       "next_action": "Keep the host-capability contract covered when a new strategy host or capability is added; do not infer venue readiness from host acceptance.",
       "code_paths": [
@@ -263,7 +263,7 @@
     },
     {
       "id": "R09",
-      "title": null,
+      "title": "部署修订与操作流程",
       "status": "partial",
       "blockers": [
         "Windows and Debian 12 Podman Paper lifecycle reviews pass. Hosted Ubuntu PR CI #596 confirms PostgreSQL deploy/pause/resume/rollback/failed-replacement/stop and supervisor checkpoint restart. Authoritative full live-readiness proof remains open; Paper runs do not establish venue authorization."
@@ -301,7 +301,7 @@
     },
     {
       "id": "R10",
-      "title": null,
+      "title": "就绪状态与执行门禁",
       "status": "partial",
       "blockers": [
         "Windows and Debian 12 Podman Linux file/SQLite process-crash recovery pass; Debian Linux R12-AC01 also verifies PostgreSQL Strategy-worker Unknown recovery across a real process restart. Venue behavior remains simulated, so authorized venue integration, licensed data and testnet/live proof remain outstanding."
@@ -391,12 +391,12 @@
     },
     {
       "id": "R11",
-      "title": null,
+      "title": "PreparedEvaluation 存储与恢复",
       "status": "complete",
       "blockers": [
-        "No remaining R11 Paper worker recovery acceptance gaps; live venue recovery remains a separate R23 scope and is not proven by these fixture tests."
+        "No remaining R11 Paper worker recovery acceptance gaps; venue recovery remains a separate R10/R12/R22 scope and is not proven by these fixture tests."
       ],
-      "next_action": "Track authorized venue recovery acceptance under R23; do not infer live recovery from Paper worker fixtures.",
+      "next_action": "Keep venue recovery acceptance under R10/R12/R22; do not infer live recovery from Paper worker fixtures.",
       "code_paths": [
         "crates/qx-cli/src/workers/strategy_worker.rs",
         "crates/qx-cli/src/workers/strategy_worker/execution_updates/cursor_state.rs",
@@ -456,7 +456,7 @@
     },
     {
       "id": "R12",
-      "title": null,
+      "title": "Outbox 与未知结果恢复",
       "status": "partial",
       "blockers": [
         "Windows and Debian 12 Podman recovery reviews pass. Hosted PR CI #423 R12-AC01 confirms Live Unknown recovery across file, SQLite, and PostgreSQL process restarts; the separate hosted storage artifact confirms six Paper worker crash boundaries. Authorized venue/testnet integration remains open."
@@ -512,7 +512,7 @@
     },
     {
       "id": "R13",
-      "title": null,
+      "title": "状态迁移与修订切换",
       "status": "partial",
       "blockers": [
         "Paper deployment lifecycle and PostgreSQL supervisor checkpoint restart now pass hosted Linux acceptance; authoritative full live-readiness evidence remains open."
@@ -604,7 +604,7 @@
     },
     {
       "id": "R14",
-      "title": null,
+      "title": "观察数据保留与聚合",
       "status": "complete",
       "blockers": [
         "No remaining R14 acceptance gap; isolated two-node mTLS runtime evidence covers identity mapping, publish/receive, rejected identity/time/replay inputs, node-scoped freshness, and restart persistence. Cross-host routing and operator certificate provisioning are deployment-environment concerns outside this local acceptance scope."
@@ -661,7 +661,7 @@
     },
     {
       "id": "R15",
-      "title": null,
+      "title": "数据快照与交易角色",
       "status": "partial",
       "blockers": [
         "Multi-market Bar/Depth replay binds and qualifies a supplied DatasetSnapshotV1 at creation and report readback; research snapshots remain optional. Non-Paper Execution now requires a supplier-signed, versioned role catalog and an operator-pinned supplier key; external supplier catalog issuance/trust-root provisioning remain incomplete. Reproducible source acceptance is complete for Binance Spot BTCUSDT daily data from 2017-08-17 through 2026-09-30 under Binance Vision CC BY-NC-SA 4.0, restricted to the enumerated §4.1 non-commercial uses (algorithmic backtesting must be purely personal and non-production); licensed bars/archives stay local. Any redistribution must meet attribution, identical-license and non-commercial terms; this evidence does not authorize commercial/live use. Complete, licensed HS300 historical data and calendar acceptance remain outstanding."
@@ -688,7 +688,7 @@
     },
     {
       "id": "R16",
-      "title": null,
+      "title": "策略模式与预热一致性",
       "status": "complete",
       "blockers": [
         "No known R16 acceptance gaps remain; the shared intent, Rust backtest, and Windows file-backed Paper fill/Ledger parity evidence has been human-reviewed."
@@ -737,7 +737,7 @@
     },
     {
       "id": "R17",
-      "title": null,
+      "title": "报告事实统一与指标",
       "status": "complete",
       "blockers": [
         "No current R17 acceptance gap remains: Linux and macOS metric/report contracts pass on the same PR merge revision."
@@ -823,7 +823,7 @@
     },
     {
       "id": "R18",
-      "title": null,
+      "title": "Console 部署操作与状态",
       "status": "partial",
       "blockers": [
         "Windows authenticated BFF and packaged-browser deployment workflow has been manually reviewed; live readiness is still unevaluated because authoritative worker, host lifecycle, checkpoint, reconciliation, and authorization sources are absent."
@@ -864,7 +864,7 @@
     },
     {
       "id": "R19",
-      "title": null,
+      "title": "按职责拆分模块",
       "status": "complete",
       "blockers": [
         "No current R19 acceptance gap remains: macOS CLI unit and behavior-parity checks pass with the explicit test-binary path."
@@ -1295,7 +1295,7 @@
     },
     {
       "id": "R20",
-      "title": null,
+      "title": "安装分发与平台矩阵",
       "status": "complete",
       "blockers": [
         "No remaining R20 acceptance gaps; keep the cross-platform clean wheel/CLI acceptance wired into CI."
@@ -1329,12 +1329,12 @@
     },
     {
       "id": "R21",
-      "title": null,
+      "title": "性能与故障恢复验收",
       "status": "complete",
       "blockers": [
-        "No R21 acceptance failures remain; external exchange authorization and live-readiness evidence are tracked separately under R23."
+        "No R21 acceptance failures remain; external exchange authorization and live-readiness evidence are tracked separately under R10, R12, and R22."
       ],
-      "next_action": "No remaining R21 acceptance gaps. Live venue authorization, external testnet lifecycle, and live-readiness evidence are tracked separately under R23.",
+      "next_action": "No remaining R21 acceptance gaps. Track venue authorization, external testnet lifecycle, and live-readiness evidence under R10/R12/R22.",
       "code_paths": [
         "crates/qx-storage/src/lib.rs",
         "crates/qx-storage/src/job_queue.rs",
@@ -1471,7 +1471,7 @@
     },
     {
       "id": "R22",
-      "title": null,
+      "title": "真实数据与外部验收",
       "status": "blocked",
       "blockers": [
         "Complete real HS300 history/calendar and authorized paper/testnet venue evidence are unavailable in the workspace."
@@ -1486,13 +1486,12 @@
     },
     {
       "id": "R23",
-      "title": null,
+      "title": "验收台账与证据治理",
       "status": "partial",
       "blockers": [
-        "GitHub Actions PR CI run #590 passed 37/37 jobs on source head 378bae84: Linux/Windows/macOS wheel matrices, Linux performance and durable-storage gates, R01/R20 clean installs, macOS R07/R17/R19, and pinned CCXT request contracts (8/8).",
-        "Licensed provenance-backed HS300 data, authorized venue/testnet credentials and trust roots, and externally reviewed live-readiness evidence remain unavailable; Binance testnet acceptance therefore remains skipped when credentials are absent."
+        "The acceptance registry, run identities, source manifests, and hashed artifacts are machine-checked; R23-AC01 still requires explicit human review before it can be marked accepted."
       ],
-      "next_action": "After licensed data and authorized OKX/Binance/Bitget testnet credentials are provisioned, run venue-specific order/recovery/reconciliation acceptance; keep live-readiness claims gated on reviewed external evidence.",
+      "next_action": "Have the project owner review R23-AC01 and update its status only after approval; keep the registry checker wired into CI.",
       "code_paths": [
         "maturity/strategy-run-acceptance-v1.json",
         "schemas/strategy-run-acceptance-v1.json",
@@ -1587,7 +1586,9 @@
         "maturity/acceptance-artifacts/f40b33b5-1523-4dda-ad40-8f29577a7733.log",
         "maturity/acceptance-artifacts/f40b33b5-1523-4dda-ad40-8f29577a7733.source-tree.json",
         "maturity/acceptance-artifacts/be79b8bb-48da-4364-b842-d4644f2db454.log",
-        "maturity/acceptance-artifacts/be79b8bb-48da-4364-b842-d4644f2db454.source-tree.json"
+        "maturity/acceptance-artifacts/be79b8bb-48da-4364-b842-d4644f2db454.source-tree.json",
+        "maturity/acceptance-artifacts/c4688445-e2b5-4020-8995-813821e46d7e.log",
+        "maturity/acceptance-artifacts/c4688445-e2b5-4020-8995-813821e46d7e.source-tree.json"
       ]
     }
   ],

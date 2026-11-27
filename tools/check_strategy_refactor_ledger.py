@@ -18,6 +18,57 @@ EXPECTED_IDS = {f"R{number:02}" for number in range(1, 24)}
 VALID_STATUSES = {"partial", "not_started", "blocked", "complete"}
 
 
+def validate_r23_scope(packages: list[object], scenarios: list[object]) -> list[str]:
+    errors: list[str] = []
+    r23 = next((item for item in packages if isinstance(item, dict) and item.get("id") == "R23"), None)
+    if not isinstance(r23, dict):
+        return ["R23: acceptance-ledger governance package is missing"]
+    if r23.get("title") != "验收台账与证据治理":
+        errors.append("R23: title must preserve acceptance-ledger and evidence-governance scope")
+    summary_parts: list[str] = []
+    title = r23.get("title")
+    if isinstance(title, str):
+        summary_parts.append(title)
+    blockers = r23.get("blockers")
+    if isinstance(blockers, list):
+        summary_parts.extend(item for item in blockers if isinstance(item, str))
+    next_action = r23.get("next_action")
+    if isinstance(next_action, str):
+        summary_parts.append(next_action)
+    summary = " ".join(summary_parts).casefold()
+    external_scope_terms = ("venue", "testnet", "sandbox", "live", "交易所", "测试网", "实盘")
+    if any(term in summary for term in external_scope_terms):
+        errors.append("R23: external venue/testnet/live acceptance must remain outside the ledger-governance package")
+    if not isinstance(blockers, list) or not any("human review" in item.casefold() for item in blockers if isinstance(item, str)):
+        errors.append("R23: blocker must keep the human-review gate explicit")
+
+    scenario = next(
+        (item for item in scenarios if isinstance(item, dict) and item.get("acceptance_id") == "R23-AC01"),
+        None,
+    )
+    if not isinstance(scenario, dict) or scenario.get("work_package") != "R23":
+        errors.append("R23-AC01: acceptance scenario must belong to the R23 ledger-governance package")
+        return errors
+    criteria_items = scenario.get("acceptance_criteria")
+    criteria = " ".join(item for item in criteria_items if isinstance(item, str)) if isinstance(criteria_items, list) else ""
+    required_criteria = (
+        "Every R01-R23 work package has a stable acceptance ID.",
+        "exact command, source identity, input digests",
+        "hashed command-output artifact",
+        "human-reviewed state",
+    )
+    if any(fragment not in criteria for fragment in required_criteria):
+        errors.append("R23-AC01: acceptance criteria must cover stable IDs, bound evidence, and human review")
+    artifacts = scenario.get("required_artifacts", [])
+    if not isinstance(artifacts, list):
+        artifacts = []
+    if not any(isinstance(item, str) and item.endswith("<run_id>.log") for item in artifacts):
+        errors.append("R23-AC01: required artifacts must include the recorded command log")
+    if not any(isinstance(item, str) and item.endswith("<run_id>.source-tree.json") for item in artifacts):
+        errors.append("R23-AC01: required artifacts must include the source-tree manifest")
+    return errors
+
+
 def validate() -> list[str]:
     errors: list[str] = []
     try:
@@ -41,6 +92,9 @@ def validate() -> list[str]:
             errors.append(f"{label}: missing or duplicate ID")
         else:
             seen.add(package_id)
+        title = package.get("title")
+        if not isinstance(title, str) or not title.strip():
+            errors.append(f"{label}: title must be a nonempty string")
         if package.get("status") not in VALID_STATUSES:
             errors.append(f"{label}: invalid status {package.get('status')!r}")
         for field in ("code_paths", "evidence_paths"):
@@ -113,6 +167,7 @@ def validate() -> list[str]:
     for package_id in EXPECTED_IDS:
         if package_scenarios.get(package_id, 0) == 0:
             errors.append(f"{package_id}: no acceptance scenario is registered")
+    errors.extend(validate_r23_scope(packages, scenarios))
 
     run_ids: set[str] = set()
     passed_scenarios: set[str] = set()

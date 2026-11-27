@@ -734,7 +734,8 @@
         "schemas/strategy-run-acceptance-v1.json",
         "tools/record_strategy_acceptance.py",
         "tools/check_strategy_refactor_ledger.py",
-        "maturity/acceptance-artifacts/<run_id>.log"
+        "maturity/acceptance-artifacts/<run_id>.log",
+        "maturity/acceptance-artifacts/<run_id>.source-tree.json"
       ]
     }
   ],
@@ -21007,6 +21008,112 @@
         }
       ],
       "notes": "Clean Linux Python 3.12 wheel/CLI install; package imports, capability catalog, schemas, documented examples, and quickstart"
+    },
+    {
+      "run_id": "c4688445-e2b5-4020-8995-813821e46d7e",
+      "acceptance_id": "R23-AC01",
+      "recorded_at_utc": "2026-11-25T17:46:53.361197Z",
+      "source_revision": "49ae18e497c1192a785cc382978a63e82b3b6948",
+      "source_tree_sha256": "dd6275e06a6f815f1308dd0d8426c0355b78a0c22093762e87f8c48939173d02",
+      "source_manifest": "maturity/acceptance-artifacts/c4688445-e2b5-4020-8995-813821e46d7e.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "python",
+        "tools/check_strategy_refactor_ledger.py"
+      ],
+      "inputs": [
+        {
+          "path": "maturity/strategy-run-refactor-work-packages.json",
+          "sha256": "aa30d789a6ac4eb1b6fe9262de81f1178bd1d7a43063d1add1eb9a46f0215e10"
+        },
+        {
+          "path": "tools/check_strategy_refactor_ledger.py",
+          "sha256": "babb0647cb73a89c4e59f362f9816fefc4f37390f6de6143205295ce8c5aec43"
+        },
+        {
+          "path": "docs/architecture-local-server-refactor-review-2026-10-28.md",
+          "sha256": "d31496e6b8fd8fa3ddc9c0883e2461a665bc344e86f73f05bdae564d5ec5cba9"
+        },
+        {
+          "path": "docs/牵星全量优化方案与竞品超越路线图-2026-11-11.md",
+          "sha256": "c33999169e4225c6c0eb0b6fadc8db7965dcb0803a13b083e8aca32f6187a1b5"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/c4688445-e2b5-4020-8995-813821e46d7e.log",
+          "sha256": "afbb1750db6e48b5de340aea7b50f8439857afc727296236955879a49276d1e1"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/c4688445-e2b5-4020-8995-813821e46d7e.source-tree.json",
+          "sha256": "9553c28be7f81b647dd6668babdd72e3072f57472887687fa27dc47962038368"
+        }
+      ],
+      "notes": "Final R23 scope and title integrity gate with defensive handling of malformed ledger fields; R23 remains pending explicit human review."
+    },
+    {
+      "run_id": "867b689c-6aa3-402d-bd6e-63ecf80fd1f5",
+      "acceptance_id": "R23-AC01",
+      "recorded_at_utc": "2026-11-25T19:11:27.366206Z",
+      "source_revision": "84b0b9e174a9f265879de10c8ae507d857fb6a1e",
+      "source_tree_sha256": "0d8ad903b6bc773a9405522c21e595165145f7e93c470f58eaf4019046a12f79",
+      "source_manifest": "maturity/acceptance-artifacts/867b689c-6aa3-402d-bd6e-63ecf80fd1f5.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "python",
+        "tools/check_strategy_refactor_ledger.py"
+      ],
+      "inputs": [
+        {
+          "path": "maturity/strategy-run-refactor-work-packages.json",
+          "sha256": "83032e910681fe88736ecf437d1a6b293bc905512d4ecd3ee08630db52ccd942"
+        },
+        {
+          "path": "schemas/strategy-run-acceptance-v1.json",
+          "sha256": "739434056feb16d3a569cb8e23265c8fe9e59a5e55921c49615f66c91933df37"
+        },
+        {
+          "path": "tools/record_strategy_acceptance.py",
+          "sha256": "d440b87a6f89b382dbaa202205245a8b67e8bbe1eb40992461978a8ca302b91d"
+        },
+        {
+          "path": "tools/check_strategy_refactor_ledger.py",
+          "sha256": "babb0647cb73a89c4e59f362f9816fefc4f37390f6de6143205295ce8c5aec43"
+        },
+        {
+          "path": "docs/architecture-local-server-refactor-review-2026-10-28.md",
+          "sha256": "696bdf8af31b547b82fb4cbea2d32ebe4d96a027a2dafd8e7eed0442533ceffa"
+        },
+        {
+          "path": "docs/牵星全量优化方案与竞品超越路线图-2026-11-11.md",
+          "sha256": "c33999169e4225c6c0eb0b6fadc8db7965dcb0803a13b083e8aca32f6187a1b5"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/867b689c-6aa3-402d-bd6e-63ecf80fd1f5.log",
+          "sha256": "7fd7ac2ceff72002e657461ae30ca9e6ae828b273f0434e7b9052dc319e8ee60"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/867b689c-6aa3-402d-bd6e-63ecf80fd1f5.source-tree.json",
+          "sha256": "ae4db6e861954fa3f42ee57d3fed166056c9be75f5811ddfd089308852965a13"
+        }
+      ],
+      "notes": "R23 scope and source-tree-bound evidence contract verified at the benchmark timing precision revision; all recorded inputs are present in the bound source manifest."
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"
