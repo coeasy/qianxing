@@ -1194,6 +1194,75 @@ def _dependency_lock_bindings_sha256(requirements: list[dict[str, Any]]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def _file_snapshot_object(metadata: os.stat_result) -> tuple[int, int]:
+    """Return the filesystem object identity shared by path and open-handle stats."""
+    return int(metadata.st_dev), int(metadata.st_ino)
+
+
+def _file_snapshot_version(metadata: os.stat_result) -> tuple[int, int, int, int]:
+    """Return same-handle metadata used to detect edits while a run input is read."""
+    return (
+        int(metadata.st_mode),
+        int(metadata.st_size),
+        int(getattr(metadata, "st_mtime_ns", metadata.st_mtime * 1_000_000_000)),
+        int(getattr(metadata, "st_ctime_ns", metadata.st_ctime * 1_000_000_000)),
+    )
+
+
+def _assert_file_snapshot_stable(
+    path: Path,
+    path_before: os.stat_result,
+    opened_before: os.stat_result,
+    opened_after: os.stat_result | None = None,
+    path_after: os.stat_result | None = None,
+) -> None:
+    if _file_snapshot_object(path_before) != _file_snapshot_object(opened_before):
+        raise ValueError(
+            f"input file was replaced while its managed run snapshot was being created: {path}"
+        )
+    if opened_after is None:
+        return
+    if _file_snapshot_version(opened_before) != _file_snapshot_version(opened_after):
+        raise ValueError(
+            f"input file changed while its managed run snapshot was being created: {path}"
+        )
+    if path_after is not None and _file_snapshot_object(opened_after) != _file_snapshot_object(path_after):
+        raise ValueError(
+            f"input file was replaced while its managed run snapshot was being created: {path}"
+        )
+
+
+def _read_stable_run_input(path: Path) -> bytes:
+    path_before = path.stat()
+    with path.open("rb") as stream:
+        opened_before = os.fstat(stream.fileno())
+        _assert_file_snapshot_stable(path, path_before, opened_before)
+        payload = stream.read()
+        opened_after = os.fstat(stream.fileno())
+    path_after = path.stat()
+    _assert_file_snapshot_stable(path, path_before, opened_before, opened_after, path_after)
+    return payload
+
+
+def _copy_stable_run_input(path: Path, destination: Path) -> tuple[str, int]:
+    path_before = path.stat()
+    digest_state = hashlib.sha256()
+    byte_count = 0
+    with path.open("rb") as source_stream, destination.open("xb") as output_stream:
+        opened_before = os.fstat(source_stream.fileno())
+        _assert_file_snapshot_stable(path, path_before, opened_before)
+        for chunk in iter(lambda: source_stream.read(1024 * 1024), b""):
+            digest_state.update(chunk)
+            byte_count += len(chunk)
+            output_stream.write(chunk)
+        output_stream.flush()
+        os.fsync(output_stream.fileno())
+        opened_after = os.fstat(source_stream.fileno())
+    path_after = path.stat()
+    _assert_file_snapshot_stable(path, path_before, opened_before, opened_after, path_after)
+    return digest_state.hexdigest(), byte_count
+
+
 def _wheel_metadata(path: Path) -> tuple[str, str]:
     try:
         with zipfile.ZipFile(path) as wheel:
@@ -1483,7 +1552,8 @@ def snapshot_project_input(root: Path, input_path: Path) -> Path:
         raise RuntimeError("input snapshots require an active managed project run")
     from .strategy_project import _iter_input_path_fields, _resolve_input_paths
 
-    input_bytes = input_path.read_bytes()
+    input_source = input_path.expanduser().resolve(strict=True)
+    input_bytes = _read_stable_run_input(input_source)
     try:
         spec = json.loads(input_bytes.decode("utf-8"))
     except UnicodeDecodeError as error:
@@ -1507,16 +1577,9 @@ def snapshot_project_input(root: Path, input_path: Path) -> Path:
             source = root / source
         source = source.resolve(strict=True)
         destination_text = None
-        digest_state = hashlib.sha256()
         temporary = snapshots / f".{uuid.uuid4().hex}.tmp"
         try:
-            with source.open("rb") as source_stream, temporary.open("xb") as output_stream:
-                for chunk in iter(lambda: source_stream.read(1024 * 1024), b""):
-                    digest_state.update(chunk)
-                    output_stream.write(chunk)
-                output_stream.flush()
-                os.fsync(output_stream.fileno())
-            digest = digest_state.hexdigest()
+            digest, byte_count = _copy_stable_run_input(source, temporary)
             destination_text = copied.get(digest)
             suffix = source.suffix[:32]
             destination = snapshots / f"{digest}{suffix}"
@@ -1531,7 +1594,7 @@ def snapshot_project_input(root: Path, input_path: Path) -> Path:
                     "sha256": digest,
                     "source": str(source),
                     "snapshot": destination_text,
-                    "bytes": destination.stat().st_size,
+                    "bytes": byte_count,
                 }
             else:
                 temporary.unlink(missing_ok=True)
@@ -1540,7 +1603,7 @@ def snapshot_project_input(root: Path, input_path: Path) -> Path:
         parent[key] = destination_text
     destination = run.directory / "preflight-input.json"
     _write(destination, resolved)
-    run.record["input_spec_source"] = str(input_path.resolve())
+    run.record["input_spec_source"] = str(input_source)
     run.record["input_spec_sha256"] = hashlib.sha256(input_bytes).hexdigest()
     run.record["input_snapshots"] = source_records
     run.record["preflight_input_path"] = str(destination.resolve())
