@@ -21499,6 +21499,110 @@
         }
       ],
       "notes": "Windows acceptance verifies all 23 plan rows match the ledger for status, blocker and next action; unit tests reject stale status text, stale gap text and missing rows. Evidence remains planned pending human review."
+    },
+    {
+      "run_id": "867ba371-cad7-450c-9762-ea2477ab129c",
+      "acceptance_id": "R23-AC01",
+      "recorded_at_utc": "2026-11-27T00:50:05.305289Z",
+      "source_revision": "069cdca5599cdb4c8ce8ee89d61e8b09c7128294",
+      "source_tree_sha256": "cb815d7fa14b0de3dcafa939f26e5891dff346b51b7efb11944414c708ccb0df",
+      "source_manifest": "maturity/acceptance-artifacts/867ba371-cad7-450c-9762-ea2477ab129c.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "python",
+        "-m",
+        "unittest",
+        "tools.test_strategy_refactor_ledger",
+        "-q"
+      ],
+      "inputs": [
+        {
+          "path": "schemas/strategy-run-acceptance-v1.json",
+          "sha256": "739434056feb16d3a569cb8e23265c8fe9e59a5e55921c49615f66c91933df37"
+        },
+        {
+          "path": "tools/record_strategy_acceptance.py",
+          "sha256": "d089ced9cdc424240d84d5fe871658b69be4676ce34948f0e8b6b168bc65fc4a"
+        },
+        {
+          "path": "tools/check_strategy_refactor_ledger.py",
+          "sha256": "3d4d9193059a23461addc5e68103586eb1e1535777b351ba0d0f38970cac9ae9"
+        },
+        {
+          "path": "tools/test_strategy_refactor_ledger.py",
+          "sha256": "052971ec7c93ceccaafa90179ba6924545cd6007ed1dbf5154576291df7839c1"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/867ba371-cad7-450c-9762-ea2477ab129c.log",
+          "sha256": "67c5cf3217608052b831096112b70f83ae036c793eceee7a571e1bbf10b2a6da"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/867ba371-cad7-450c-9762-ea2477ab129c.source-tree.json",
+          "sha256": "f9fb2e137006cc7ef66d69472bc67869e4947781f38233fe805b7500dc4bde74"
+        }
+      ],
+      "notes": "Windows 11 current candidate: acceptance registry contract tests pass; status remains planned for project-owner review."
+    },
+    {
+      "run_id": "1f76f39a-9f57-4c3d-9604-4c98311ac84c",
+      "acceptance_id": "R23-AC02",
+      "recorded_at_utc": "2026-11-27T00:50:14.020940Z",
+      "source_revision": "069cdca5599cdb4c8ce8ee89d61e8b09c7128294",
+      "source_tree_sha256": "cb815d7fa14b0de3dcafa939f26e5891dff346b51b7efb11944414c708ccb0df",
+      "source_manifest": "maturity/acceptance-artifacts/1f76f39a-9f57-4c3d-9604-4c98311ac84c.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "python",
+        "-m",
+        "unittest",
+        "tools.test_strategy_refactor_ledger",
+        "-q"
+      ],
+      "inputs": [
+        {
+          "path": "docs/architecture-local-server-refactor-review-2026-10-28.md",
+          "sha256": "4d532b8d81e0521a0f43c46c8bed6cb69f1ddcdd5a6eb5f355e6c697b38f3490"
+        },
+        {
+          "path": "maturity/strategy-run-refactor-work-packages.json",
+          "sha256": "c80327386bf0d8a6eb4986102ff92b0817a162ffb6013507705bbdf776d8408b"
+        },
+        {
+          "path": "tools/check_strategy_refactor_ledger.py",
+          "sha256": "3d4d9193059a23461addc5e68103586eb1e1535777b351ba0d0f38970cac9ae9"
+        },
+        {
+          "path": "tools/test_strategy_refactor_ledger.py",
+          "sha256": "052971ec7c93ceccaafa90179ba6924545cd6007ed1dbf5154576291df7839c1"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/1f76f39a-9f57-4c3d-9604-4c98311ac84c.log",
+          "sha256": "67c5cf3217608052b831096112b70f83ae036c793eceee7a571e1bbf10b2a6da"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/1f76f39a-9f57-4c3d-9604-4c98311ac84c.source-tree.json",
+          "sha256": "f9fb2e137006cc7ef66d69472bc67869e4947781f38233fe805b7500dc4bde74"
+        }
+      ],
+      "notes": "Windows 11 current candidate: plan status, blocker and next-action synchronization tests pass; human approval remains outstanding."
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"
