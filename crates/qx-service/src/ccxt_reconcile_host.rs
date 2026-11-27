@@ -893,14 +893,11 @@ fn reconcile_bitget_triggered_oco_children(
         Ok::<(), String>(())
     };
 
-    if children.len() != 2 || group.legs.len() != 2 {
-        unresolved(
-            "Bitget OCO 触发后必须恰有两条可核验子单",
-            store,
-            pipeline,
-            source_seq,
-            issues,
-        )?;
+    if let Some((issue_kind, reason)) =
+        bitget_oco_child_fact_issue(children.len(), group.legs.len())
+    {
+        mark_ccxt_group_unresolved(group, worker, store, pipeline, now, source_seq, reason)?;
+        push_ccxt_group_issue(issues, group, issue_kind, reason);
         return Ok(0);
     }
     let mut matched = Vec::with_capacity(2);
@@ -1154,6 +1151,30 @@ fn bitget_oco_has_multiple_filled_legs(filled_leg_indices: &[usize]) -> bool {
         .collect::<BTreeSet<_>>()
         .len()
         > 1
+}
+
+fn bitget_oco_child_fact_issue(
+    child_count: usize,
+    local_leg_count: usize,
+) -> Option<(&'static str, &'static str)> {
+    if local_leg_count != 2 {
+        Some((
+            "native_order_group_state_unresolved",
+            "Bitget OCO 触发后本地意图不含恰好两条止盈/止损腿",
+        ))
+    } else if child_count == 0 {
+        Some((
+            "native_order_group_child_identity_unavailable",
+            "Bitget OCO 已触发但交易所未返回可核验子单身份；保留人工对账围栏，请核对交易所订单/成交历史与 EventLog，不按数量或价格猜测归属，也不要自动重发",
+        ))
+    } else if child_count != 2 {
+        Some((
+            "native_order_group_state_unresolved",
+            "Bitget OCO 触发后必须恰有两条可核验子单",
+        ))
+    } else {
+        None
+    }
 }
 
 pub(crate) fn bitget_cancel_children_are_unfilled(
@@ -2334,11 +2355,12 @@ fn runtime_timestamp_ms() -> u64 {
 #[cfg(test)]
 mod native_order_group_reconcile_tests {
     use super::{
-        bitget_cancel_children_are_unfilled, bitget_oco_child_matches_leg,
-        bitget_oco_has_multiple_filled_legs, bitget_rejected_oco_children_prove_no_execution,
-        classify_okx_oco_observation, mark_ccxt_group_query_failed, okx_algo_client_order_id,
-        reconcile_ccxt_native_order_groups, reconcile_order_group_amendment_overlays,
-        sync_ccxt_order_groups_from_user_stream, OkxOcoObservation,
+        bitget_cancel_children_are_unfilled, bitget_oco_child_fact_issue,
+        bitget_oco_child_matches_leg, bitget_oco_has_multiple_filled_legs,
+        bitget_rejected_oco_children_prove_no_execution, classify_okx_oco_observation,
+        mark_ccxt_group_query_failed, okx_algo_client_order_id, reconcile_ccxt_native_order_groups,
+        reconcile_order_group_amendment_overlays, sync_ccxt_order_groups_from_user_stream,
+        OkxOcoObservation,
     };
     use crate::pipeline_metrics_report::ccxt_error_metric_category;
 
@@ -3098,6 +3120,24 @@ mod native_order_group_reconcile_tests {
         assert!(!bitget_oco_has_multiple_filled_legs(&[0, 0]));
         assert!(!bitget_oco_has_multiple_filled_legs(&[0]));
         assert!(!bitget_oco_has_multiple_filled_legs(&[]));
+    }
+
+    #[test]
+    fn bitget_triggered_oco_missing_children_gets_manual_identity_diagnostic() {
+        let (kind, reason) = bitget_oco_child_fact_issue(0, 2).unwrap();
+        assert_eq!(kind, "native_order_group_child_identity_unavailable");
+        assert!(reason.contains("人工对账围栏"));
+        assert!(reason.contains("EventLog"));
+        assert!(reason.contains("不要自动重发"));
+        assert_eq!(
+            bitget_oco_child_fact_issue(1, 2).map(|(kind, _)| kind),
+            Some("native_order_group_state_unresolved")
+        );
+        assert_eq!(bitget_oco_child_fact_issue(2, 2), None);
+        assert_eq!(
+            bitget_oco_child_fact_issue(0, 1).map(|(kind, _)| kind),
+            Some("native_order_group_state_unresolved")
+        );
     }
 
     #[test]
