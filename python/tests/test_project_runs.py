@@ -462,6 +462,54 @@ class ProjectRunTests(unittest.TestCase):
         bars.write_text("{\"bars\":[\"changed after snapshot\"]}", encoding="utf-8")
         self.assertEqual(frozen_bars.read_bytes(), original_bars)
 
+    def test_project_input_snapshot_rejects_source_changed_during_copy(self):
+        bars = self.root / "bars.json"
+        bars.write_bytes(b"x" * (1024 * 1024 + 16))
+        spec = self.root / "input.json"
+        spec.write_text(json.dumps({"bars_path": "bars.json"}), encoding="utf-8")
+        run = runs.ProjectRun(self.root, "demo")
+        real_open = Path.open
+
+        class MutatingReader:
+            def __init__(self, stream):
+                self.stream = stream
+                self.mutated = False
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return self.stream.__exit__(*args)
+
+            def fileno(self):
+                return self.stream.fileno()
+
+            def read(self, size=-1):
+                chunk = self.stream.read(size)
+                if chunk and not self.mutated:
+                    self.mutated = True
+                    with real_open(bars, "ab") as writer:
+                        writer.write(b"source changed during snapshot")
+                return chunk
+
+        def open_with_mutation(path, *args, **kwargs):
+            stream = real_open(path, *args, **kwargs)
+            if path.resolve() == bars.resolve() and (args and args[0] == "rb"):
+                return MutatingReader(stream)
+            return stream
+
+        token = runs._ACTIVE.set(run)
+        try:
+            with patch.object(Path, "open", new=open_with_mutation):
+                with self.assertRaisesRegex(ValueError, "changed while its managed run snapshot"):
+                    runs.snapshot_project_input(self.root, spec)
+        finally:
+            runs._ACTIVE.reset(token)
+
+        self.assertFalse((run.directory / "preflight-input.json").exists())
+        self.assertFalse(list((run.directory / "input-files").glob("*.tmp")))
+        self.assertNotIn("input_snapshots", run.record)
+
     def test_dependency_lock_snapshot_mutation_is_detected(self):
         version = importlib_metadata.version("pip")
         lock = self.root / "requirements.lock"
