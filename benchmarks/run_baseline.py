@@ -249,7 +249,10 @@ def main() -> int:
         "not_measured": ["kernel append/refresh/replay/read-model/recovery per-stage p50/p95"],
         "rows": [],
     }
-    with tempfile.TemporaryDirectory(prefix="qx-baseline-", dir=REPO_ROOT / "target") as workdir:
+    # Keep generated frames outside the Cargo target tree. In paired benchmarks the
+    # parent revision intentionally builds into a separate target directory, so its
+    # repository-local ``target`` directory may not exist.
+    with tempfile.TemporaryDirectory(prefix="qx-baseline-") as workdir:
         for size in sizes:
             frame = Path(workdir) / f"frame-{size}.json"
             generate_frame(size, frame)
