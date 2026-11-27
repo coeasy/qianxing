@@ -45,18 +45,32 @@ if ($LASTEXITCODE -ne 0) {
     throw "interpreter ${PythonCommand} has no maturin 1.15.0. Install build requirements with: uv pip install --python ${PythonCommand} maturin==1.15.0"
 }
 
+$CargoMetadata = & cargo metadata --no-deps --format-version 1 --manifest-path (Join-Path $RepositoryRoot "Cargo.toml")
+if ($LASTEXITCODE -ne 0) {
+    throw "cargo metadata failed, so the wheel cannot locate its release renderer"
+}
+$CargoTargetDirectory = ($CargoMetadata | ConvertFrom-Json).target_directory
+if ([string]::IsNullOrWhiteSpace($CargoTargetDirectory)) {
+    throw "cargo metadata did not return target_directory"
+}
+$RendererPath = Join-Path (Join-Path $CargoTargetDirectory "release") "qx-cli.exe"
+$MaturinConfigDirectory = Join-Path $CargoTargetDirectory "maturin"
+
 # The wheel carries the platform report renderer so a clean venv can run `project report`
 # without a second install (docs plan D3 option A).
 & cargo build --release --locked -p qx-cli
 if ($LASTEXITCODE -ne 0) {
     throw "cargo build -p qx-cli failed with exit code $LASTEXITCODE, so the wheel would ship without a report renderer"
 }
+if (-not (Test-Path -LiteralPath $RendererPath -PathType Leaf)) {
+    throw "cargo build succeeded but the release renderer was not found at ${RendererPath}"
+}
 $RendererDirectory = Join-Path $PythonProject "qianxing/_bin"
 New-Item -ItemType Directory -Path $RendererDirectory -Force | Out-Null
-Copy-Item -Path (Join-Path $RepositoryRoot "target/release/qx-cli.exe") -Destination (Join-Path $RendererDirectory "qx-cli.exe") -Force
+Copy-Item -Path $RendererPath -Destination (Join-Path $RendererDirectory "qx-cli.exe") -Force
 
 New-Item -ItemType Directory -Path $OutputPath -Force | Out-Null
-New-Item -ItemType Directory -Path (Join-Path $RepositoryRoot "target/maturin") -Force | Out-Null
+New-Item -ItemType Directory -Path $MaturinConfigDirectory -Force | Out-Null
 Push-Location $PythonProject
 try {
     & $PythonCommand -m maturin build --release --locked --out $OutputPath

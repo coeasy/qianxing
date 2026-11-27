@@ -715,7 +715,21 @@ def wheel_builder_check() -> None:
         pip = text.find("-m pip --version")
         maturin = text.find("-m maturin --version")
         build = text.find("-m maturin build --release --locked")
-        maturin_config_dir = text.find("target/maturin")
+        target_metadata = text.find("cargo metadata --no-deps --format-version 1")
+        target_directory_ref = (
+            "$CargoTargetDirectory" if path == ps1 else "${target_directory}"
+        )
+        target_directory_use = text.find(target_directory_ref)
+        renderer_path = (
+            text.find('Join-Path (Join-Path $CargoTargetDirectory "release") "qx-cli.exe"')
+            if path == ps1
+            else text.find('"${target_directory}/release/qx-cli"')
+        )
+        maturin_config_dir = (
+            text.find('Join-Path $CargoTargetDirectory "maturin"')
+            if path == ps1
+            else text.find('"${target_directory}/maturin"')
+        )
         check(
             0 <= pip < maturin < build,
             f"{path.name} 先检查 pip 与 maturin，再进入锁定的 wheel 构建",
@@ -729,6 +743,18 @@ def wheel_builder_check() -> None:
         # 方案 D3 选项 A：wheel 自带宿主平台 qx-cli，干净 venv 只装 wheel 也能出报告。
         # 装载必须发生在 maturin build 之前，否则 wheel 里的 qianxing/_bin 是空的（audit 也会红）。
         staged = text.find("qianxing/_bin")
+        check(
+            0 <= target_metadata
+            and (
+                target_metadata < target_directory_use < renderer_path
+                if path == ps1
+                else target_metadata < renderer_path <= target_directory_use
+            )
+            and renderer_path < staged < build,
+            f"{path.name} 从 Cargo 元数据解析实际输出目录并暂存本次 release CLI",
+            f"metadata/target/renderer/stage/build positions: "
+            f"{target_metadata}/{target_directory_use}/{renderer_path}/{staged}/{build}",
+        )
         check(
             0 <= staged < build,
             f"{path.name} 在打 wheel 前把 qx-cli 装进 qianxing/_bin",
@@ -746,7 +772,7 @@ def wheel_builder_check() -> None:
         check(
             0 <= maturin_config_dir < build,
             f"{path.name} 在打 wheel 前创建 Pyo3 配置目录",
-            f"target/maturin 初始化位置 {maturin_config_dir}，wheel 构建位置 {build}：全新 target 下 maturin 无法写配置",
+            f"maturin target 配置目录位置 {maturin_config_dir}，wheel 构建位置 {build}：全新 target 下 maturin 无法写配置",
         )
     pyproject = (ROOT / "python" / "pyproject.toml").read_text(encoding="utf-8")
     workflow = (ROOT / ".github" / "workflows" / "python-wheels.yml").read_text(encoding="utf-8")

@@ -79,7 +79,7 @@ def write_ashare_frame(path: Path, bars: int = 60) -> None:
     )
 
 
-def exercise_installed_quickstart() -> dict[str, object]:
+def exercise_installed_quickstart(expected_renderer_prefix: str) -> dict[str, object]:
     """Run the installed console script through a complete offline report flow."""
     command = shutil.which("qianxing")
     if command is None:
@@ -131,6 +131,10 @@ def exercise_installed_quickstart() -> dict[str, object]:
         assert report["source_artifacts_verified_after_render"] is True, report
         assert report["report_renderer"]["origin"] == "bundled", report["report_renderer"]
         assert report["report_renderer"]["status"] == "ready", report["report_renderer"]
+        renderer_identity = report["report_renderer"].get("identity")
+        assert isinstance(renderer_identity, str) and renderer_identity.startswith(
+            expected_renderer_prefix
+        ), (renderer_identity, expected_renderer_prefix)
         html = Path(report["report_paths"]["html"]).resolve(strict=True)
         html.relative_to(project)
         assert html.stat().st_size > 0, html
@@ -144,6 +148,7 @@ def exercise_installed_quickstart() -> dict[str, object]:
             "report_bytes": html.stat().st_size,
             "report_sha256": report["report_sha256"],
             "renderer_origin": report["report_renderer"]["origin"],
+            "renderer_identity": renderer_identity,
         }
 
 
@@ -155,7 +160,17 @@ def main() -> int:
     assert qx.__version__ == installed_version, (qx.__version__, installed_version)
     assert native_version == installed_version, (native_version, installed_version)
     root = Path(sys.argv[1]).resolve()
-    quickstart = exercise_installed_quickstart()
+    source_commit = subprocess.run(
+        ["git", "rev-parse", "--short=7", "HEAD"],
+        cwd=root,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
+        timeout=10,
+    ).stdout.strip()
+    expected_renderer_prefix = f"qianxing {installed_version} (build {source_commit}"
+    quickstart = exercise_installed_quickstart(expected_renderer_prefix)
     bars = root / "deploy" / "qianxing.bar-frame.example.json"
     primary = root / "deploy" / "qianxing.bar-frame.pairs-primary.example.json"
     reference = root / "deploy" / "qianxing.bar-frame.pairs-reference.example.json"

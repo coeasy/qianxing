@@ -28,13 +28,21 @@ if ! "${python_bin}" -m maturin --version >/dev/null 2>&1; then
     exit 1
 fi
 
+cargo_metadata="$(cargo metadata --no-deps --format-version 1 --manifest-path "${repository_root}/Cargo.toml")"
+target_directory="$("${python_bin}" -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])' <<< "${cargo_metadata}")"
+renderer_binary="${target_directory}/release/qx-cli"
+
 # The wheel carries the platform report renderer so a clean venv can run `project report`
 # without a second install (docs plan D3 option A).
 cargo build --release --locked -p qx-cli
+if [[ ! -f "${renderer_binary}" ]]; then
+    echo "[failure] cargo build succeeded but the release renderer was not found at ${renderer_binary}" >&2
+    exit 1
+fi
 mkdir -p "${python_project}/qianxing/_bin"
-cp "${repository_root}/target/release/qx-cli" "${python_project}/qianxing/_bin/qx-cli"
+cp "${renderer_binary}" "${python_project}/qianxing/_bin/qx-cli"
 
 mkdir -p "${wheel_output_directory}"
-mkdir -p "${repository_root}/target/maturin"
+mkdir -p "${target_directory}/maturin"
 (cd "${python_project}" && "${python_bin}" -m maturin build --release --locked \
     --out "${wheel_output_directory}")
