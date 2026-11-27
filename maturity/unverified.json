@@ -26,9 +26,7 @@
         "sandbox_tested",
         "production_approved"
       ],
-      "limitations": [
-        "cross_process_schema_registry_pending （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）"
-      ]
+      "limitations": []
     },
     "storage_consistency_contract": {
       "implementation": true,

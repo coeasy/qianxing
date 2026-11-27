@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "registry_version": 33,
+  "registry_version": 34,
   "entries": [
     {
       "schema_id": "funding-rate-provider-payload-v1",
@@ -2779,6 +2779,37 @@
         "crates/qx-core/src/performance.rs",
         "crates/qx-core/src/benchmark.rs",
         "crates/qx-cli/src/report_xlsx/rows.rs"
+      ]
+    },
+    {
+      "schema_id": "event-metadata-v1",
+      "version": 1,
+      "path": "schemas/event-metadata-v1.json",
+      "producer": "qx-core historical EventLog writers",
+      "consumers": [
+        "qx-core EventMetadata serde replay",
+        "qx-runtime EventLog recovery"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-core/tests/fixtures/event-metadata-v1.json",
+        "crates/qx-core/tests/event_metadata_schema_contract.rs"
+      ]
+    },
+    {
+      "schema_id": "event-metadata-v2",
+      "version": 2,
+      "path": "schemas/event-metadata-v2.json",
+      "producer": "qx-core EventMetadata",
+      "consumers": [
+        "qx-runtime EventLog recovery",
+        "qx-api event reads",
+        "external EventLog consumers"
+      ],
+      "compatibility": "backward",
+      "golden_fixtures": [
+        "crates/qx-core/tests/fixtures/event-metadata-v2.json",
+        "crates/qx-core/tests/event_metadata_schema_contract.rs"
       ]
     }
   ]

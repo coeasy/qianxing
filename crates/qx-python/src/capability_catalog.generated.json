@@ -8,7 +8,7 @@
   },
   "source_sha256": {
     "maturity/capability-matrix.yaml": "60aea21929b5751fd228c81c211fd1a14161d01ddfe62243c793174bae4fd03e",
-    "maturity/capabilities.yaml": "cbfde247d5867b6f33654b14b191bea1618499621badc86efef2eb58b162ca1c",
+    "maturity/capabilities.yaml": "6f141114dc0846e714abff888a6d13600163f25ab3c49ca761c64b671de64425",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
   "product_levels": [
@@ -97,7 +97,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 126,
+      "evidence_path_count": 128,
       "limitation_count": 4
     },
     {
@@ -536,6 +536,8 @@
             "crates/qx-runtime/src/pipeline.rs",
             "crates/qx-runtime/src/pipeline.rs venue_event_source_kind maps each RuntimeExternalEvent variant to its stable event_source_kind and runtime_envelopes_use_fine_grained_event_source_kinds covers every classified variant",
             "EventMetadata schema v2 source_kind replay/digest tests",
+            "schemas/event-metadata-v1.json and schemas/event-metadata-v2.json plus maturity/schema-registry.json entries 1/2 define cross-process compatibility and producers/consumers",
+            "crates/qx-core/tests/event_metadata_schema_contract.rs replays the v1 golden with the documented source_kind default and locks v2 serialized output to its golden",
             "crates/qx-api/tests/event_cursor_after_semantics.rs both_event_read_chains_answer_the_same_cursor_the_same_way drives the in-memory and the SQLite read chains with one cursor and demands the same sequence list, after both were fixed on \"strictly greater than after\" (V12 R4-g)",
             "crates/qx-api/tests/event_cursor_after_semantics.rs stale_or_ahead_cursors_are_rejected_on_both_chains keeps the guard symmetrical instead of only tightening the chain that was wrong (V12 R4-g)",
             "crates/qx-core/src/event.rs 的 EventKind 删掉 `Timer` 与 `MarketBar` 两颗零构造变体（含摘要里 1、2 两格标签）：全仓没有任何生产构造点能把它们写进日志，却有三处下游臂（`digest` 摘要、`crates/qx-api/src/lib.rs` 的账户投影、`crates/qx-runtime/src/pipeline.rs` 的恢复忽略）长期为它们空跑——「bar 可以从事件日志重放」是词汇表里承诺了但无人兑现的事实（V13 R2 第二十二遍",
@@ -545,7 +547,7 @@
             "crates/qx-runtime/src/runtime_config/schema.rs api.account_trading_days_path and crates/qx-service/src/api_read_model.rs resolve per-account/per-venue days from an externally updated calendar map; startup and live refresh never infer dates from event timestamps",
             "crates/qx-service/src/api_read_model.rs api_snapshot_trading_day_comes_from_the_account_calendar_file covers missing and invalid calendar dates; crates/qx-protocol/tests/snapshot_schema_contract.rs, crates/qx-protocol/src/tests.rs, python/tests/test_bridge.py, and tools/check_architecture.py cover v5 date validation, legacy compatibility, published schema, and cross-language parity"
           ],
-          "limitations_count": 1
+          "limitations_count": 0
         },
         {
           "id": "storage_consistency_contract",
