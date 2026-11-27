@@ -89,6 +89,8 @@ capabilities:
       - crates/qx-runtime/src/pipeline.rs
       - crates/qx-runtime/src/pipeline.rs venue_event_source_kind maps each RuntimeExternalEvent variant to its stable event_source_kind and runtime_envelopes_use_fine_grained_event_source_kinds covers every classified variant
       - EventMetadata schema v2 source_kind replay/digest tests
+      - schemas/event-metadata-v1.json and schemas/event-metadata-v2.json plus maturity/schema-registry.json entries 1/2 define cross-process compatibility and producers/consumers
+      - crates/qx-core/tests/event_metadata_schema_contract.rs replays the v1 golden with the documented source_kind default and locks v2 serialized output to its golden
       - crates/qx-api/tests/event_cursor_after_semantics.rs both_event_read_chains_answer_the_same_cursor_the_same_way drives the in-memory and the SQLite read chains with one cursor and demands the same sequence list, after both were fixed on "strictly greater than after" (V12 R4-g)
       - crates/qx-api/tests/event_cursor_after_semantics.rs stale_or_ahead_cursors_are_rejected_on_both_chains keeps the guard symmetrical instead of only tightening the chain that was wrong (V12 R4-g)
       - crates/qx-core/src/event.rs 的 EventKind 删掉 `Timer` 与 `MarketBar` 两颗零构造变体（含摘要里 1、2 两格标签）：全仓没有任何生产构造点能把它们写进日志，却有三处下游臂（`digest` 摘要、`crates/qx-api/src/lib.rs` 的账户投影、`crates/qx-runtime/src/pipeline.rs` 的恢复忽略）长期为它们空跑——「bar 可以从事件日志重放」是词汇表里承诺了但无人兑现的事实（V13 R2 第二十二遍 #239）
@@ -97,8 +99,6 @@ capabilities:
       - crates/qx-protocol/src/lib.rs v5 AccountSnapshot::new requires an explicit trading_day; Rust and Python reject malformed/nonexistent YYYYMMDD dates, while v1-v4 hashes and empty legacy trading_day remain readable
       - crates/qx-runtime/src/runtime_config/schema.rs api.account_trading_days_path and crates/qx-service/src/api_read_model.rs resolve per-account/per-venue days from an externally updated calendar map; startup and live refresh never infer dates from event timestamps
       - crates/qx-service/src/api_read_model.rs api_snapshot_trading_day_comes_from_the_account_calendar_file covers missing and invalid calendar dates; crates/qx-protocol/tests/snapshot_schema_contract.rs, crates/qx-protocol/src/tests.rs, python/tests/test_bridge.py, and tools/check_architecture.py cover v5 date validation, legacy compatibility, published schema, and cross-language parity
-    limitations:
-      - cross_process_schema_registry_pending （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）
   storage_consistency_contract:
     implementation: true
     code_tested: true

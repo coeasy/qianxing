@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "source_id": "okx-market",
+  "dedup_key": "okx:BTC-USDT:quote:1730000000000",
+  "rule_version": "market-v1",
+  "context": {
+    "tenant_id": "tenant-demo",
+    "run_id": "run-42",
+    "account_id": "account-main",
+    "portfolio_id": "portfolio-spot",
+    "strategy_id": "momentum",
+    "signal_id": "signal-17",
+    "intent_id": ""
+  }
+}
