@@ -22096,6 +22096,40 @@
         }
       ],
       "notes": "Debian 13 x86_64 Instabox, candidate source 2d5c5df9, Python 3.13 clean wheel v0.5.0 and CCXT 4.5.89; direct anonymous public API read-only quickstarts on OKX swap, Bitget swap, Binance Spot, each 180 days of 15m bars at cutoff 1795752493851; all fetched 17,280 bars with zero missing intervals, generated HTML and three SVG charts, and passed offline EvidenceBundle verification over six artifacts with input identity recomputed; OKX 1,007 fills and Bitget 1,013 with zero rejects; Binance Spot 978 fills and 30 minimum-notional-only rejects within the project acceptance tolerance; no credentials or orders; result hashes were not independently recomputed. Raw venue bars and reports remain on the Box."
+    },
+    {
+      "run_id": "d4fb3567-805b-4a53-88d7-44d3b7d0e9aa",
+      "acceptance_id": "R01-AC01",
+      "recorded_at_utc": "2026-11-27T05:49:29.225715Z",
+      "source_revision": "979c8346d25b89bbfe3fa2253f454cdb6dbddae4",
+      "source_tree_sha256": "9542da40b8dcc8a24089b19a99505e9e81c0f96617d15954f0bdfc8cf70f6f7b",
+      "source_manifest": "maturity/acceptance-artifacts/d4fb3567-805b-4a53-88d7-44d3b7d0e9aa.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "python",
+        "tools/check_rust_sdk_packages.py",
+        "qx-sdk",
+        "--offline"
+      ],
+      "inputs": [],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/d4fb3567-805b-4a53-88d7-44d3b7d0e9aa.log",
+          "sha256": "30aa6a477b16ca859b33d5e165ce0fa241d2c3728546fd2fd429c2c95b734a2a"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/d4fb3567-805b-4a53-88d7-44d3b7d0e9aa.source-tree.json",
+          "sha256": "e4c6ee0985a32c5611c3a0d85963dc391a0ff6a74311c40d91ebb8190e4f7343"
+        }
+      ],
+      "notes": "Windows offline validation of the exact clean release-candidate source: package and compile all 14 qx-sdk closure crates from normalized local archives, then build and run an independent Rust quickstart using those archives only. No crates.io install or publication."
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"
