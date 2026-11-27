@@ -1,0 +1,26 @@
+acceptance=Linux Python suite against candidate wheel native extension
+box=agent-browser-xuc9 (Debian 13 x86_64)
+job_id=67ab11af
+source_commit=aecffc3db5d2a77c808dbd87f91b741179172bd4
+python=3.13.5
+package=qianxing==0.5.0
+wheel_sha256=013a87abbe8341fda12c8908f548d811bff262c13f907731e14e991af75c6370
+native_extension_sha256=cc690f1dba60f55a152dba1b260bd06f2ef233e5bdc75cb262082e9961dafec3
+exit_code=0
+
+[stdout]MULTI_MARKET_DEPTH_PYTHON_OBSERVED markets=2 fills=1 callback_slots=2 replay_verified=true custom_run_handle=succeeded parameter_candidates=2 strategy_factory=true experiment_run_handle=succeeded builtin_run_handle=succeeded builtin_fills=true
+MULTI_MARKET_CUSTOM_OBSERVED markets=3 custom_slots=1 callback_version=python-test-v1 replay_verified=true run_handle=succeeded
+custom_depth_grid=candidates=2 succeeded=2 fills=2 factory_instances_per_candidate=true run_handle=true asyncio=true
+[建议] 多市场文件策略实验未配置 split_plan；结果只有样本内排序，不能据此判断样本外有效性。
+Interactive HTML report: /tmp/tmpv67rgsbl/report.html
+[建议] RunExperimentSpec 未配置 split_plan；结果只有样本内排序，不能据此判断样本外有效性。
+Interactive HTML report: /tmp/tmpvrf6_7o2/report.html
+[建议] RunExperimentSpec 未配置 split_plan；结果只有样本内排序，不能据此判断样本外有效性。
+Project run: baa12312e8544f7881405ae28ce18e5a
+Project run: b7167f25283342faa7b6c03805b7176a
+strategy on_error hook failed: RuntimeError; original callback error retained
+strategy on_error hook failed: RuntimeError; original request error retained
+----------------------------------------------------------------------
+Ran 708 tests in 90.857s
+
+OK (skipped=5)

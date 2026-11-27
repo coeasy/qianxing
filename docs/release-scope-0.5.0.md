@@ -85,3 +85,9 @@ Windows workspace 验收之外，已用本地 Podman 启动 Linux Rust 1.98.1 �
 - 这次运行发现新版 Cargo 只在测试进程运行时提供 `CARGO_BIN_EXE_qx-cli`；测试中 157 处编译时 `env!` 会令 workspace 无法编译。现改为运行时读取，单元测试辅助函数保留旧 Cargo 的编译时回退；兼容修复提交 `93835674` 已推送到候选分支。此改动仅调整测试可执行文件定位，不改变产品运行逻辑。
 - 同一候选树的格式检查、架构快检（4 片共 378 项）、能力目录校验和策略重构台账校验均通过；台账为 27 个验收场景、397 条 artifact-bound 运行记录。Box job `f271e965` 是本机运行记录，不是最终 tag 的托管 CI。
 - 复核时开放 PR #37–39、#42–47、#49–53 的 GitHub 检查均为成功且无未解决评审线程；#38 以 #37 为基础、#39 以 #38 为基础。它们仍未合并到 `main`；候选分支上的集成测试不能代替合并后的 `main` 与精确 tag 托管验收。
+
+## Linux Python wheel 集成套件（2026-11-27）
+
+- 在 Debian 13 x86_64 Box 的全新 Git 克隆中，针对候选提交 `aecffc3db5d2a77c808dbd87f91b741179172bd4` 运行 `python -m unittest discover -s python/tests -q`：708 项运行、5 项跳过、0 项失败，用时 90.857 秒。Python 源码包加载自干净候选树，原生扩展来自已安装的 `qianxing==0.5.0` manylinux abi3 wheel；Python 为 3.13.5。wheel SHA-256 为 `013a87abbe8341fda12c8908f548d811bff262c13f907731e14e991af75c6370`，扩展 SHA-256 为 `cc690f1dba60f55a152dba1b260bd06f2ef233e5bdc75cb262082e9961dafec3`。
+- 本运行是 Python 包与 wheel 原生扩展的 CI 对照套件；测试内的隔离测试替身不构成交易所接口验收。OKX、Bitget 和 Binance 的真实公开行情验收见上方 R01 记录；本次没有加载账户凭据、调用私有接口或提交订单。
+- 运行日志和候选源码清单分别见[验收日志](../maturity/acceptance-artifacts/99c6a160-db09-4e32-af63-d128d7e31764.log)与[源码清单](../maturity/acceptance-artifacts/99c6a160-db09-4e32-af63-d128d7e31764.source-tree.json)。Box job `67ab11af` 属于本机验收，仍需在获准合并后的精确 tag 上重跑托管发布门禁。
