@@ -21603,6 +21603,253 @@
         }
       ],
       "notes": "Windows 11 current candidate: plan status, blocker and next-action synchronization tests pass; human approval remains outstanding."
+    },
+    {
+      "run_id": "367b63ac-c0df-4887-817d-785d3a889c9a",
+      "acceptance_id": "R12-AC01",
+      "recorded_at_utc": "2026-11-27T02:52:15.293736Z",
+      "source_revision": "f2a657c5e824202247e323c38bc831a56722d19f",
+      "source_tree_sha256": "5b7b4a794f5f42f0836f6fbe08e2265d5cc71df9a3f1be7766188874c8ba9bbe",
+      "source_manifest": "maturity/acceptance-artifacts/367b63ac-c0df-4887-817d-785d3a889c9a.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "podman",
+        "exec",
+        "-e",
+        "QX_TEST_POSTGRES_DSN=<redacted>",
+        "qx050-local-rust-cache-20261127",
+        "bash",
+        "-c",
+        "cd /workspace; cargo test -p qx-cli --features sqlite,postgres --bin qx-cli workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts -- --nocapture"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-cli/src/workers/strategy_worker/prepared_command_replay.rs",
+          "sha256": "b85cc3d7f20f6ed80c03af0d1fc7e256d95403f102076cdb237ba907497e5da1"
+        },
+        {
+          "path": "crates/qx-service/src/configured_backends.rs",
+          "sha256": "9a6d164612b7617938c2f1a7dbb3d82c97a97d507cd690480292d4865773592c"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "5fdd00fab4e99fcb6aa8b5b9552039eee3b9afe939d23ac44840ea53062bdd13"
+        }
+      ],
+      "outcome": "failed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/367b63ac-c0df-4887-817d-785d3a889c9a.log",
+          "sha256": "7c035b9cdb28b583f6ff8d25fd9df5339b2c13465e0021e6ecac9c09fd58b549"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/367b63ac-c0df-4887-817d-785d3a889c9a.source-tree.json",
+          "sha256": "3cd563b3e1f20fcc8d3ae640f836df489b2352af933f66ee23ff33dc8119754e"
+        }
+      ],
+      "notes": "Linux worker recovery after durable Unknown across file, SQLite, and PostgreSQL; cursor remains fixed until venue facts and fresh reconciliation resolve the command"
+    },
+    {
+      "run_id": "234e678d-2e85-42a0-8556-e169502765db",
+      "acceptance_id": "R12-AC01",
+      "recorded_at_utc": "2026-11-27T02:56:07.983599Z",
+      "source_revision": "f2a657c5e824202247e323c38bc831a56722d19f",
+      "source_tree_sha256": "5b7b4a794f5f42f0836f6fbe08e2265d5cc71df9a3f1be7766188874c8ba9bbe",
+      "source_manifest": "maturity/acceptance-artifacts/234e678d-2e85-42a0-8556-e169502765db.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "podman",
+        "exec",
+        "-e",
+        "QX_TEST_POSTGRES_DSN=<redacted>",
+        "qx050-local-rust-cache-20261127",
+        "bash",
+        "-c",
+        "cd /workspace; cargo test -p qx-cli --features sqlite,postgres --bin qx-cli workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts -- --nocapture"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-cli/src/workers/strategy_worker/prepared_command_replay.rs",
+          "sha256": "b85cc3d7f20f6ed80c03af0d1fc7e256d95403f102076cdb237ba907497e5da1"
+        },
+        {
+          "path": "crates/qx-service/src/configured_backends.rs",
+          "sha256": "9a6d164612b7617938c2f1a7dbb3d82c97a97d507cd690480292d4865773592c"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "5fdd00fab4e99fcb6aa8b5b9552039eee3b9afe939d23ac44840ea53062bdd13"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/234e678d-2e85-42a0-8556-e169502765db.log",
+          "sha256": "ad61f6f0d6715f4866037fa55be49d44df4724637a269cba37858b8c75b0df3c"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/234e678d-2e85-42a0-8556-e169502765db.source-tree.json",
+          "sha256": "3cd563b3e1f20fcc8d3ae640f836df489b2352af933f66ee23ff33dc8119754e"
+        }
+      ],
+      "notes": "Linux worker recovery after durable Unknown across file, SQLite, and PostgreSQL; cursor remains fixed until venue facts and fresh reconciliation resolve the command"
+    },
+    {
+      "run_id": "166c537d-fcee-4caa-bdcb-32a013e5ffae",
+      "acceptance_id": "R13-AC01",
+      "recorded_at_utc": "2026-11-27T02:56:27.446265Z",
+      "source_revision": "f2a657c5e824202247e323c38bc831a56722d19f",
+      "source_tree_sha256": "5b7b4a794f5f42f0836f6fbe08e2265d5cc71df9a3f1be7766188874c8ba9bbe",
+      "source_manifest": "maturity/acceptance-artifacts/166c537d-fcee-4caa-bdcb-32a013e5ffae.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "podman",
+        "exec",
+        "-e",
+        "QX_TEST_POSTGRES_DSN=<redacted>",
+        "qx050-local-rust-cache-20261127",
+        "bash",
+        "-c",
+        "cd /workspace; cargo test -p qx-cli --features sqlite,postgres --bin qx-cli workers::strategy_worker::execution_updates::cursor_state::postgres_tests::postgres_cursor_imports_legacy_file_and_fences_stale_progress -- --ignored --exact --nocapture"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-cli/src/workers/strategy_worker/execution_updates/cursor_state.rs",
+          "sha256": "230e38081ad17adee47ca8c062dc7d1a632d1de1cfe5e6d64981a64c86dda6c9"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "5fdd00fab4e99fcb6aa8b5b9552039eee3b9afe939d23ac44840ea53062bdd13"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/166c537d-fcee-4caa-bdcb-32a013e5ffae.log",
+          "sha256": "b82025ce5ff3e0d62cb849987350195e87649cbdee5d8c276d7bc7b7a0fcf20d"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/166c537d-fcee-4caa-bdcb-32a013e5ffae.source-tree.json",
+          "sha256": "3cd563b3e1f20fcc8d3ae640f836df489b2352af933f66ee23ff33dc8119754e"
+        }
+      ],
+      "notes": "PostgreSQL strategy cursor imports a legacy file cursor, persists sequence advancement transactionally, reloads it, and rejects stale progress"
+    },
+    {
+      "run_id": "dbe38a51-4aed-4711-a1f8-985d1a28b2b4",
+      "acceptance_id": "R13-AC01",
+      "recorded_at_utc": "2026-11-27T02:56:48.409301Z",
+      "source_revision": "f2a657c5e824202247e323c38bc831a56722d19f",
+      "source_tree_sha256": "5b7b4a794f5f42f0836f6fbe08e2265d5cc71df9a3f1be7766188874c8ba9bbe",
+      "source_manifest": "maturity/acceptance-artifacts/dbe38a51-4aed-4711-a1f8-985d1a28b2b4.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "podman",
+        "exec",
+        "-e",
+        "QX_TEST_POSTGRES_DSN=<redacted>",
+        "qx050-local-rust-cache-20261127",
+        "bash",
+        "-c",
+        "cd /workspace; cargo test -p qx-storage --features postgres --lib postgres::json_state_tests::postgres_deployment_blobs_are_immutable_and_content_addressable -- --ignored --exact --nocapture"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "5fdd00fab4e99fcb6aa8b5b9552039eee3b9afe939d23ac44840ea53062bdd13"
+        },
+        {
+          "path": "crates/qx-storage/migrations/postgres/0004_schema.sql",
+          "sha256": "85b5eb88b2b613d43c4ac5710f7e93c79abb47afeb4bc73ca344564991a2d328"
+        },
+        {
+          "path": "crates/qx-runtime/src/strategy_deployment_store.rs",
+          "sha256": "7daf73e55456df70f61b37665d00b31734d84b07878439f1b98649b4727e0e7a"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/dbe38a51-4aed-4711-a1f8-985d1a28b2b4.log",
+          "sha256": "483e5bbad4db147c14fe69af1b8ba3254232716c41a4182b7cb149820bdf42f3"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/dbe38a51-4aed-4711-a1f8-985d1a28b2b4.source-tree.json",
+          "sha256": "3cd563b3e1f20fcc8d3ae640f836df489b2352af933f66ee23ff33dc8119754e"
+        }
+      ],
+      "notes": "PostgreSQL deployment blobs verify SHA-256 keys, persist and reload immutable BYTEA content, and reject a conflicting rewrite"
+    },
+    {
+      "run_id": "567edbc6-0e01-477b-a5b9-e48b2da1c671",
+      "acceptance_id": "R13-AC01",
+      "recorded_at_utc": "2026-11-27T02:57:43.939189Z",
+      "source_revision": "f2a657c5e824202247e323c38bc831a56722d19f",
+      "source_tree_sha256": "5b7b4a794f5f42f0836f6fbe08e2265d5cc71df9a3f1be7766188874c8ba9bbe",
+      "source_manifest": "maturity/acceptance-artifacts/567edbc6-0e01-477b-a5b9-e48b2da1c671.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "podman",
+        "exec",
+        "-e",
+        "QX_TEST_POSTGRES_DSN=<redacted>",
+        "qx050-local-rust-cache-20261127",
+        "bash",
+        "-c",
+        "cd /workspace; cargo test -p qx-runtime --features postgres strategy_deployment_store::artifact_cache_tests::postgres_deployment_blob_rehydrates_into_verified_runtime_cache -- --ignored --exact --nocapture"
+      ],
+      "inputs": [
+        {
+          "path": "crates/qx-runtime/src/strategy_deployment_store.rs",
+          "sha256": "7daf73e55456df70f61b37665d00b31734d84b07878439f1b98649b4727e0e7a"
+        },
+        {
+          "path": "crates/qx-storage/src/postgres.rs",
+          "sha256": "5fdd00fab4e99fcb6aa8b5b9552039eee3b9afe939d23ac44840ea53062bdd13"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/567edbc6-0e01-477b-a5b9-e48b2da1c671.log",
+          "sha256": "600b8563c5e0f00a2786bf4d79e964723e12cd79f2ea1445c25a705972b6977d"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/567edbc6-0e01-477b-a5b9-e48b2da1c671.source-tree.json",
+          "sha256": "3cd563b3e1f20fcc8d3ae640f836df489b2352af933f66ee23ff33dc8119754e"
+        }
+      ],
+      "notes": "PostgreSQL deployment blobs are hash-verified and rehydrated into an immutable runtime cache"
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"

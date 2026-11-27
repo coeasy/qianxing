@@ -1,0 +1,153 @@
+$ podman exec -e QX_TEST_POSTGRES_DSN=<redacted> qx050-local-rust-cache-20261127 bash -c cd /workspace; cargo test -p qx-cli --features sqlite,postgres --bin qx-cli workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts -- --nocapture
+exit_code=101
+
+[stdout]
+
+running 1 test
+test workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts ... FAILED
+
+failures:
+
+failures:
+    workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 528 filtered out; finished in 0.00s
+
+
+[stderr]
+   Compiling zerocopy v0.8.56
+   Compiling bitflags v2.13.1
+   Compiling bytes v1.12.1
+   Compiling syn v3.0.4
+   Compiling syn v2.0.119
+   Compiling getrandom v0.2.17
+   Compiling smallvec v1.16.0
+   Compiling futures-task v0.3.34
+   Compiling rustix v1.1.4
+   Compiling memmap2 v0.9.11
+   Compiling libloading v0.8.9
+   Compiling io-lifetimes v3.0.1
+   Compiling crossbeam-utils v0.8.23
+   Compiling typenum v1.20.1
+   Compiling linux-raw-sys v0.12.1
+   Compiling io-lifetimes v2.0.4
+   Compiling futures-util v0.3.34
+   Compiling ring v0.17.14
+   Compiling parking_lot_core v0.9.12
+   Compiling io-extras v0.19.0
+   Compiling crossbeam-epoch v0.9.21
+   Compiling cap-primitives v4.0.3
+   Compiling autocfg v1.5.1
+   Compiling crossbeam-deque v0.8.8
+   Compiling utf8parse v0.2.2
+   Compiling qx-app v0.5.0 (/workspace/crates/qx-app)
+   Compiling parking_lot v0.12.5
+   Compiling anstyle-parse v1.0.0
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling rayon-core v1.13.0
+   Compiling either v1.18.0
+   Compiling cap-std v4.0.3
+   Compiling tokio v1.53.1
+   Compiling postgres-protocol v0.6.12
+   Compiling num-traits v0.2.19
+   Compiling colorchoice v1.0.5
+   Compiling anstyle v1.0.14
+   Compiling ipnet v2.12.2
+   Compiling anstyle-query v1.1.5
+   Compiling maybe-owned v0.3.4
+   Compiling generic-array v0.14.7
+   Compiling ambient-authority v0.0.2
+   Compiling anstream v1.0.0
+   Compiling alloca v0.4.0
+   Compiling regex-syntax v0.8.11
+   Compiling heck v0.5.0
+   Compiling qx-process-io v0.5.0 (/workspace/crates/qx-process-io)
+   Compiling plotters-backend v0.3.7
+   Compiling postgres-types v0.2.14
+   Compiling strsim v0.11.1
+   Compiling crc32fast v1.5.2
+   Compiling clap_lex v1.1.1
+   Compiling ciborium-io v0.2.2
+   Compiling plotters-svg v0.3.7
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling clap_builder v4.6.7
+   Compiling itertools v0.13.0
+   Compiling digest v0.10.7
+   Compiling same-file v1.0.6
+   Compiling zip v2.4.2
+   Compiling equivalent v1.0.2
+   Compiling cast v0.3.0
+   Compiling hashbrown v0.17.1
+   Compiling walkdir v2.5.0
+   Compiling page_size v0.6.0
+   Compiling sha2 v0.10.9
+   Compiling oorandom v11.1.5
+   Compiling anes v0.1.6
+   Compiling rayon v1.12.0
+   Compiling plotters v0.3.7
+   Compiling regex-automata v0.4.18
+   Compiling qx-cli v0.5.0 (/workspace/crates/qx-cli)
+   Compiling indexmap v2.14.2
+   Compiling criterion-plot v0.8.2
+   Compiling zerocopy-derive v0.8.56
+   Compiling openssl-macros v0.1.1
+   Compiling openssl v0.10.81
+   Compiling rustls-webpki v0.103.15
+   Compiling serde_derive v1.0.229
+   Compiling async-trait v0.1.92
+   Compiling clap_derive v4.6.7
+   Compiling thiserror-impl v2.0.20
+   Compiling rustls v0.23.43
+   Compiling regex v1.13.1
+   Compiling fs-set-times v0.20.3
+   Compiling rustix-linux-procfs v0.1.1
+   Compiling displaydoc v0.2.7
+   Compiling thiserror v2.0.20
+   Compiling clap v4.6.7
+   Compiling serde v1.0.229
+   Compiling qx-core v0.5.0 (/workspace/crates/qx-core)
+   Compiling tinytemplate v1.2.1
+   Compiling native-tls v0.2.18
+   Compiling tokio-util v0.7.19
+   Compiling tokio-native-tls v0.3.1
+   Compiling ahash v0.8.12
+   Compiling half v2.7.1
+   Compiling hashbrown v0.14.5
+   Compiling tokio-postgres v0.7.18
+   Compiling ciborium-ll v0.2.2
+   Compiling ciborium v0.2.2
+   Compiling hashlink v0.9.1
+   Compiling criterion v0.8.2
+   Compiling rusqlite v0.32.1
+   Compiling postgres-native-tls v0.5.3
+   Compiling postgres v0.19.14
+   Compiling qx-guanxing v0.5.0 (/workspace/crates/qx-guanxing)
+   Compiling qx-risk v0.5.0 (/workspace/crates/qx-risk)
+   Compiling qx-control v0.5.0 (/workspace/crates/qx-control)
+   Compiling qx-strategy v0.5.0 (/workspace/crates/qx-strategy)
+   Compiling qx-scheduler v0.5.0 (/workspace/crates/qx-scheduler)
+   Compiling qx-protocol v0.5.0 (/workspace/crates/qx-protocol)
+   Compiling qx-genglu v0.5.0 (/workspace/crates/qx-genglu)
+   Compiling qx-plugin v0.5.0 (/workspace/crates/qx-plugin)
+   Compiling qx-datastruct v0.5.0 (/workspace/crates/qx-datastruct)
+   Compiling qx-zhenlu v0.5.0 (/workspace/crates/qx-zhenlu)
+   Compiling qx-factor v0.5.0 (/workspace/crates/qx-factor)
+   Compiling qx-data v0.5.0 (/workspace/crates/qx-data)
+   Compiling qx-storage v0.5.0 (/workspace/crates/qx-storage)
+   Compiling qx-execution v0.5.0 (/workspace/crates/qx-execution)
+   Compiling qx-spec v0.5.0 (/workspace/crates/qx-spec)
+   Compiling qx-provider v0.5.0 (/workspace/crates/qx-provider)
+   Compiling qx-xingban v0.5.0 (/workspace/crates/qx-xingban)
+   Compiling qx-adapter v0.5.0 (/workspace/crates/qx-adapter)
+   Compiling qx-runtime v0.5.0 (/workspace/crates/qx-runtime)
+   Compiling qx-orchestrator v0.5.0 (/workspace/crates/qx-orchestrator)
+   Compiling qx-api v0.5.0 (/workspace/crates/qx-api)
+   Compiling qx-service v0.5.0 (/workspace/crates/qx-service)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 25s
+     Running unittests src/main.rs (/tmp/qx-target/debug/deps/qx_cli-350a890a48b80dfc)
+
+thread 'workers::strategy_worker::prepared_command_replay::tests::live_unknown_recovery_survives_real_file_sqlite_and_postgres_process_restarts' (11633) panicked at crates/qx-cli/src/workers/strategy_worker/prepared_command_replay.rs:499:39:
+called `Result::unwrap()` on an `Err` value: Os { code: 30, kind: ReadOnlyFilesystem, message: "Read-only file system" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p qx-cli --bin qx-cli`
