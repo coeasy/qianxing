@@ -1,0 +1,14 @@
+$ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .task-tmp/verify_live_ccxt_box.ps1
+exit_code=0
+
+[stdout]
+Pushed 1 file (4.8 KiB, sha256 70252a2dbcbcde850496d886eaae504da258215a81d09e002f998e90fe62e737) to agent-browser-xuc9:/data/workspace/verify_live_ccxt_box.sh
+No broken requirements found.
+installed_qianxing=0.5.0 ccxt=4.5.89
+013a87abbe8341fda12c8908f548d811bff262c13f907731e14e991af75c6370  dist/qianxing-0.5.0-cp310-abi3-manylinux_2_34_x86_64.whl
+{"bars_15m": 17280, "exchange": "okx", "fills": 1007, "html_bytes": 2368505, "instrument": "BTC/USDT:USDT.OKX", "market_type": "swap", "missing_intervals": 0, "rejected_orders": 0, "result_hash": "b86e83b72a23b722", "svg_charts": 3, "verified_artifacts": 6}
+{"bars_15m": 17280, "exchange": "bitget", "fills": 1013, "html_bytes": 2363698, "instrument": "BTC/USDT:USDT.BITGET", "market_type": "swap", "missing_intervals": 0, "rejected_orders": 0, "result_hash": "7fc53ea312b86101", "svg_charts": 3, "verified_artifacts": 6}
+{"bars_15m": 17280, "exchange": "binance", "fills": 978, "html_bytes": 2336617, "instrument": "BTC/USDT.BINANCE", "market_type": "spot", "missing_intervals": 0, "rejected_orders": 30, "result_hash": "e22d1886eea39f4a", "svg_charts": 3, "verified_artifacts": 6}
+candidate_source=2d5c5df9d83cc86b24ad100912d50d44c4d44ac7 ccxt=4.5.89 cutoff_utc_ms=1795752493851
+
+[stderr]

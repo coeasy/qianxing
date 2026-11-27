@@ -22035,6 +22035,67 @@
         }
       ],
       "notes": "Debian 13 x86_64 Instabox; candidate 2d5c5df9; Python 3.13 abi3 Linux wheel built and installed in a fresh venv; doctor matched native extension and bundled renderer version/schema/platform; quickstart generated HTML/JSON/XLSX from 600 local sample bars; 4 evidence artifacts verified with input identity recomputed; result recomputation not requested; no exchange/private API or order acceptance."
+    },
+    {
+      "run_id": "622eabcb-7d42-4b48-ab80-312758a42d53",
+      "acceptance_id": "R01-AC01",
+      "recorded_at_utc": "2026-11-27T04:12:00.264864Z",
+      "source_revision": "2acb85fb1918be8d0e54957d2426b449bf75576d",
+      "source_tree_sha256": "d120dfdc6afc4b9b3d5d7cb018b8f6024b8e4d2367561170e2041c616243d03d",
+      "source_manifest": "maturity/acceptance-artifacts/622eabcb-7d42-4b48-ab80-312758a42d53.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "powershell.exe",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        ".task-tmp/verify_live_ccxt_box.ps1"
+      ],
+      "inputs": [
+        {
+          "path": "python/pyproject.toml",
+          "sha256": "30d9b4d819dc17782c0b8f9c4c8f36e487790ed0bd6aa55437ce450e9e59208e"
+        },
+        {
+          "path": "python/qianxing/sdk_diagnostics.py",
+          "sha256": "c8c1cdcf56a9d1902064586168b55846aff8d6a7cba52c89b3088525ea38920b"
+        },
+        {
+          "path": "python/qianxing/report_renderer.py",
+          "sha256": "f4200e7ed5087ec4e7f7bc77b2f741e8a4193d2636ab5f1bb09b9f7759de45d3"
+        },
+        {
+          "path": "tools/build_python_wheel.sh",
+          "sha256": "d7bba30cf6b7c10382e8d3c6b628cb64b54bfa521c8ec45c880bf74c4ff2d8fa"
+        },
+        {
+          "path": "docs/first-run.md",
+          "sha256": "93ddbf315639358b722ed4277a4cb17aaa2cdaa62fad5c83343f0194b736fa32"
+        },
+        {
+          "path": ".github/workflows/public-ccxt-quickstart.yml",
+          "sha256": "580d1616dd4280b422994c13bcb5fbf1b86aee2bec374fc162d581c1124a4034"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/622eabcb-7d42-4b48-ab80-312758a42d53.log",
+          "sha256": "2421bc9ce32d19db61e74a0b084e6ef7c091b87890def220418e59fb3e417b4e"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/622eabcb-7d42-4b48-ab80-312758a42d53.source-tree.json",
+          "sha256": "b4f03fba05f765afd00392a6e1e51c09542f6f9023b86ab866d4561e5d8e8bb8"
+        }
+      ],
+      "notes": "Debian 13 x86_64 Instabox, candidate source 2d5c5df9, Python 3.13 clean wheel v0.5.0 and CCXT 4.5.89; direct anonymous public API read-only quickstarts on OKX swap, Bitget swap, Binance Spot, each 180 days of 15m bars at cutoff 1795752493851; all fetched 17,280 bars with zero missing intervals, generated HTML and three SVG charts, and passed offline EvidenceBundle verification over six artifacts with input identity recomputed; OKX 1,007 fills and Bitget 1,013 with zero rejects; Binance Spot 978 fills and 30 minimum-notional-only rejects within the project acceptance tolerance; no credentials or orders; result hashes were not independently recomputed. Raw venue bars and reports remain on the Box."
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"
