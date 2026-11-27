@@ -22,6 +22,7 @@ class WebConsolePackageTest(unittest.TestCase):
         self.source.mkdir()
         (self.source / "index.html").write_text(
             '<link rel="stylesheet" href="styles.css">'
+            '<a href="sample.json" download="sample.json">sample</a>'
             '<script src="research-comparison.js"></script>'
             '<script src="app.js"></script>',
             encoding="utf-8",
@@ -31,6 +32,7 @@ class WebConsolePackageTest(unittest.TestCase):
         (self.source / "research-comparison.js").write_text(
             "globalThis.QianxingResearchComparison = {};\n", encoding="utf-8"
         )
+        (self.source / "sample.json").write_text('{"schema_version":1}\n', encoding="utf-8")
         self.version = "0.1.0"
         self.commit = "0123456789abcdef0123456789abcdef01234567"
 
@@ -48,7 +50,7 @@ class WebConsolePackageTest(unittest.TestCase):
         self.assertEqual(identity["schema_registry_version"], MODULE._schema_registry_version())
         self.assertEqual(identity["distribution_boundary"], "local-only")
         self.assertEqual(identity["package_scope"], "static-assets-only")
-        # 归档自己只有静态四件，但它**不得**把产品侧的能力说成没有：
+        # 归档自己只有静态资源与教学行情样例，但它**不得**把产品侧的能力说成没有：
         # 同源 BFF / CSRF / 服务端会话由 `qx-cli console` 提供，归档身份必须如实登记。
         self.assertTrue(identity["requires_same_origin_bff"])
         self.assertTrue(identity["product_same_origin_bff"])
@@ -66,6 +68,7 @@ class WebConsolePackageTest(unittest.TestCase):
                     "qianxing-web-console/index.html",
                     "qianxing-web-console/release-identity.json",
                     "qianxing-web-console/research-comparison.js",
+                    "qianxing-web-console/sample.json",
                     "qianxing-web-console/styles.css",
                 ],
             )
@@ -76,6 +79,12 @@ class WebConsolePackageTest(unittest.TestCase):
             for item in packed_identity["assets"]:
                 asset = archive.extractfile(f"qianxing-web-console/{item['path']}").read()
                 self.assertEqual(MODULE.hashlib.sha256(asset).hexdigest(), item["sha256"])
+
+    def test_packaged_teaching_bars_match_the_canonical_deploy_fixture(self):
+        root = Path(__file__).resolve().parents[2]
+        packaged = root / "web" / "console" / "sample.json"
+        canonical = root / "deploy" / "qianxing.bar-frame.example.json"
+        self.assertEqual(packaged.read_bytes(), canonical.read_bytes())
 
     def test_unavailable_or_external_resources_are_rejected(self):
         (self.source / "index.html").write_text(
