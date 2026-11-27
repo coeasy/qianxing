@@ -360,9 +360,9 @@ qianxing run -f strategies/main.py --spec input.json         # 显式版本化 s
 
 ## C. 本机 Web Console（研究 / Paper）
 
-`qx-cli console` 在回环地址启动同源控制台和 API；默认监听 `127.0.0.1:18091`，只用于本机研究与 Paper。页面默认 Bar 规格会读取 `sample.json`，服务不会在启动时静默创建它。当前源码构建可在登录后显式安装同版本样例；静态模式与已发布的 v0.4.2 页面仍使用手工准备流程：
+`qx-cli console` 在回环地址启动同源控制台和 API；默认监听 `127.0.0.1:18091`，只用于本机研究与 Paper。页面默认 Bar 规格会读取 `sample.json`，服务不会在启动时静默创建它。包含这些改进的源码构建可在登录后显式安装样例并完成首跑；静态模式与已发布的 v0.4.2 页面仍使用手工准备流程：
 
-包含本改进的同源 Console 在登录后可点击“**一键安装教学数据**”：服务只会把当前 Console 包内的教学 BarFrame 安装为 API 数据根目录的固定文件 `sample.json`。相同字节重复安装会返回“已存在”；若目标已是其他内容或非普通文件，会拒绝且保留原文件。该操作有会话、CSRF 与 Origin/Host 校验，不会联网取数；静态 Console 没有安装写面，仍可手工下载与复制。已发布的 v0.4.2 页面没有该按钮，继续用下面的手工方式：
+包含本改进的同源 Console 登录后可点击“**一键跑通教学回测**”：先把当前 Console 包内的教学 BarFrame 安全安装为 API 数据根目录的 `sample.json`，再复用下方 BacktestSpec 执行数据校验、Bar 回测和四份产物复核。只有复核通过才报告首跑成功；失败详情仍在 Bar 研究面板中。该操作仅接受 `bars_path: sample.json`，不会改写用户的规格；若同名文件内容不同则拒绝安装且保留原文件。安装写入有会话、CSRF 与 Origin/Host 校验，不会联网取数。单独安装仍有“仅安装教学数据”按钮；静态 Console 没有安装写面，仍可手工下载与复制后使用现有工作流。已发布的 v0.4.2 页面没有这些按钮，继续用下面的手工方式：
 
 ```powershell
 New-Item -ItemType Directory -Force .qianxing/api-data | Out-Null
