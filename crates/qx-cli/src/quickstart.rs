@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use crate::{
     cli_args, resolve_backtest_summary_path, run_ccxt_builtin_backtest, run_doctor,
-    run_init_with_ccxt_selection, run_init_with_profile, run_report_with_output, run_status,
+    run_init_with_ccxt_market_selection, run_init_with_profile, run_report_with_output, run_status,
     run_unified_backtest, write_ccxt_quickstart_project_manifest, CcxtBuiltinBacktestInput,
 };
 
@@ -125,20 +125,23 @@ pub(crate) fn run(
     as_of_ms: Option<u64>,
     instrument: Option<String>,
     exchange: Option<String>,
+    selected_market_type: Option<cli_args::QuickstartMarketType>,
 ) {
     let ccxt_options_used = days.is_some()
         || timeframe.is_some()
         || as_of_ms.is_some()
         || instrument.is_some()
-        || exchange.is_some();
+        || exchange.is_some()
+        || selected_market_type.is_some();
     if profile != cli_args::QuickstartProfile::Ccxt && ccxt_options_used {
-        eprintln!("[止步] --days、--timeframe、--as-of-ms、--instrument、--exchange 仅适用于 --profile ccxt");
+        eprintln!("[止步] --days、--timeframe、--as-of-ms、--instrument、--exchange、--market-type 仅适用于 --profile ccxt");
         std::process::exit(2);
     }
     let days = days.unwrap_or(30);
     let timeframe = timeframe.unwrap_or_else(|| "1h".into());
     let exchange = exchange.unwrap_or_else(|| "okx".into());
-    let instrument = quickstart_ccxt_instrument(instrument, &exchange);
+    let market_type = selected_market_type.unwrap_or(cli_args::QuickstartMarketType::Swap);
+    let instrument = quickstart_ccxt_instrument(instrument, &exchange, market_type);
     let root = project.unwrap_or_else(|| PathBuf::from(DEFAULT_PROJECT_DIR));
     let absolute = std::path::absolute(&root).unwrap_or_else(|_| root.clone());
     let runtime = absolute.join(RUNTIME_FILE_NAME);
@@ -219,14 +222,28 @@ pub(crate) fn run(
             eprintln!("[止步] 公共行情交易所仅支持 okx、binance、bitget");
             std::process::exit(2);
         }
+        if market_type == cli_args::QuickstartMarketType::Spot && exchange_id != "binance" {
+            eprintln!("[止步] 当前 spot quickstart 仅支持 Binance 公共现货行情");
+            std::process::exit(2);
+        }
         let expected_suffix = exchange_id.to_ascii_uppercase();
-        if instrument
+        let suffix_matches = instrument
             .rsplit_once('.')
-            .is_none_or(|(_, suffix)| suffix != expected_suffix)
-            || !instrument.contains(':')
-        {
+            .is_some_and(|(_, suffix)| suffix == expected_suffix);
+        let shape_matches = match market_type {
+            cli_args::QuickstartMarketType::Spot => !instrument.contains(':'),
+            cli_args::QuickstartMarketType::Swap => instrument.contains(':'),
+        };
+        if !suffix_matches || !shape_matches {
+            let example = match market_type {
+                cli_args::QuickstartMarketType::Spot => "BTC/USDT.BINANCE".to_owned(),
+                cli_args::QuickstartMarketType::Swap => {
+                    format!("BTC/USDT:USDT.{expected_suffix}")
+                }
+            };
             eprintln!(
-                "[止步] 标的必须是带结算币的永续合约并以 .{expected_suffix} 结尾，例如 BTC/USDT:USDT.{expected_suffix}"
+                "[止步] {} 标的必须以 .{expected_suffix} 结尾，例如 {example}",
+                market_type.as_str()
             );
             std::process::exit(2);
         }
@@ -260,6 +277,8 @@ pub(crate) fn run(
             instrument.as_str(),
             "--exchange",
             exchange.as_str(),
+            "--market-type",
+            market_type.as_str(),
         ]);
     }
     if html {
@@ -290,7 +309,7 @@ pub(crate) fn run(
         init_arguments.push("--force");
     }
     let init_outcome = if let Some((_, exchange_id)) = ccxt_preflight.as_ref() {
-        run_init_with_ccxt_selection(&runtime, force, exchange_id, &instrument)
+        run_init_with_ccxt_market_selection(&runtime, force, exchange_id, &instrument, market_type)
     } else {
         run_init_with_profile(&runtime, force, strategy_name, init_profile, false)
     };
@@ -315,7 +334,7 @@ pub(crate) fn run(
         };
         let public_config = absolute.join("qianxing.ccxt.public.json");
         if let Err(error) =
-            write_public_ccxt_config(&public_config, exchange_id, &instrument, force)
+            write_public_ccxt_config(&public_config, exchange_id, &instrument, market_type, force)
         {
             eprintln!("[止步] 创建只读公共行情配置失败：{error}");
             std::process::exit(2);
@@ -339,7 +358,8 @@ pub(crate) fn run(
             .map(|value| value.to_string())
             .unwrap_or_else(|| "system_utc".into());
         println!(
-            "[真实公开行情 · 只读] exchange={exchange_id} instrument={instrument} timeframe={timeframe} days={days} as_of={as_of_label} start_ms={} end_ms={}；不加载密钥、不提交订单",
+            "[真实公开行情 · 只读] exchange={exchange_id} market_type={} instrument={instrument} timeframe={timeframe} days={days} as_of={as_of_label} start_ms={} end_ms={}；不加载密钥、不提交订单",
+            market_type.as_str(),
             range.start_ms, range.end_ms
         );
         let backtest_outcome = run_ccxt_builtin_backtest(CcxtBuiltinBacktestInput {
@@ -657,14 +677,25 @@ fn quickstart_ccxt_window(
     Ok(CcxtQuickstartWindow { start_ms, end_ms })
 }
 
-fn quickstart_ccxt_instrument(instrument: Option<String>, exchange: &str) -> String {
-    instrument.unwrap_or_else(|| format!("BTC/USDT:USDT.{}", exchange.to_ascii_uppercase()))
+fn quickstart_ccxt_instrument(
+    instrument: Option<String>,
+    exchange: &str,
+    market_type: cli_args::QuickstartMarketType,
+) -> String {
+    instrument.unwrap_or_else(|| {
+        let suffix = exchange.to_ascii_uppercase();
+        match market_type {
+            cli_args::QuickstartMarketType::Spot => format!("BTC/USDT.{suffix}"),
+            cli_args::QuickstartMarketType::Swap => format!("BTC/USDT:USDT.{suffix}"),
+        }
+    })
 }
 
 fn write_public_ccxt_config(
     path: &Path,
     exchange: &str,
     instrument: &str,
+    market_type: cli_args::QuickstartMarketType,
     force: bool,
 ) -> Result<(), String> {
     if path.exists() && !force {
@@ -673,17 +704,31 @@ fn write_public_ccxt_config(
             path.display()
         ));
     }
-    let payload = serde_json::json!({
+    let (default_type, options, public_market_data_endpoint) = match market_type {
+        cli_args::QuickstartMarketType::Swap => ("swap", serde_json::json!({}), None),
+        cli_args::QuickstartMarketType::Spot if exchange == "binance" => (
+            "spot",
+            serde_json::json!({"fetchMarkets": {"types": ["spot"]}}),
+            Some("binance_spot_data_api"),
+        ),
+        cli_args::QuickstartMarketType::Spot => {
+            return Err("当前 spot quickstart 仅支持 Binance 公共现货行情".into());
+        }
+    };
+    let mut payload = serde_json::json!({
         "exchange_id": exchange,
         "sandbox": false,
         "use_environment_proxy": true,
         "enable_rate_limit": true,
         "timeout_ms": 30000,
         "historical_data_timeout_ms": 300000,
-        "default_type": "swap",
-        "options": {},
+        "default_type": default_type,
+        "options": options,
         "instruments": [instrument],
     });
+    if let Some(endpoint) = public_market_data_endpoint {
+        payload["public_market_data_endpoint"] = serde_json::Value::String(endpoint.into());
+    }
     let serialized = serde_json::to_vec_pretty(&payload)
         .map_err(|error| format!("编码公共 CCXT 配置失败: {error}"))?;
     std::fs::write(path, serialized)
@@ -696,6 +741,7 @@ mod tests {
         quickstart_ccxt_instrument, quickstart_ccxt_window, write_public_ccxt_config,
         CCXT_QUICKSTART_DEFAULT_QUANTITY,
     };
+    use crate::cli_args::QuickstartMarketType;
 
     #[test]
     fn ccxt_quickstart_default_instrument_tracks_the_selected_exchange() {
@@ -705,10 +751,21 @@ mod tests {
             ("bitget", "BTC/USDT:USDT.BITGET"),
             ("BiNaNcE", "BTC/USDT:USDT.BINANCE"),
         ] {
-            assert_eq!(quickstart_ccxt_instrument(None, exchange), expected);
+            assert_eq!(
+                quickstart_ccxt_instrument(None, exchange, QuickstartMarketType::Swap),
+                expected
+            );
         }
         assert_eq!(
-            quickstart_ccxt_instrument(Some("ETH/USDT:USDT.BINANCE".into()), "binance"),
+            quickstart_ccxt_instrument(None, "binance", QuickstartMarketType::Spot),
+            "BTC/USDT.BINANCE"
+        );
+        assert_eq!(
+            quickstart_ccxt_instrument(
+                Some("ETH/USDT:USDT.BINANCE".into()),
+                "binance",
+                QuickstartMarketType::Swap
+            ),
             "ETH/USDT:USDT.BINANCE",
             "an explicitly selected instrument must remain untouched"
         );
@@ -729,13 +786,52 @@ mod tests {
             ));
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("public.json");
-        write_public_ccxt_config(&path, "okx", "BTC/USDT:USDT.OKX", false).unwrap();
+        write_public_ccxt_config(
+            &path,
+            "okx",
+            "BTC/USDT:USDT.OKX",
+            QuickstartMarketType::Swap,
+            false,
+        )
+        .unwrap();
         let config: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(config["use_environment_proxy"], true);
         assert_eq!(config["timeout_ms"], 30_000);
         assert_eq!(config["historical_data_timeout_ms"], 300_000);
         assert!(config.get("credential_env").is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn binance_spot_public_config_selects_official_read_only_market_data_endpoint() {
+        let root = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join(format!("qx-quickstart-binance-spot-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("public.json");
+        write_public_ccxt_config(
+            &path,
+            "binance",
+            "BTC/USDT.BINANCE",
+            QuickstartMarketType::Spot,
+            false,
+        )
+        .unwrap();
+        let config: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(config["default_type"], "spot");
+        assert_eq!(
+            config["public_market_data_endpoint"],
+            "binance_spot_data_api"
+        );
+        assert_eq!(
+            config["options"]["fetchMarkets"]["types"],
+            serde_json::json!(["spot"])
+        );
+        assert!(config.get("credential_env").is_none());
+        assert_eq!(config["sandbox"], false);
         std::fs::remove_dir_all(root).unwrap();
     }
 

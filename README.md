@@ -112,6 +112,32 @@ Python 策略的未来数据扰动与预热长度敏感性检查见[策略偏差
 
 ## 快速开始
 
+### 从 PyPI 安装并完成首跑
+
+只体验回测与离线图表：
+
+```bash
+python -m pip install "qianxing==0.4.1"
+qianxing quickstart ./qianxing-demo
+```
+
+上面的命令使用当前已发布的 v0.4.1 和离线样例数据。v0.4.1 的 Python wheel 尚未提供 Python CCXT 快捷入口；要立即跑真实公开行情，请安装 GitHub Release 中的 `qx-cli`，并按[首跑指南](docs/first-run.md)安装 `qianxing[ccxt]` 行情 worker。
+
+v0.4.2 发布后，可从 Python 入口直接获取交易所真实公开 K 线（需要网络，不需要账户密钥，也不会下单）。该 wheel 自带匹配版本的 Rust CLI，并自动将当前 Python 解释器传给行情 worker；安装 `ccxt` extra 后即可完成公开行情下载、回测和 HTML 报告，无需另装 Rust 或 CLI：
+
+```bash
+python -m pip install "qianxing[ccxt]==0.4.2"
+qianxing quickstart ./qianxing-okx --profile ccxt --exchange okx --days 30 --timeframe 1h
+```
+
+当前开发分支另行实现 Binance 现货匿名公共行情入口：`--market-type spot` 默认使用 `BTC/USDT.BINANCE`，不会读取账户密钥、调用私有 API 或提交订单。已发布的 v0.4.1 和现存 v0.4.2 tag 均不含该参数；须等待后续版本发布后才能按包安装使用。
+
+v0.4.2 候选的 Python wheel → 真实公共行情 → 回测 → HTML 报告链路已通过 [CI #850（30/30）](https://github.com/coeasy/qianxing/actions/runs/45466193593) 和 [OKX/Bitget 公共行情验收 #140](https://github.com/coeasy/qianxing/actions/runs/45466194122)：两家均获取 180 天 15 分钟 K 线（各 17,280 根、零缺失间隔），生成 HTML/SVG 报告；无拒单、无账户凭据、无订单提交。完整参数、Python 策略与分步数据工作流见[首跑指南](docs/first-run.md)。
+
+Rust 应用当前可从 crates.io 使用已发布的 `qx-sdk = "0.4.1"`，其 14 包依赖闭包已通过逐包 checksum 与 Ubuntu、Windows、macOS 独立消费者验收。v0.4.2 候选保持同一 SDK facade，并将在发布后提供新版本；当前 crates.io 状态见 [qx-sdk](https://crates.io/crates/qx-sdk)。独立快速入门仍可直接从 registry 构建运行，源码 Git 消费路径另由独立脚本验收。
+
+Rust 集成方可以从 [`qx-sdk` 包级快速接入指南](crates/qx-sdk/README.md)开始：单一依赖、数据输入合同、预检、回测和产物复核。
+
 下面这段是可复制的常用链路示例，写法是在**源码仓库里**直接用 cargo 跑；已经按[安装指南](docs/installation.md)装好的人会
 得到同名 binary，把 `cargo run -p qx-cli -- ` 换成 `qx-cli ` 即可，参数与行为完全一致（同一份 clap 命令表）。
 参数与入口的权威来源是 `cargo run -p qx-cli -- help`——入口清单每加一条就变一次，所以这里不抄份数；

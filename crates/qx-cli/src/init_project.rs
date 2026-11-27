@@ -281,11 +281,12 @@ pub(crate) fn run_init_with_profile(
     run_init_with_profile_selection(output, force, strategy_name, profile, emit_next_step, None)
 }
 
-pub(crate) fn run_init_with_ccxt_selection(
+pub(crate) fn run_init_with_ccxt_market_selection(
     output: &Path,
     force: bool,
     exchange: &str,
     instrument: &str,
+    market_type: cli_args::QuickstartMarketType,
 ) -> Result<(), String> {
     run_init_with_profile_selection(
         output,
@@ -293,7 +294,7 @@ pub(crate) fn run_init_with_ccxt_selection(
         None,
         Some("ccxt"),
         false,
-        Some((exchange, instrument)),
+        Some((exchange, instrument, market_type)),
     )
 }
 
@@ -303,14 +304,14 @@ fn run_init_with_profile_selection(
     strategy_name: Option<&str>,
     profile: Option<&str>,
     emit_next_step: bool,
-    ccxt_selection: Option<(&str, &str)>,
+    ccxt_selection: Option<(&str, &str, cli_args::QuickstartMarketType)>,
 ) -> Result<(), String> {
     let (template_name, mut profile_assets, profile_name) =
         init_profile_template(profile, strategy_name)?;
     if ccxt_selection.is_some() && profile_name != "ccxt" {
         return Err("交易所选择只能用于 ccxt 初始化配置".into());
     }
-    if ccxt_selection.is_some_and(|(exchange, _)| exchange != "okx") {
+    if ccxt_selection.is_some_and(|(exchange, _, _)| exchange != "okx") {
         profile_assets.retain(|asset| *asset != "qianxing.ccxt.okx.perpetual.spec.json");
     }
     let template = repository_deploy_path(template_name);
@@ -410,8 +411,11 @@ fn run_init_with_profile_selection(
             }
         }
     }
-    if let Some((exchange, instrument)) = ccxt_selection {
+    if let Some((exchange, instrument, market_type)) = ccxt_selection {
         align_ccxt_profile_selection(&mut document, exchange, instrument)?;
+        if market_type == cli_args::QuickstartMarketType::Spot {
+            align_ccxt_spot_strategy_policy(&mut document)?;
+        }
         if exchange != "okx" {
             init_assets.retain(|asset| asset != "qianxing.ccxt.okx.perpetual.spec.json");
         }
@@ -466,8 +470,14 @@ fn run_init_with_profile_selection(
     for asset in &init_assets {
         copy_init_asset(project_root, asset, force)?;
     }
-    if let Some((exchange, instrument)) = ccxt_selection {
-        write_ccxt_profile_selection_assets(project_root, exchange, instrument, force)?;
+    if let Some((exchange, instrument, market_type)) = ccxt_selection {
+        write_ccxt_profile_selection_assets(
+            project_root,
+            exchange,
+            instrument,
+            market_type,
+            force,
+        )?;
     }
     std::fs::create_dir_all(project_root.join("data"))
         .map_err(|error| format!("创建项目数据目录失败: {error}"))?;
@@ -628,10 +638,43 @@ fn align_ccxt_strategy_selection(
     }
 }
 
+/// The CCXT scaffold is derivative-oriented by default. A Spot quickstart must carry
+/// Spot cash semantics into every strategy projection so the backtest and generated
+/// project do not inherit shorting, leverage, or hedge-mode settings from the swap sample.
+fn align_ccxt_spot_strategy_policy(document: &mut serde_json::Value) -> Result<(), String> {
+    fn apply(strategy: &mut serde_json::Value) -> Result<(), String> {
+        let fields = strategy
+            .as_object_mut()
+            .ok_or_else(|| "CCXT Spot 运行时 strategy 必须是对象".to_string())?;
+        fields.insert("product".into(), serde_json::json!("spot"));
+        fields.insert("margin_mode".into(), serde_json::json!("cash"));
+        fields.insert("position_mode".into(), serde_json::json!("one_way"));
+        fields.insert("leverage".into(), serde_json::json!(1));
+        fields.insert("allow_short".into(), serde_json::json!(false));
+        Ok(())
+    }
+
+    apply(
+        document
+            .get_mut("strategy")
+            .ok_or_else(|| "CCXT 运行时模板缺少 strategy 对象".to_string())?,
+    )?;
+    if let Some(strategies) = document
+        .get_mut("strategies")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for strategy in strategies {
+            apply(strategy)?;
+        }
+    }
+    Ok(())
+}
+
 fn write_ccxt_profile_selection_assets(
     project_root: &Path,
     exchange: &str,
     instrument: &str,
+    market_type: cli_args::QuickstartMarketType,
     force: bool,
 ) -> Result<(), String> {
     let exchange_config_path = project_root.join("qianxing.ccxt.exchange.example.json");
@@ -644,8 +687,18 @@ fn write_ccxt_profile_selection_assets(
         })?)
         .map_err(|error| format!("CCXT 样例配置 JSON 无效: {error}"))?;
     exchange_config["exchange_id"] = serde_json::Value::String(exchange.into());
-    exchange_config["default_type"] = serde_json::Value::String("swap".into());
+    exchange_config["default_type"] = serde_json::Value::String(market_type.as_str().into());
     exchange_config["instruments"] = serde_json::json!([instrument]);
+    if market_type == cli_args::QuickstartMarketType::Spot {
+        let options = exchange_config
+            .get_mut("options")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or_else(|| "CCXT 样例配置 options 必须是对象".to_string())?;
+        options.insert(
+            "fetchMarkets".into(),
+            serde_json::json!({"types": ["spot"]}),
+        );
+    }
     if let Some(credentials) = exchange_config
         .get_mut("credential_env")
         .and_then(serde_json::Value::as_object_mut)
@@ -862,7 +915,8 @@ pub(crate) fn run_strategy_init(
 
 #[cfg(test)]
 mod ccxt_selection_tests {
-    use super::run_init_with_ccxt_selection;
+    use super::run_init_with_ccxt_market_selection;
+    use crate::cli_args::QuickstartMarketType;
     use serde_json::Value;
     use std::path::PathBuf;
 
@@ -882,7 +936,14 @@ mod ccxt_selection_tests {
         std::fs::create_dir_all(&root).unwrap();
         let runtime = root.join("qianxing.runtime.json");
 
-        run_init_with_ccxt_selection(&runtime, false, "bitget", "BTC/USDT:USDT.BITGET").unwrap();
+        run_init_with_ccxt_market_selection(
+            &runtime,
+            false,
+            "bitget",
+            "BTC/USDT:USDT.BITGET",
+            QuickstartMarketType::Swap,
+        )
+        .unwrap();
 
         let config: Value = serde_json::from_slice(&std::fs::read(&runtime).unwrap()).unwrap();
         for worker in config["workers"].as_array().unwrap() {
@@ -954,7 +1015,14 @@ mod ccxt_selection_tests {
         std::fs::create_dir_all(&root).unwrap();
         let runtime = root.join("qianxing.runtime.json");
 
-        run_init_with_ccxt_selection(&runtime, false, "binance", "BTC/USDT:USDT.BINANCE").unwrap();
+        run_init_with_ccxt_market_selection(
+            &runtime,
+            false,
+            "binance",
+            "BTC/USDT:USDT.BINANCE",
+            QuickstartMarketType::Swap,
+        )
+        .unwrap();
 
         let config: Value = serde_json::from_slice(&std::fs::read(&runtime).unwrap()).unwrap();
         let workers = config["workers"].as_array().unwrap();
@@ -980,6 +1048,59 @@ mod ccxt_selection_tests {
             "QX_CCXT_BINANCE_SECRET"
         );
         assert!(config["workers"].to_string().find("secret-value").is_none());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn binance_spot_quickstart_scaffold_uses_spot_cash_policy_everywhere() {
+        let unique = format!(
+            "qianxing-binance-spot-ccxt-selection-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../.task-tmp")
+            .join(unique);
+        std::fs::create_dir_all(&root).unwrap();
+        let runtime = root.join("qianxing.runtime.json");
+
+        run_init_with_ccxt_market_selection(
+            &runtime,
+            false,
+            "binance",
+            "BTC/USDT.BINANCE",
+            QuickstartMarketType::Spot,
+        )
+        .unwrap();
+
+        let config: Value = serde_json::from_slice(&std::fs::read(&runtime).unwrap()).unwrap();
+        for strategy in std::iter::once(&config["strategy"])
+            .chain(config["strategies"].as_array().unwrap().iter())
+        {
+            assert_eq!(strategy["product"], "spot");
+            assert_eq!(strategy["margin_mode"], "cash");
+            assert_eq!(strategy["position_mode"], "one_way");
+            assert_eq!(strategy["leverage"], 1);
+            assert_eq!(strategy["allow_short"], false);
+            assert_eq!(strategy["live_enabled"], false);
+        }
+
+        let exchange_config: Value = serde_json::from_slice(
+            &std::fs::read(root.join("qianxing.ccxt.exchange.example.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(exchange_config["exchange_id"], "binance");
+        assert_eq!(exchange_config["default_type"], "spot");
+        assert_eq!(
+            exchange_config["options"]["fetchMarkets"]["types"],
+            serde_json::json!(["spot"])
+        );
+        assert_eq!(exchange_config["sandbox"], true);
+        assert!(exchange_config.get("public_market_data_endpoint").is_none());
 
         let _ = std::fs::remove_dir_all(root);
     }

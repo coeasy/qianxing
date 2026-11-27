@@ -539,6 +539,36 @@ fn ccxt_quickstart_rejects_invalid_window_before_writing() {
 }
 
 #[test]
+fn ccxt_spot_quickstart_rejects_non_binance_before_writing() {
+    let base = temp_base("ccxt-spot-non-binance");
+    let project = base.join("project");
+    let (code, stdout, stderr) = run(
+        &base,
+        &[
+            "quickstart",
+            &project.to_string_lossy(),
+            "--profile",
+            "ccxt",
+            "--exchange",
+            "okx",
+            "--market-type",
+            "spot",
+        ],
+    );
+    assert_eq!(code, 2, "当前只读 Spot 首跑必须限于 Binance");
+    assert!(
+        !stdout.contains("quickstart 使用"),
+        "Spot 交易所不匹配时不能开始 quickstart: {stdout}"
+    );
+    assert!(
+        stderr.contains("spot quickstart 仅支持 Binance"),
+        "{stderr}"
+    );
+    assert!(!project.exists(), "Spot 交易所不匹配时不能创建项目目录");
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
 fn ccxt_only_options_are_rejected_for_offline_quickstart_before_writing() {
     let base = temp_base("ccxt-option-on-builtin");
     let project = base.join("project");

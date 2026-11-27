@@ -66,6 +66,7 @@ qx-cli quickstart my-okx --profile ccxt --days 30 --timeframe 1h --html  # 真�
 ```
 
 `my-paper --profile paper` 一键首跑仅适用于包含 tag 后变更的当前源码或基于它构建的 CLI；v0.4.2 预编译 CLI 和 `cargo install --tag v0.4.2` 不支持此 quickstart 参数。
+Binance Spot 示例需要包含本分支改动的后续 CLI；已发布的 v0.4.1 和现存 v0.4.2 tag 尚不含 `--market-type` 参数。
 
 已在仓库内开发时可用 `cargo install --path crates/qx-cli --locked`；该方式需要完整源码和 Rust 工具链。Release 二进制没有
 仓库相对路径依赖，可从任意工作目录运行。
@@ -81,7 +82,7 @@ qx-cli quickstart my-okx --profile ccxt --days 30 --timeframe 1h --html  # 真�
 `--profile` 支持 `builtin`（默认）、`ashare`、`ccxt` 与 `paper`。A 股首跑使用仓库附带的 6 根样例 Bar 和冻结规格，
 完成一笔本地回测；不会连接外部行情源或发送订单。`ccxt` 首跑默认从 OKX 获取最近 30 天 BTC/USDT 永续 1h 公共 K 线，
 使用市场公开默认费率并冻结成本文件，生成可复核的回测报告；它不读取密钥、不启用执行 worker，也不提交订单。
-支持 `okx`、`binance` 和 `bitget` 公共行情；指定 `--exchange` 后会自动选择该交易所的 BTC/USDT 永续标的，需要其他标的时再传 `--instrument`；`--days`、`--timeframe` 可调整窗口，上限为 365 天且最多获取 100000 根 Bar。
+支持 `okx`、`binance` 和 `bitget` 公共行情；默认 `--market-type swap`，指定 `--exchange` 后会自动选择该交易所的 BTC/USDT 永续标的。`--market-type spot` 当前仅支持 Binance，并默认选择 BTC/USDT 现货；需要其他标的时传 `--instrument`。`--days`、`--timeframe` 可调整窗口，上限为 365 天且最多获取 100000 根 Bar。
 策略默认 `ema_cross`，也可用 `--strategy` 选择单标的内置策略；用 `qx-cli builtin-strategies` 查看完整清单。
 此真实行情 quickstart 需要安装 `qianxing[ccxt]` 对应的 CCXT 依赖并可访问所选交易所的公共行情 API。单独的 CCXT sandbox/实盘下单仍需凭据、权限和逐交易所外部验收。
 若只安装了 Rust CLI，可在同一 Python 环境补装行情 worker：`python -m pip install "qianxing[ccxt]"`；运行时用 `QX_PYTHON` 指向该环境的解释器。
@@ -199,13 +200,21 @@ qianxing quickstart ./okx-btc --profile ccxt --exchange okx --days 30 --timefram
 qianxing quickstart ./bitget-btc --profile ccxt --exchange bitget --days 52 --timeframe 15m
 ```
 
-省略 `--instrument` 时会按交易所自动选用对应的 `BTC/USDT:USDT.<EXCHANGE>` 永续标的；策略默认 `ema_cross`，可用
+省略 `--instrument` 时，永续会按交易所自动选用 `BTC/USDT:USDT.<EXCHANGE>`，Binance Spot 使用 `BTC/USDT.BINANCE`；策略默认 `ema_cross`，可用
 `--strategy` 指定单标的内置策略。该路径调用公共行情 API，不读取账户凭据、不启用执行 worker、不提交订单；结果中的
 `report_html_path` 给出报告路径，`run_evidence.bundle_path` 给出证据包路径，`quickstart_output` 保留完整 Rust CLI 首跑日志。
 `run_evidence.integrity_verified` 与 `input_identity_recomputed` 表示工件摘要和行情输入身份已离线核验；
 `result_recomputed` 明确说明没有额外重跑策略。默认只生成 HTML，因此 `--format` 仅接受 `html`。
 窗口限制、Bar 数量上限、缺失数据校验和
 费用来源沿用 Rust CLI 的 CCXT 首跑实现，详见上方 A 节。
+
+`--market-type spot` 是本分支新增、尚未发布的 Binance 现货匿名公共行情：它固定使用 `https://data-api.binance.vision/api/v3`，并只加载 Spot 市场；此端点用于 Binance 的[公开 Spot REST 行情接口](https://developers.binance.com/en/docs/products/spot/rest-api)。生成的配置没有 API 凭据，行情 worker 也会拒绝私有、下单、账户和 WebSocket 操作。OKX、Bitget 与 Binance 永续的既有默认仍为 `swap`。
+
+若从包含该改动的源码分支构建 wheel，可这样运行 Binance Spot 首跑；现有 v0.4.1 wheel 和 v0.4.2 tag 尚不支持：
+
+```bash
+qianxing quickstart ./binance-spot --profile ccxt --exchange binance --market-type spot --days 30 --timeframe 1h
+```
 
 ### B3 分步创建与运行项目
 
