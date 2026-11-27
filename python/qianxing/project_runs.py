@@ -1194,11 +1194,14 @@ def _dependency_lock_bindings_sha256(requirements: list[dict[str, Any]]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def _file_snapshot_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int, int]:
-    """Return portable metadata used to detect edits while a run input is read."""
+def _file_snapshot_object(metadata: os.stat_result) -> tuple[int, int]:
+    """Return the filesystem object identity shared by path and open-handle stats."""
+    return int(metadata.st_dev), int(metadata.st_ino)
+
+
+def _file_snapshot_version(metadata: os.stat_result) -> tuple[int, int, int, int]:
+    """Return same-handle metadata used to detect edits while a run input is read."""
     return (
-        int(metadata.st_dev),
-        int(metadata.st_ino),
         int(metadata.st_mode),
         int(metadata.st_size),
         int(getattr(metadata, "st_mtime_ns", metadata.st_mtime * 1_000_000_000)),
@@ -1206,13 +1209,26 @@ def _file_snapshot_identity(metadata: os.stat_result) -> tuple[int, int, int, in
     )
 
 
-def _assert_file_snapshot_stable(path: Path, *identities: os.stat_result) -> None:
-    if not identities or any(
-        _file_snapshot_identity(identity) != _file_snapshot_identity(identities[0])
-        for identity in identities[1:]
-    ):
+def _assert_file_snapshot_stable(
+    path: Path,
+    path_before: os.stat_result,
+    opened_before: os.stat_result,
+    opened_after: os.stat_result | None = None,
+    path_after: os.stat_result | None = None,
+) -> None:
+    if _file_snapshot_object(path_before) != _file_snapshot_object(opened_before):
+        raise ValueError(
+            f"input file was replaced while its managed run snapshot was being created: {path}"
+        )
+    if opened_after is None:
+        return
+    if _file_snapshot_version(opened_before) != _file_snapshot_version(opened_after):
         raise ValueError(
             f"input file changed while its managed run snapshot was being created: {path}"
+        )
+    if path_after is not None and _file_snapshot_object(opened_after) != _file_snapshot_object(path_after):
+        raise ValueError(
+            f"input file was replaced while its managed run snapshot was being created: {path}"
         )
 
 
