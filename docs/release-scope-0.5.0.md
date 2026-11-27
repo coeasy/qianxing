@@ -37,6 +37,15 @@ Windows workspace 验收之外，已用本地 Podman 启动 Linux Rust 1.98.1 �
 - 候选 wheel 在本机通过 Binance Spot 真实公共 API 拉取 17,280 根 15 分钟 K 线，缺失区间为 0，并生成 HTML 报告。该运行未加载账户凭据、未调用私有账户接口、未提交订单；EvidenceBundle 复核 `result_recomputed=false`，仅证明输入身份和产物完整性。
 - 本机到 OKX/Bitget 的请求受当前网络出口限制：OKX 域名解析到不可路由的链路本地地址，Bitget 连接被重置，Linux 容器内 OKX 请求超时。因此本机没有通过这两家验收；上述 hosted Linux 结果是对应连接器公共行情路径的验收证据，不应外推为本机网络或私有交易能力。
 
+## 候选 HEAD `de50bce3` 后续验收（2026-11-27）
+
+- 精确候选 `de50bce3822b8d89ca15f307559784e6cad08a4e` 的 Windows wheel 已隔离构建并安装；wheel 内置 CLI 版本身份与候选匹配，Python quickstart、报告与 EvidenceBundle smoke 通过，`pip check` 无依赖冲突。
+- 同一候选的 Linux CLI 在本地 Podman 环境完成 init、doctor、backtest、report、EvidenceBundle verify 和 status 六步 quickstart。Linux abi3 wheel 加载原生扩展后，`pip check`、Python 样例 quickstart 和本地 Paper quickstart 均通过；Paper 运行产生 1 个订单和 4 条 ledger 记录，仅使用本地合成 L1 行情，没有网络请求、凭据或实盘订单。
+- 本地 Linux wheel 是从无 `.git` 元数据的源码归档构建的，因此内置 build identity 为 `unknown`，只作为 smoke 测试产物；不能作为正式发布资产。测试 wheel SHA-256：`DA43C360118E5E8A7B9B235E1125B7F56743A24D28676A2A86965E51F8D48940`。
+- GitHub Actions 的真实行情成功证据仍来自 PR head，而不是精确候选 HEAD：PR #49 (`121ef78e`) 的 OKX/Bitget 与 PR #53 (`ff07316c`) 的 OKX/Bitget 任务都运行了安装后的 Python wheel、真实公开数据回测、报告渲染，并上传项目、行情 lineage、报告和日志。PR #50 (`fad830e2`) 的 OKX/Bitget/Binance Spot 任务也已成功；其 180 天、15 分钟配置断言 17,280 根 K 线且缺失区间为 0。
+- PR #51 与 #52 的 Binance testnet 工作流仅通过始终运行的离线 fail-closed 检查；需要凭据的完整 testnet 验收步骤被跳过。它们没有运行 OKX/Bitget 公开行情矩阵，也没有证明真实测试网下单。候选包含这些提交，但以上 hosted job 不等同于 `de50bce3` 的 hosted 运行。
+- 本机网络到 OKX/Bitget 仍分别遇到超时与连接重置。公共行情可信证据来自 GitHub hosted Linux jobs；私有账户、testnet 下单和实盘下单没有通过这些证据验收。
+
 ## 正式发布前必须满足
 
 1. 按依赖顺序合并候选 PR，并在最终 `main` 提交上重新跑 CI；PR #43 的源码身份与 GitHub/PyPI wheel 字节一致性修复必须纳入。
