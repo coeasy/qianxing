@@ -777,7 +777,7 @@ def _run_strategy_project(project_path: str | Path) -> tuple[int, Any, Any]:
             input_spec_override=snapshot,
             strategy_file_override=strategy_snapshot,
         )
-        record_project_plan(run_plan)
+        run_plan = record_project_plan(run_plan)
         execution["plan"] = run_plan
         execution["result"] = run_project_strategy(root, manifest, snapshot, run_plan)
         return 0

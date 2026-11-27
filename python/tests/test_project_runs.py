@@ -17,7 +17,12 @@ import zipfile
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from qianxing import cli, project_runs as runs, strategy_project as project
+from qianxing import (
+    cli,
+    project_runs as runs,
+    strategy_execution,
+    strategy_project as project,
+)
 
 
 class Handle:
@@ -381,6 +386,42 @@ class ProjectRunTests(unittest.TestCase):
             runs.verify_project_artifacts(self.root, record["project_run_id"])["artifacts"]["strategy_bundle"],
             "matched",
         )
+
+    def test_managed_preflight_plan_is_copied_and_mutation_is_detected(self):
+        run = runs.ProjectRun(self.root, "demo")
+        token = runs._ACTIVE.set(run)
+        try:
+            source = {"status": "ready", "nested": {"values": [1]}}
+            plan = runs.record_project_plan(source)
+            source["nested"]["values"].append(2)
+            self.assertEqual(run.record["plan"]["nested"]["values"], [1])
+            runs.verify_project_plan_binding(plan)
+            plan["nested"]["values"].append(3)
+            with self.assertRaisesRegex(ValueError, "plan changed after preflight"):
+                runs.verify_project_plan_binding(plan)
+        finally:
+            runs._ACTIVE.reset(token)
+
+    def test_project_execution_rejects_input_spec_changed_after_preflight(self):
+        input_spec = self.root / "input.json"
+        input_spec.write_text('{"strategy":{"parameters":{"fast":5}}}', encoding="utf-8")
+        original = input_spec.read_bytes()
+        run = runs.ProjectRun(self.root, "demo")
+        token = runs._ACTIVE.set(run)
+        try:
+            plan = runs.record_project_plan({
+                "input_spec": str(input_spec.resolve()),
+                "input_spec_sha256": hashlib.sha256(original).hexdigest(),
+            })
+            input_spec.write_text('{"strategy":{"parameters":{"fast":9}}}', encoding="utf-8")
+            with patch.object(strategy_execution, "run_strategy_file") as engine:
+                with self.assertRaisesRegex(ValueError, "input spec changed after preflight"):
+                    strategy_execution.run_project_strategy(
+                        self.root, {}, input_spec, plan
+                    )
+            engine.assert_not_called()
+        finally:
+            runs._ACTIVE.reset(token)
 
     def test_project_strategy_bundle_is_frozen_and_integrity_checked(self):
         dependency = self.root / "helper.py"
