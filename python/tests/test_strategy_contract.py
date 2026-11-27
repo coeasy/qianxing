@@ -1108,6 +1108,19 @@ class StrategyContractTest(unittest.TestCase):
             finally:
                 worker.kill()
                 worker.wait()
+                # On Windows, TerminateProcess can signal exit just before the kernel releases
+                # the worker's file-backed mmap handles. Remove the rings with a bounded retry
+                # so TemporaryDirectory does not race that final handle release.
+                for ring_path in (input_path, output_path):
+                    deadline = time.monotonic() + 5.0
+                    while ring_path.exists():
+                        try:
+                            ring_path.unlink()
+                            break
+                        except PermissionError:
+                            if time.monotonic() >= deadline:
+                                raise
+                            time.sleep(0.01)
 
     def test_worker_verifies_file_backed_strategy_artifact(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -12,8 +12,12 @@ use qx_storage::{PostgresConsumerStateStore, PostgresOutboxStore};
 use qx_storage::{SqliteConsumerStateStore, SqliteOutboxStore};
 
 fn temp_root(label: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
-        "../../target/qianxing-outbox-contract-{label}-{}-{}",
+    let target = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target")
+        .canonicalize()
+        .expect("workspace target directory exists during tests");
+    target.join(format!(
+        "qianxing-outbox-contract-{label}-{}-{}",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)

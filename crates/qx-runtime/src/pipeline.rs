@@ -437,8 +437,9 @@ impl RuntimeEventStore {
 
     /// 游标增量读（P1-2）：只取 `after_seq` 之后追加的事实。分段文件后端从已验证的 manifest
     /// 前缀读尾部，并用滚动摘要核对；SQLite 使用 position 行读取。`Ok(None)` 表示不支持该读取
-    /// 形状，或本地前缀与 store 不一致，调用方会退回整份重建。单文件后端与 PostgreSQL 仍走
-    /// 全量重建。这是**显式**回落；默认特征（`default = []`）下 SQLite 专用入参不被读取。
+    /// 形状，或本地前缀与 store 不一致，调用方会退回整份重建。PostgreSQL 使用 v5 行索引，
+    /// 旧日志首次读取时按需回填；单文件后端仍走全量重建。这是**显式**回落；默认特征
+    /// （`default = []`）下 SQLite 专用入参不被读取。
     fn read_since(
         &self,
         name: &str,
@@ -466,6 +467,16 @@ impl RuntimeEventStore {
             Self::Sqlite(store) => store
                 .read_since(name, after_seq, expected_prefix)
                 .map_err(|error| StorageError::Io(format!("SQLite EventLog: {error:?}"))),
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => store
+                .read_since(
+                    name,
+                    after_seq,
+                    expected_prefix,
+                    expected_event_digest,
+                    expected_next_seq,
+                )
+                .map_err(|error| StorageError::Io(format!("PostgreSQL EventLog: {error:?}"))),
             _ => Ok(None),
         }
     }
