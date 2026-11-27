@@ -312,7 +312,7 @@ pub fn run_ccxt_market_worker(input: CcxtMarketWorkerInput) -> Result<(), String
                 .and_then(serde_json::Value::as_u64)
                 .filter(|sequence| *sequence > 0)
                 .unwrap_or(source_seq);
-            if latest_order_book_matches(&pipeline, instrument, &bids, &asks) {
+            if pipeline.latest_order_book_matches(instrument, &bids, &asks) {
                 context.heartbeat(received_ts)?;
                 continue;
             }
@@ -477,26 +477,6 @@ fn parse_order_book_side(
             Ok(result)
         })
         .collect()
-}
-
-fn latest_order_book_matches(
-    pipeline: &qx_runtime::LiveEventPipeline,
-    instrument: &InstrumentId,
-    bids: &[MarketDepthLevel],
-    asks: &[MarketDepthLevel],
-) -> bool {
-    pipeline.log().events().iter().rev().find_map(|event| {
-        let qx_core::EventKind::MarketOrderBook {
-            instrument: current_instrument,
-            bids: current_bids,
-            asks: current_asks,
-            ..
-        } = &event.kind
-        else {
-            return None;
-        };
-        (current_instrument == instrument).then(|| current_bids == bids && current_asks == asks)
-    }) == Some(true)
 }
 
 pub fn exact_json_decimal_or_raw(
