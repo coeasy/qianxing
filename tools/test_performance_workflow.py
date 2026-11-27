@@ -37,7 +37,7 @@ class PerformanceWorkflowTests(unittest.TestCase):
         )
         self.assertIn("CARGO_TARGET_DIR: ${{ github.workspace }}/target", candidate_step)
         self.assertNotIn('ln -s "$GITHUB_WORKSPACE/target" "$base_dir/target"', baseline_step)
-        self.assertNotIn('mkdir -p "$base_dir/target"', baseline_step)
+        self.assertIn('mkdir -p "$base_dir/target"', baseline_step)
         self.assertIn('--workspace-root "$base_dir"', baseline_step)
         self.assertIn('--target-dir "$CARGO_TARGET_DIR"', baseline_step)
         self.assertIn('--target-dir "$CARGO_TARGET_DIR"', candidate_benchmark)
