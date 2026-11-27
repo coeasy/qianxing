@@ -13,7 +13,7 @@ fn run(args: &[&str]) -> (i32, String, String) {
 }
 
 fn run_from(cwd: &Path, args: &[&str]) -> (i32, String, String) {
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(cwd)
         .args(args)
         .output()

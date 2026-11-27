@@ -113,7 +113,7 @@ fn multi_market_parameter_experiment_is_shared_by_cli_http_and_python() {
     let spec = spec_json("g1-multi-market-grid", &root);
     let spec_path = root.join("multi-market-experiment.json");
     std::fs::write(&spec_path, &spec).expect("write multi-market experiment spec");
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "run-multi-market-experiment"])
         .arg(&spec_path)
         .output()

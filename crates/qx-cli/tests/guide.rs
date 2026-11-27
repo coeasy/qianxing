@@ -50,7 +50,7 @@ fn contains_result_hash(value: &serde_json::Value, expected: &str) -> bool {
 
 #[test]
 fn role_guides_are_reachable_and_keep_the_first_report_path_within_five_steps() {
-    let binary = env!("CARGO_BIN_EXE_qx-cli");
+    let binary = std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap();
     let cases = [
         ("researcher", "研究者 / Researcher"),
         ("strategy-author", "策略作者 / Strategy author"),
@@ -58,7 +58,7 @@ fn role_guides_are_reachable_and_keep_the_first_report_path_within_five_steps() 
         ("integrator", "集成者 / Integrator"),
     ];
     for (role, heading) in cases {
-        let output = Command::new(binary)
+        let output = Command::new(&binary)
             .args(["guide", role])
             .env_remove("QX_DEPLOY_DIR")
             .env_remove("QX_PYTHON")
@@ -89,7 +89,7 @@ fn role_guides_are_reachable_and_keep_the_first_report_path_within_five_steps() 
         );
     }
 
-    let index = Command::new(binary)
+    let index = Command::new(&binary)
         .arg("guide")
         .output()
         .expect("run qx-cli guide index");
@@ -101,7 +101,7 @@ fn role_guides_are_reachable_and_keep_the_first_report_path_within_five_steps() 
 
 #[test]
 fn guide_json_lists_four_machine_readable_five_step_paths() {
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["guide", "--json"])
         .output()
         .expect("run qx-cli guide --json");
@@ -139,7 +139,7 @@ fn guide_json_lists_four_machine_readable_five_step_paths() {
 
 #[test]
 fn guide_json_can_select_one_audience() {
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["guide", "--json", "operator"])
         .output()
         .expect("run qx-cli guide --json operator");
@@ -157,8 +157,8 @@ fn guide_json_can_select_one_audience() {
 
 #[test]
 fn researcher_guide_command_produces_a_report_that_can_be_read_back() {
-    let binary = env!("CARGO_BIN_EXE_qx-cli");
-    let guide = Command::new(binary)
+    let binary = std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap();
+    let guide = Command::new(&binary)
         .args(["guide", "researcher"])
         .output()
         .expect("run researcher guide");
@@ -175,7 +175,7 @@ fn researcher_guide_command_produces_a_report_that_can_be_read_back() {
     assert_eq!(tokens.next(), Some("qx-cli"));
     let args = tokens.collect::<Vec<_>>();
     let working = isolated_directory();
-    let first_run = Command::new(binary)
+    let first_run = Command::new(&binary)
         .current_dir(&working)
         .args(args)
         .env_remove("QX_DEPLOY_DIR")
@@ -203,7 +203,7 @@ fn researcher_guide_command_produces_a_report_that_can_be_read_back() {
         "quickstart must leave a summary artifact under the project directory"
     );
 
-    let report = Command::new(binary)
+    let report = Command::new(&binary)
         .current_dir(&working)
         .args(["report", "./qianxing-demo/qianxing.runtime.json", "--json"])
         .output()

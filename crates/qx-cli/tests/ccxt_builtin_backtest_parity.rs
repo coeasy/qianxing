@@ -78,7 +78,7 @@ fn ccxt_builtin_process_preserves_fetch_and_backtest_contract() {
     }
     let python_path = env::join_paths(python_paths).expect("compose fake worker PYTHONPATH");
     let python = env::var("QX_PYTHON").unwrap_or_else(|_| "python".to_string());
-    let conflict = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let conflict = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(&root)
         .env("QX_PYTHON", &python)
         .env("PYTHONPATH", &python_path)
@@ -93,7 +93,7 @@ fn ccxt_builtin_process_preserves_fetch_and_backtest_contract() {
     assert_eq!(conflict.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&conflict.stderr).contains("cost_rules_path"));
 
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(&root)
         .env("QX_PYTHON", python)
         .env("PYTHONPATH", python_path)
@@ -183,7 +183,7 @@ fn ccxt_builtin_process_preserves_fetch_and_backtest_contract() {
     );
 
     let xlsx_path = case.join("ccxt.report.xlsx");
-    let report = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let report = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(&root)
         .args(["report"])
         .arg(&summary_path)
@@ -236,7 +236,7 @@ fn ccxt_builtin_process_preserves_fetch_and_backtest_contract() {
     );
     let recompute_temp = case.join("recompute-temp");
     std::fs::create_dir_all(&recompute_temp).expect("create workspace-local recompute temp root");
-    let verify = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let verify = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(&root)
         .env("TEMP", &recompute_temp)
         .env("TMP", &recompute_temp)
@@ -257,7 +257,7 @@ fn ccxt_builtin_process_preserves_fetch_and_backtest_contract() {
             .as_str()
             .expect("CCXT summary names its effective runtime snapshot"),
     );
-    let export = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let export = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(&root)
         .args(["evidence", "export-run"])
         .arg(&evidence_path)
@@ -273,7 +273,7 @@ fn ccxt_builtin_process_preserves_fetch_and_backtest_contract() {
         "CCXT EvidenceBundle export must carry the quality manifest: {}",
         String::from_utf8_lossy(&export.stderr)
     );
-    let portable_verify = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let portable_verify = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(&root)
         .env("TEMP", &recompute_temp)
         .env("TMP", &recompute_temp)
@@ -400,7 +400,7 @@ fn ccxt_builtin_public_default_fees_are_frozen_and_consumed_by_backtest() {
     }
     let python_path = env::join_paths(python_paths).expect("compose fake worker PYTHONPATH");
     let python = env::var("QX_PYTHON").unwrap_or_else(|_| "python".to_string());
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(&root)
         .env("QX_PYTHON", python)
         .env("PYTHONPATH", python_path)

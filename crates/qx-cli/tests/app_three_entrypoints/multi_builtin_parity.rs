@@ -11,7 +11,7 @@ fn multi_builtin_cli_preserves_stdout_and_artifacts_with_fractional_price_sizing
     let reference = deploy.join("qianxing.bar-frame.pairs-reference.example.json");
     let primary_spec = deploy.join("qianxing.market.binance.btc-swap.spec.json");
     let reference_spec = deploy.join("qianxing.market.binance.eth-swap.spec.json");
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(repo_root())
         .args(["backtest", "multi-builtin", "pairs_arbitrage"])
         .arg(primary)

@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn binary() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_qx-cli"))
+    PathBuf::from(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
 }
 
 /// 每个用例一个独立目录；集成用例并行跑，共用目录会互相踩产物。

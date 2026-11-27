@@ -5,7 +5,7 @@ use std::process::Command;
 /// V10 §4.3 第 3 项：`reconcile` 无参曾经打印两份手写向量的“差异”，看起来像真对账能力。
 #[test]
 fn reconcile_without_sources_is_a_usage_error_not_a_demo() {
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .arg("reconcile")
         .output()
         .expect("启动 qx-cli 失败");

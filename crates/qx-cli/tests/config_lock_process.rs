@@ -26,7 +26,7 @@ fn config_lock_writes_and_verifies_published_fingerprint() {
     let root = temp_case_dir();
     let input = root.join("runtime.json");
     let output = root.join("runtime.locked.json");
-    let init = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let init = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["init", input.to_string_lossy().as_ref()])
         .output()
         .expect("启动 qx-cli init 失败");
@@ -36,7 +36,7 @@ fn config_lock_writes_and_verifies_published_fingerprint() {
         String::from_utf8_lossy(&init.stderr)
     );
 
-    let lock = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let lock = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args([
             "config",
             "lock",
@@ -57,7 +57,7 @@ fn config_lock_writes_and_verifies_published_fingerprint() {
     assert_eq!(fingerprint.len(), 64, "指纹应是 SHA-256 十六进制串");
     assert!(fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit()));
 
-    let validate = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let validate = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["config", "validate", output.to_string_lossy().as_ref()])
         .output()
         .expect("启动 qx-cli config validate 失败");
@@ -67,7 +67,7 @@ fn config_lock_writes_and_verifies_published_fingerprint() {
         String::from_utf8_lossy(&validate.stderr)
     );
 
-    let duplicate = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let duplicate = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args([
             "config",
             "lock",

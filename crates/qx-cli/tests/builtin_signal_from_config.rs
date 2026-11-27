@@ -44,7 +44,7 @@ fn run<A: AsRef<OsStr>>(args: &[A]) -> (i32, String, String) {
 }
 
 fn run_in<A: AsRef<OsStr>>(args: &[A], current_dir: Option<&Path>) -> (i32, String, String) {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_qx-cli"));
+    let mut command = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap());
     command.args(args);
     if let Some(current_dir) = current_dir {
         command.current_dir(current_dir);

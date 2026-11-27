@@ -28,7 +28,7 @@ fn temp_root() -> PathBuf {
 }
 
 fn run(args: &[&str]) -> (i32, String, String) {
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(args)
         .output()
         .expect("start qx-cli");
@@ -40,7 +40,7 @@ fn run(args: &[&str]) -> (i32, String, String) {
 }
 
 fn run_with_temp(args: &[&str], temp: &Path) -> (i32, String, String) {
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(args)
         .env("TEMP", temp)
         .env("TMP", temp)

@@ -158,7 +158,7 @@ fn market_aware_tick_spec_has_the_same_rust_result_through_cli_http_and_python()
     let spec_path = run_dir.join("depth-spec.json");
     std::fs::write(&spec_path, &spec).expect("write DepthBacktestSpec");
 
-    let cli_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let cli_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "depth-backtest"])
         .arg(&spec_path)
         .output()
@@ -238,7 +238,7 @@ fn depth_strategy_portfolio_uses_the_same_shared_result_through_cli_http_and_pyt
     let payload = spec.to_string();
     let spec_path = run_dir.join("portfolio-spec.json");
     std::fs::write(&spec_path, &payload).expect("write portfolio spec");
-    let cli_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let cli_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "depth-backtest"])
         .arg(&spec_path)
         .output()
@@ -327,7 +327,7 @@ fn tick_parameter_experiment_is_shared_by_cli_http_python_and_run_lifecycle() {
     let spec = make_spec("tick-grid-parity", &run_dir.join("cli-artifacts"));
     let spec_path = run_dir.join("grid-spec.json");
     std::fs::write(&spec_path, &spec).expect("write experiment spec");
-    let cli_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let cli_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "run-depth-experiment"])
         .arg(&spec_path)
         .output()
@@ -443,7 +443,7 @@ fn depth_strategy_selection_is_shared_by_cli_http_and_python() {
     let spec_path = run_dir.join("selection-spec.json");
     let cli_spec = make_spec("depth-selection-parity", &run_dir.join("cli-artifacts"));
     std::fs::write(&spec_path, &cli_spec).expect("write strategy selection spec");
-    let cli_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let cli_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "run-depth-experiment"])
         .arg(&spec_path)
         .output()

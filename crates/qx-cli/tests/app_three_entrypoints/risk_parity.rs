@@ -22,7 +22,7 @@ fn risk_parity_plan_is_identical_across_cli_http_and_python_native() {
     let spec_path = root.join("risk-parity.json");
     std::fs::write(&spec_path, &spec).expect("write risk parity spec");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "plan-risk-parity"])
         .arg(&spec_path)
         .output()

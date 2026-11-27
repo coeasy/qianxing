@@ -18,7 +18,7 @@ fn runtime_path_positionals_fail_closed_when_omitted() {
     ];
 
     for (entry, tail) in ENTRIES {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_qx-cli"));
+        let mut command = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap());
         command.arg(entry).args(tail);
         let output = command.output().expect("启动 qx-cli 失败");
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -32,7 +32,7 @@ fn runtime_path_positionals_fail_closed_when_omitted() {
             "{entry} 的缺参提示要点名 runtime 路径:\n{stderr}"
         );
 
-        let mut command = Command::new(env!("CARGO_BIN_EXE_qx-cli"));
+        let mut command = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap());
         command.arg(entry).arg("deploy/runtime.json").args(tail);
         let output = command.output().expect("启动 qx-cli 失败");
         let stderr = String::from_utf8_lossy(&output.stderr);

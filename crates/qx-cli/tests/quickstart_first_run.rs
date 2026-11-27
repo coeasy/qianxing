@@ -30,7 +30,7 @@ fn repository_root() -> PathBuf {
 }
 
 fn binary() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_qx-cli"))
+    PathBuf::from(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
 }
 
 /// #260 的判据口径：这台机器上真正敲得动的那个名字。

@@ -119,7 +119,7 @@ fn backtest_refuses_simulated_fills_outside_the_frozen_market_tick() {
 
     let spec_path = root.join("spec.json");
     std::fs::write(&spec_path, &spec).expect("write bad-tick spec");
-    let cli = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let cli = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "backtest"])
         .arg(&spec_path)
         .output()

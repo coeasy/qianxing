@@ -21,7 +21,7 @@ fn repository_root() -> PathBuf {
 }
 
 fn binary() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_qx-cli"))
+    PathBuf::from(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
 }
 
 /// 临时目录按用例名与进程号取：集成用例并行跑，共用一个目录会互相踩产物。

@@ -37,7 +37,7 @@ fn workdir() -> PathBuf {
 }
 
 fn run_in(cwd: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(cwd)
         .args(args)
         .output()

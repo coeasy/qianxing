@@ -13,7 +13,7 @@ fn run(args: &[&str]) -> (i32, String, String) {
         NEXT_CASE.fetch_add(1, Ordering::Relaxed)
     ));
     std::fs::create_dir_all(&cwd).expect("创建隔离命令目录");
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(&cwd)
         .args(args)
         .output()

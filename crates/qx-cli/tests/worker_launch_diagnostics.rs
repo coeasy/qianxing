@@ -46,7 +46,7 @@ fn isolated_runtime(label: &str) -> (PathBuf, PathBuf) {
 
 fn run_with_interpreter(runtime: &Path, interpreter: &str) -> (i32, String) {
     let bars = repository_root().join("deploy").join(BAR_TEMPLATE);
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(runtime.parent().expect("临时配置必须有父目录"))
         .env("QX_PYTHON", interpreter)
         .args([
@@ -106,7 +106,7 @@ fn silent_worker_reports_program_origin_and_stderr_state() {
 fn fallback_interpreter_names_its_source_when_it_fails() {
     let (runtime, _root) = isolated_runtime("fallback");
     let bars = repository_root().join("deploy").join(BAR_TEMPLATE);
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(runtime.parent().expect("临时配置必须有父目录"))
         .env_remove("QX_PYTHON")
         .args([

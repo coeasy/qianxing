@@ -34,7 +34,7 @@ fn temp_dir(label: &str) -> PathBuf {
 }
 
 fn run<A: AsRef<OsStr>>(args: &[A]) -> (i32, String, String) {
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(args)
         .output()
         .expect("启动 qx-cli 失败");
@@ -46,7 +46,7 @@ fn run<A: AsRef<OsStr>>(args: &[A]) -> (i32, String, String) {
 }
 
 fn run_from<A: AsRef<OsStr>>(working_directory: &Path, args: &[A]) -> (i32, String, String) {
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(working_directory)
         .args(args)
         .output()

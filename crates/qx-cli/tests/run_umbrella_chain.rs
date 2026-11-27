@@ -15,7 +15,7 @@ use std::path::Path;
 use std::process::Command;
 
 fn run_in(cwd: &Path, args: &[&str]) -> (i32, String, String) {
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(cwd)
         // Offline replay creates a private work directory under the process temp root.
         // Keep that root inside this test's writable isolated directory on Windows.

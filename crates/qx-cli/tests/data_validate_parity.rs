@@ -22,7 +22,7 @@ fn case_dir() -> PathBuf {
 }
 
 fn invoke(frame: &Path, output: &Path, json: bool) -> Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_qx-cli"));
+    let mut command = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap());
     command
         .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
         .args(["data-validate"])

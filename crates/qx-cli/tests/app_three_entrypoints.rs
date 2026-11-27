@@ -194,7 +194,7 @@ fn multi_leg_strategy_selection_spec_json(experiment_id: &str, output_dir: &Path
 fn via_cli(spec_json: &str, root: &Path) -> Value {
     let spec_path = root.join("spec.json");
     std::fs::write(&spec_path, spec_json).expect("写 spec");
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "backtest"])
         .arg(&spec_path)
         .output()
@@ -316,7 +316,7 @@ fn the_same_failure_gives_the_same_error_document_from_cli_http_and_python() {
     // CLI：退出码 2，stderr 的 `[qx-cli · CLI] {文档}` 那一行取 `{` 之后的原文。
     let spec_path = root.join("spec.json");
     std::fs::write(&spec_path, &spec).expect("写 spec");
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "backtest"])
         .arg(&spec_path)
         .output()
@@ -375,7 +375,7 @@ fn the_verify_use_case_also_agrees_across_entrypoints() {
     // and verify the same artifacts as the HTTP use-case route.
     let outcome_path = root.join("outcome.json");
     std::fs::write(&outcome_path, &outcome_document).expect("write BacktestOutcome document");
-    let cli_verification = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let cli_verification = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(repo_root())
         .args(["app", "verify"])
         .arg(&outcome_path)
@@ -394,7 +394,7 @@ fn the_verify_use_case_also_agrees_across_entrypoints() {
         "CLI and HTTP verify use-case result"
     );
 
-    let cli_report_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let cli_report_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(repo_root())
         .args(["app", "read-report"])
         .arg(&outcome_path)
@@ -429,7 +429,7 @@ fn the_verify_use_case_also_agrees_across_entrypoints() {
             .as_str()
             .expect("BacktestOutcome summary path"),
     );
-    let interactive_report = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let interactive_report = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(repo_root())
         .args(["report"])
         .arg(&summary_path)
@@ -457,7 +457,7 @@ fn the_verify_use_case_also_agrees_across_entrypoints() {
         serde_json::to_vec(&tampered_summary).expect("encode tampered Bar summary"),
     )
     .expect("write tampered Bar summary");
-    let refused = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let refused = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(repo_root())
         .args(["report"])
         .arg(&summary_path)
@@ -480,7 +480,7 @@ fn the_verify_use_case_also_agrees_across_entrypoints() {
     let dataset_json = dataset.to_string();
     let dataset_spec_path = root.join("dataset-spec.json");
     std::fs::write(&dataset_spec_path, &dataset_json).expect("write DatasetSpec");
-    let cli_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let cli_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(repo_root())
         .args(["app", "validate-dataset"])
         .arg(&dataset_spec_path)
@@ -514,7 +514,7 @@ fn the_verify_use_case_also_agrees_across_entrypoints() {
     );
     let preflight_spec_path = root.join("preflight-spec.json");
     std::fs::write(&preflight_spec_path, &preflight_spec).expect("write preflight spec");
-    let preflight_cli = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let preflight_cli = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(repo_root())
         .args(["app", "preflight-backtest"])
         .arg(&preflight_spec_path)
@@ -594,7 +594,7 @@ fn compare_runs_agrees_across_cli_http_and_python_with_stable_ranking() {
     let spec = json!({"schema_version": 1, "runs": [run_summary(&first), run_summary(&second)]});
     let spec_path = root.join("compare.json");
     std::fs::write(&spec_path, spec.to_string()).unwrap();
-    let cli_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let cli_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "compare-runs"])
         .arg(&spec_path)
         .output()
@@ -632,7 +632,7 @@ fn parameter_experiment_uses_the_same_rust_use_case_from_cli_http_and_python() {
     });
     let spec_path = root.join("experiment.json");
     std::fs::write(&spec_path, spec.to_string()).unwrap();
-    let cli_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let cli_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "run-experiment"])
         .arg(&spec_path)
         .output()

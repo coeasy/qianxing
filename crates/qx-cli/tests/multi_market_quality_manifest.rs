@@ -22,7 +22,7 @@ fn unique_root(name: &str) -> PathBuf {
 }
 
 fn cli(arguments: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(arguments)
         .output()
         .expect("start qx-cli")

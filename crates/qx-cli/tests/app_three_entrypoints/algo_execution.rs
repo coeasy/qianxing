@@ -16,7 +16,7 @@ fn twap_plan_is_identical_across_cli_http_and_python_native() {
     .to_string();
     let spec_path = root.join("algo-execution.json");
     std::fs::write(&spec_path, &spec).expect("write algo execution spec");
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "plan-algo-execution"])
         .arg(&spec_path)
         .output()

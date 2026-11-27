@@ -52,7 +52,7 @@ fn joint_exchange_backtest_command_runs_okx_and_bitget_accounts() {
     )
     .expect("write joint account spec");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "multi-account-joint-backtest"])
         .arg(&spec_path)
         .output()
@@ -80,7 +80,7 @@ fn joint_exchange_backtest_command_runs_okx_and_bitget_accounts() {
     let outcome_path = root.join("joint-outcome.json");
     let outcome_json = serde_json::to_string_pretty(&outcome).expect("serialize joint outcome");
     std::fs::write(&outcome_path, &outcome_json).expect("save joint outcome");
-    let report_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let report_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "read-multi-account-joint-report"])
         .arg(&outcome_path)
         .output()
@@ -125,7 +125,7 @@ fn joint_exchange_backtest_command_runs_okx_and_bitget_accounts() {
     let page_request_path = root.join("joint-report-page-request.json");
     let page_request_json = serde_json::to_string(&page_request).expect("encode page request");
     std::fs::write(&page_request_path, &page_request_json).expect("save joint report page request");
-    let page_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let page_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "read-multi-account-joint-report"])
         .arg(&page_request_path)
         .output()
@@ -170,7 +170,7 @@ fn joint_exchange_backtest_command_runs_okx_and_bitget_accounts() {
         serde_json::to_vec(&equity).expect("encode tampered equity"),
     )
     .expect("tamper joint equity");
-    let rejected = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let rejected = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "read-multi-account-joint-report"])
         .arg(&outcome_path)
         .output()
@@ -226,7 +226,7 @@ fn isolated_multi_account_backtest_is_shared_by_cli_http_and_python() {
     .to_string();
     let spec_path = root.join("multi-account.json");
     std::fs::write(&spec_path, &spec).expect("write batch spec");
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "multi-account-backtest"])
         .arg(&spec_path)
         .output()
@@ -244,7 +244,7 @@ fn isolated_multi_account_backtest_is_shared_by_cli_http_and_python() {
         serde_json::to_vec_pretty(&cli).expect("serialize saved batch result"),
     )
     .expect("save multi-account result for reporting");
-    let core_report_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let core_report_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "read-multi-account-report"])
         .arg(&result_path)
         .output()
@@ -289,7 +289,7 @@ fn isolated_multi_account_backtest_is_shared_by_cli_http_and_python() {
         );
     }
     let report_html = root.join("multi-account-report.html");
-    let report_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let report_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["report"])
         .arg(&result_path)
         .args(["--json", "--html", "--output"])
@@ -390,7 +390,7 @@ fn isolated_multi_account_backtest_is_shared_by_cli_http_and_python() {
     )
     .expect("write multi-account diagnostics");
     let diagnostics_xlsx = root.join("multi-account-diagnostics.xlsx");
-    let diagnostic_report = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let diagnostic_report = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["report"])
         .arg(&result_path)
         .args(["--json", "--html", "--output"])
@@ -477,7 +477,7 @@ fn isolated_multi_account_backtest_is_shared_by_cli_http_and_python() {
             "missing {}",
             evidence_path.display()
         );
-        let verification = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        let verification = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
             .args(["evidence", "verify-run"])
             .arg(&evidence_path)
             .output()
@@ -498,7 +498,7 @@ fn isolated_multi_account_backtest_is_shared_by_cli_http_and_python() {
             .as_str()
             .expect("BTC account evidence path"),
     );
-    let exported = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let exported = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["evidence", "export-run"])
         .arg(&btc_evidence)
         .arg("--output-dir")
@@ -512,7 +512,7 @@ fn isolated_multi_account_backtest_is_shared_by_cli_http_and_python() {
         String::from_utf8_lossy(&exported.stderr)
     );
     let portable_evidence = portable_dir.join("evidence.json");
-    let portable_verification = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let portable_verification = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["evidence", "verify-run"])
         .arg(&portable_evidence)
         .output()
@@ -541,7 +541,7 @@ fn isolated_multi_account_backtest_is_shared_by_cli_http_and_python() {
     let mut tampered = std::fs::read(&portable_diagnostic).expect("read portable diagnostic");
     tampered.push(b' ');
     std::fs::write(&portable_diagnostic, tampered).expect("tamper portable diagnostic");
-    let rejected_tamper = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let rejected_tamper = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["evidence", "verify-run"])
         .arg(&portable_evidence)
         .output()
@@ -550,7 +550,7 @@ fn isolated_multi_account_backtest_is_shared_by_cli_http_and_python() {
     assert!(String::from_utf8_lossy(&rejected_tamper.stderr).contains("策略诊断 SHA-256 不匹配"));
 
     let batch_portable_dir = root.join("portable-multi-account");
-    let packed_batch = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let packed_batch = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["evidence", "pack-multi-account-run"])
         .arg(&result_path)
         .arg("--spec")
@@ -587,7 +587,7 @@ fn isolated_multi_account_backtest_is_shared_by_cli_http_and_python() {
     let moved_batch_dir = root.join("relocated").join("multi-account");
     std::fs::create_dir_all(moved_batch_dir.parent().unwrap()).expect("create relocation parent");
     std::fs::rename(&batch_portable_dir, &moved_batch_dir).expect("relocate batch package");
-    let verified_batch = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let verified_batch = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["evidence", "verify-multi-account-run"])
         .arg(&moved_batch_dir)
         .output()
@@ -607,7 +607,7 @@ fn isolated_multi_account_backtest_is_shared_by_cli_http_and_python() {
     let mut changed_result = original_packaged_result.clone();
     changed_result.push(b' ');
     std::fs::write(&packaged_result_path, changed_result).expect("tamper portable result");
-    let rejected_batch_tamper = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let rejected_batch_tamper = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["evidence", "verify-multi-account-run"])
         .arg(&moved_batch_dir)
         .output()
@@ -622,7 +622,7 @@ fn isolated_multi_account_backtest_is_shared_by_cli_http_and_python() {
     assert!(diagnostic_html.contains("id=\"strategy-diagnostic-status\""));
     assert!(diagnostic_html.contains("JSON.stringify(d,null,2)"));
     let generated_diagnostics_path = root.join("generated-multi-account-diagnostics.json");
-    let generated_diagnostic = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let generated_diagnostic = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["strategy", "diagnose-multi-account"])
         .arg(&result_path)
         .arg("--spec")
@@ -667,7 +667,7 @@ fn isolated_multi_account_backtest_is_shared_by_cli_http_and_python() {
     incomplete["accounts"].as_array_mut().unwrap().pop();
     std::fs::write(&diagnostics_path, serde_json::to_vec(&incomplete).unwrap())
         .expect("write incomplete diagnostics");
-    let rejected_incomplete = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let rejected_incomplete = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["report"])
         .arg(&result_path)
         .args(["--json", "--strategy-diagnostics"])
@@ -690,7 +690,7 @@ fn isolated_multi_account_backtest_is_shared_by_cli_http_and_python() {
     duplicated["accounts"][1] = first;
     std::fs::write(&diagnostics_path, serde_json::to_vec(&duplicated).unwrap())
         .expect("write duplicate diagnostics");
-    let rejected_duplicate = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let rejected_duplicate = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["report"])
         .arg(&result_path)
         .args(["--json", "--strategy-diagnostics"])
@@ -712,7 +712,7 @@ fn isolated_multi_account_backtest_is_shared_by_cli_http_and_python() {
     mismatched["accounts"][0]["report"]["data_fingerprint"] = json!("wrong-fingerprint");
     std::fs::write(&diagnostics_path, serde_json::to_vec(&mismatched).unwrap())
         .expect("write mismatched diagnostics");
-    let rejected_diagnostics = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let rejected_diagnostics = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["report"])
         .arg(&result_path)
         .args(["--json", "--strategy-diagnostics"])
@@ -748,7 +748,7 @@ fn isolated_multi_account_backtest_is_shared_by_cli_http_and_python() {
     let mut corrupted = equity_before.clone();
     corrupted.extend_from_slice(b"tampered\n");
     std::fs::write(&equity_path, corrupted).expect("tamper account equity fixture");
-    let rejected = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let rejected = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["report"])
         .arg(&result_path)
         .args(["--json", "--html", "--output"])
@@ -768,7 +768,7 @@ fn isolated_multi_account_backtest_is_shared_by_cli_http_and_python() {
     let mut corrupted_trace = trace_before.clone();
     corrupted_trace.extend_from_slice(b"{}\n");
     std::fs::write(&trace_path, corrupted_trace).expect("tamper account event trace");
-    let rejected_trace = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let rejected_trace = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["report"])
         .arg(&result_path)
         .args(["--json", "--html", "--output"])
@@ -798,7 +798,7 @@ fn isolated_multi_account_backtest_is_shared_by_cli_http_and_python() {
         "source workspace must be absent before recompute"
     );
     let relocated_package_text = relocated_package.to_string_lossy().into_owned();
-    let recomputed = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let recomputed = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args([
             "evidence",
             "verify-multi-account-run",
@@ -857,7 +857,7 @@ fn partial_multi_account_package_recomputes_after_source_removal() {
     std::fs::write(&spec_path, serde_json::to_vec_pretty(&spec).unwrap())
         .expect("write partial batch spec");
     let result_path = root.join("multi-account-result.json");
-    let batch = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let batch = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "multi-account-backtest"])
         .arg(&spec_path)
         .output()
@@ -874,7 +874,7 @@ fn partial_multi_account_package_recomputes_after_source_removal() {
     std::fs::write(&result_path, serde_json::to_vec_pretty(&result).unwrap())
         .expect("save partial result");
 
-    let report = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let report = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["report"])
         .arg(&result_path)
         .args(["--json", "--evidence"])
@@ -887,7 +887,7 @@ fn partial_multi_account_package_recomputes_after_source_removal() {
         String::from_utf8_lossy(&report.stderr)
     );
     let package_dir = root.join("portable-batch");
-    let packed = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let packed = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["evidence", "pack-multi-account-run"])
         .arg(&result_path)
         .arg("--spec")
@@ -926,7 +926,7 @@ fn partial_multi_account_package_recomputes_after_source_removal() {
     let mut tampered_good_input = good_input_original.clone();
     tampered_good_input.push(b' ');
     std::fs::write(&good_input, tampered_good_input).expect("tamper packaged successful input");
-    let rejected_input_tamper = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let rejected_input_tamper = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["evidence", "verify-multi-account-run"])
         .arg(&package_dir)
         .output()
@@ -946,7 +946,7 @@ fn partial_multi_account_package_recomputes_after_source_removal() {
     let unexpected_missing_input = package_dir.join(missing_input_relative);
     std::fs::write(&unexpected_missing_input, b"unexpected")
         .expect("create a file for an input declared missing");
-    let rejected_missing_marker = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let rejected_missing_marker = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["evidence", "verify-multi-account-run"])
         .arg(&package_dir)
         .output()
@@ -969,7 +969,7 @@ fn partial_multi_account_package_recomputes_after_source_removal() {
     std::fs::remove_dir_all(&root).expect("remove partial batch source workspace");
     let relocated_text = relocated_package.to_string_lossy().into_owned();
     let temp_text = recompute_temp.to_string_lossy().into_owned();
-    let recomputed = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let recomputed = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args([
             "evidence",
             "verify-multi-account-run",
@@ -1028,7 +1028,7 @@ fn all_failed_multi_account_package_relocates_and_verifies_without_claiming_reco
     });
     std::fs::write(&spec_path, serde_json::to_vec_pretty(&spec).unwrap())
         .expect("write all-failed batch spec");
-    let batch = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let batch = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "multi-account-backtest"])
         .arg(&spec_path)
         .output()
@@ -1048,7 +1048,7 @@ fn all_failed_multi_account_package_relocates_and_verifies_without_claiming_reco
         .expect("save all-failed batch result");
 
     let package_dir = root.join("portable-batch");
-    let packed = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let packed = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["evidence", "pack-multi-account-run"])
         .arg(&result_path)
         .arg("--spec")
@@ -1082,7 +1082,7 @@ fn all_failed_multi_account_package_relocates_and_verifies_without_claiming_reco
     let relocated = root.with_file_name(format!("{scratch_name}-package"));
     std::fs::rename(&package_dir, &relocated).expect("relocate all-failed evidence package");
     std::fs::remove_dir_all(&root).expect("remove all-failed source workspace");
-    let verified = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let verified = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["evidence", "verify-multi-account-run"])
         .arg(&relocated)
         .output()
@@ -1098,7 +1098,7 @@ fn all_failed_multi_account_package_relocates_and_verifies_without_claiming_reco
     assert_eq!(verified["failed_account_count"], 2);
     assert_eq!(verified["result_recomputed"], false);
 
-    let recompute = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let recompute = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["evidence", "verify-multi-account-run"])
         .arg(&relocated)
         .arg("--recompute")

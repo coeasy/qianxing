@@ -90,7 +90,7 @@ fn provider_backtest_without_configured_sources_fails_closed() {
         .expect("write valid provider-backtest spec");
 
     let run = || {
-        Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
             .current_dir(root)
             .args([
                 "app",
@@ -210,7 +210,7 @@ fn provider_depth_backtest_without_configured_sources_fails_closed() {
         .expect("write valid ProviderDepthBacktestSpec");
 
     let run = || {
-        Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
             .current_dir(root)
             .args([
                 "app",
@@ -274,7 +274,7 @@ fn generated_nested_commands() -> Vec<String> {
 #[test]
 fn every_command_renders_its_own_help() {
     for name in generated_top_level_commands() {
-        let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
             .args([name.as_str(), "--help"])
             .output()
             .expect("启动 qx-cli 失败");
@@ -303,7 +303,7 @@ fn every_command_renders_its_own_help() {
 fn every_nested_command_renders_its_own_help() {
     for spec in generated_nested_commands() {
         let args = spec.split(' ').chain(["--help"]).collect::<Vec<_>>();
-        let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
             .args(&args)
             .output()
             .expect("启动 qx-cli 失败");
@@ -389,7 +389,7 @@ fn venue_and_optional_backend_commands_fail_closed_before_external_io() {
             continue;
         }
         let run = || {
-            Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+            Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
                 .args(args)
                 .output()
                 .expect("启动 qx-cli 失败")

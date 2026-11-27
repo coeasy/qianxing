@@ -51,10 +51,10 @@ fn process_restart_recovers_expired_execution_lease_and_rejects_stale_ack() {
             100,
         )
         .unwrap();
-    let executable = env!("CARGO_BIN_EXE_qx-cli");
+    let executable = std::env::var("CARGO_BIN_EXE_qx-cli").unwrap();
     let root_arg = root.to_string_lossy().to_string();
     let first_token = run_child(
-        executable,
+        &executable,
         &[
             "recovery-child".into(),
             root_arg.clone(),
@@ -70,7 +70,7 @@ fn process_restart_recovers_expired_execution_lease_and_rejects_stale_ack() {
     assert_eq!(queue.available(111).unwrap().len(), 1);
 
     let stale = run_child(
-        executable,
+        &executable,
         &[
             "recovery-child".into(),
             root_arg.clone(),
@@ -83,7 +83,7 @@ fn process_restart_recovers_expired_execution_lease_and_rejects_stale_ack() {
     );
     assert_eq!(stale, "rejected");
     let takeover_token = run_child(
-        executable,
+        &executable,
         &[
             "recovery-child".into(),
             root_arg.clone(),
@@ -96,7 +96,7 @@ fn process_restart_recovers_expired_execution_lease_and_rejects_stale_ack() {
     );
     assert_eq!(takeover_token, "2");
     let acked = run_child(
-        executable,
+        &executable,
         &[
             "recovery-child".into(),
             root_arg,

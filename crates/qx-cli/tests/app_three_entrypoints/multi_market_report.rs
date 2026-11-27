@@ -66,7 +66,7 @@ fn assert_report_projection_parity(artifact_path: &str, root: &Path, stem: &str)
         .expect("encode benchmark BarFrame"),
     )
     .expect("write benchmark BarFrame");
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(repo_root())
         .args(["report", artifact_path, "--json", "--html", "--output"])
         .arg(&html_path)
@@ -294,7 +294,7 @@ fn cli_and_python_read_the_same_replay_verified_multi_market_event_page() {
         .to_string(),
     )
     .expect("write multi-market spec");
-    let run = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let run = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .arg("app")
         .arg("multi-market-backtest")
         .arg(&spec_path)
@@ -317,7 +317,7 @@ fn cli_and_python_read_the_same_replay_verified_multi_market_event_page() {
         serde_json::to_vec_pretty(&request).expect("encode request"),
     )
     .expect("write request");
-    let cli_report_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let cli_report_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(repo_root())
         .args(["app", "read-multi-market-event-page"])
         .arg(&request_path)
@@ -348,7 +348,7 @@ fn cli_and_python_read_the_same_replay_verified_multi_market_event_page() {
     );
     assert!(cli_report["rows"].as_array().unwrap().len() <= 25);
 
-    let complete_report_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let complete_report_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(repo_root())
         .args(["app", "read-multi-market-research-report"])
         .arg(&request_path)
@@ -437,7 +437,7 @@ fn cli_and_python_read_the_same_replay_verified_multi_market_event_page() {
         serde_json::to_vec(&mismatched_outcome).expect("encode mismatched outcome"),
     )
     .expect("write mismatched outcome request");
-    let mismatch = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let mismatch = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(repo_root())
         .args(["app", "read-multi-market-event-page"])
         .arg(&request_path)
@@ -457,7 +457,7 @@ fn cli_and_python_read_the_same_replay_verified_multi_market_event_page() {
         serde_json::to_vec(&out_of_range_page).expect("encode out-of-range page"),
     )
     .expect("write out-of-range page request");
-    let out_of_range = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let out_of_range = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(repo_root())
         .args(["app", "read-multi-market-event-page"])
         .arg(&request_path)
@@ -551,7 +551,7 @@ fn cli_and_python_read_the_same_replay_verified_multi_market_depth_event_page() 
         .to_string(),
     )
     .expect("write multi-market Depth spec");
-    let run = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let run = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .arg("app")
         .arg("multi-market-depth-backtest")
         .arg(&spec_path)
@@ -574,7 +574,7 @@ fn cli_and_python_read_the_same_replay_verified_multi_market_depth_event_page() 
         serde_json::to_vec_pretty(&request).expect("encode request"),
     )
     .expect("write request");
-    let cli_report_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let cli_report_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(repo_root())
         .args(["app", "read-multi-market-depth-event-page"])
         .arg(&request_path)
@@ -603,7 +603,7 @@ fn cli_and_python_read_the_same_replay_verified_multi_market_depth_event_page() 
         Some(Err(error)) => panic!("Python multi-market Depth reader failed: {error}"),
     }
 
-    let complete_report_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let complete_report_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(repo_root())
         .args(["app", "read-multi-market-depth-research-report"])
         .arg(&request_path)
@@ -661,7 +661,7 @@ fn cli_and_python_read_the_same_replay_verified_multi_market_depth_event_page() 
     mismatched["outcome"]["run_id"] = json!("another-depth-run");
     std::fs::write(&request_path, serde_json::to_vec(&mismatched).unwrap())
         .expect("write mismatched request");
-    let mismatch = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let mismatch = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(repo_root())
         .args(["app", "read-multi-market-depth-event-page"])
         .arg(&request_path)
@@ -674,7 +674,7 @@ fn cli_and_python_read_the_same_replay_verified_multi_market_depth_event_page() 
     out_of_range["page"]["offset"] = json!(artifact["event_count"].as_u64().unwrap() + 1);
     std::fs::write(&request_path, serde_json::to_vec(&out_of_range).unwrap())
         .expect("write out-of-range request");
-    let out_of_range = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let out_of_range = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(repo_root())
         .args(["app", "read-multi-market-depth-event-page"])
         .arg(&request_path)

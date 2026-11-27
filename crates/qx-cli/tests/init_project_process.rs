@@ -22,7 +22,7 @@ fn temp_case_dir(label: &str) -> PathBuf {
 }
 
 fn init(runtime: &Path, profile: Option<&str>, strategy: Option<&str>) {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_qx-cli"));
+    let mut command = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap());
     command.arg("init").arg(runtime);
     if let Some(profile) = profile {
         command.args(["--profile", profile]);
@@ -39,7 +39,7 @@ fn init(runtime: &Path, profile: Option<&str>, strategy: Option<&str>) {
 }
 
 fn doctor_config_check_passes(runtime: &Path) {
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["doctor", runtime.to_string_lossy().as_ref(), "--json"])
         .output()
         .expect("启动 qx-cli doctor 失败");
@@ -57,7 +57,7 @@ fn doctor_config_check_passes(runtime: &Path) {
 }
 
 fn runtime_check_config_passes(runtime: &Path) {
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args([
             "runtime-check",
             runtime.to_string_lossy().as_ref(),
@@ -103,7 +103,7 @@ fn init_creates_self_contained_project_assets_and_builtin_strategy() {
     }
     doctor_config_check_passes(&runtime);
 
-    let duplicate = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let duplicate = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args([
             "init",
             runtime.to_string_lossy().as_ref(),
@@ -188,7 +188,7 @@ fn doctor_json_is_machine_readable_and_never_claims_network_or_orders() {
     let runtime = root.join("qianxing.runtime.json");
     init(&runtime, None, Some("macd"));
 
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["doctor", runtime.to_string_lossy().as_ref(), "--json"])
         .output()
         .expect("启动 qx-cli doctor 失败");

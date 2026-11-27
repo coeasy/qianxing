@@ -32,7 +32,7 @@ fn temp_dir(label: &str) -> PathBuf {
 
 /// 在 `cwd` 里执行一条命令；产物落点跟 `storage.data_dir` 走，用例目录一律隔离在临时树。
 fn run(cwd: &Path, args: &[String]) -> (i32, String, String) {
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(cwd)
         .args(args)
         .output()

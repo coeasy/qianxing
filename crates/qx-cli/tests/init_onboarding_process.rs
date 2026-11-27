@@ -28,7 +28,7 @@ fn temp_case_dir(label: &str) -> PathBuf {
 }
 
 fn qx_cli(args: &[&str]) -> (Option<i32>, String) {
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(workspace_root())
         .args(args)
         .output()

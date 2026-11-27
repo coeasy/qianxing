@@ -29,7 +29,7 @@ fn temp_root(label: &str) -> PathBuf {
 }
 
 fn run(args: &[&str]) -> (i32, String, String) {
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(args)
         .output()
         .expect("启动 qx-cli 失败");

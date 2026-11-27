@@ -37,7 +37,7 @@ fn legacy_builtin_strategies_match_qx_app_default_engine_results() {
     ];
     let mut stale_baselines = Vec::new();
     for (kind, expected_hash) in strategies {
-        let legacy_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        let legacy_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
             .args(["backtest", "builtin", kind, &bars, "--config"])
             .arg(&runtime_path)
             .output()
@@ -143,7 +143,7 @@ fn configured_builtin_matches_the_qx_app_spec_after_signal_and_fill_binding() {
     )
     .expect("write configured runtime");
 
-    let legacy = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let legacy = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["backtest", "builtin", "sma_cross", &bars, "--config"])
         .arg(&runtime_path)
         .output()

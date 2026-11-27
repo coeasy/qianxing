@@ -73,7 +73,7 @@ fn query(kind: DataKind, frequency: &str, start: u64, end: u64) -> DataQuery {
 }
 
 fn cli_report(command: &str, outcome_path: &Path) -> Value {
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(super::repo_root())
         .args(["app", command])
         .arg(outcome_path)

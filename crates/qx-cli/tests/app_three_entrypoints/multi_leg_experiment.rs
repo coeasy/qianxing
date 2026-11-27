@@ -6,7 +6,7 @@ fn multi_leg_parameter_experiment_is_shared_by_cli_http_and_python() {
     let spec = multi_leg_experiment_spec_json("g1-multi-leg-grid", &root.join("out"));
     let spec_path = root.join("multi-leg-experiment.json");
     std::fs::write(&spec_path, &spec).expect("write multi-leg experiment spec");
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "run-multi-leg-experiment"])
         .arg(&spec_path)
         .output()
@@ -55,7 +55,7 @@ fn multi_leg_parameter_experiment_is_shared_by_cli_http_and_python() {
     let package = root.join("portable-multi-leg-experiment");
     let package_text = package.to_string_lossy().into_owned();
     let run_evidence = |args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
             .args(args)
             .output()
             .expect("start qx-cli evidence command")
@@ -111,7 +111,7 @@ fn multi_leg_strategy_selection_is_shared_by_cli_http_and_python() {
     );
     let spec_path = root.join("multi-leg-strategy-selection.json");
     std::fs::write(&spec_path, &spec).expect("write multi-leg strategy selection spec");
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "run-multi-leg-experiment"])
         .arg(&spec_path)
         .output()
@@ -220,7 +220,7 @@ fn the_same_multi_leg_spec_runs_through_cli_http_and_python_shared_rust_use_case
     let spec = multi_leg_spec_json("g1-multi-leg", &root.join("out"));
     let spec_path = root.join("multi-leg.json");
     std::fs::write(&spec_path, &spec).expect("write MultiLegBacktestSpec");
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "multi-leg-backtest"])
         .arg(&spec_path)
         .output()

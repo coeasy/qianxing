@@ -23,7 +23,7 @@ fn scratch() -> PathBuf {
 }
 
 fn run(root: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(root)
         .env("TEMP", root)
         .env("TMP", root)

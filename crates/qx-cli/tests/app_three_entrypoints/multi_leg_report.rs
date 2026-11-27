@@ -16,7 +16,7 @@ fn cli_and_python_read_the_same_replay_verified_multi_leg_facts() {
         serde_json::to_vec_pretty(&spec).expect("encode spec"),
     )
     .expect("write multi-leg spec");
-    let outcome_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let outcome_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "multi-leg-backtest"])
         .arg(&spec_path)
         .output()
@@ -34,7 +34,7 @@ fn cli_and_python_read_the_same_replay_verified_multi_leg_facts() {
         serde_json::to_vec_pretty(&outcome).expect("encode outcome"),
     )
     .expect("save outcome for report read");
-    let report_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let report_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(repo_root())
         .args(["app", "read-multi-leg-report"])
         .arg(&outcome_path)
@@ -81,7 +81,7 @@ fn cli_and_python_read_the_same_replay_verified_multi_leg_event_page() {
         serde_json::to_vec_pretty(&spec).expect("encode spec"),
     )
     .expect("write multi-leg spec");
-    let outcome_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let outcome_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "multi-leg-backtest"])
         .arg(&spec_path)
         .output()
@@ -104,7 +104,7 @@ fn cli_and_python_read_the_same_replay_verified_multi_leg_event_page() {
         serde_json::to_vec_pretty(&request).expect("encode read request"),
     )
     .expect("write multi-leg event page request");
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(repo_root())
         .args(["app", "read-multi-leg-event-page"])
         .arg(&request_path)
@@ -139,7 +139,7 @@ fn cli_and_python_read_the_same_replay_verified_multi_leg_event_page() {
         serde_json::to_vec(&invalid_request).expect("encode invalid page request"),
     )
     .expect("write invalid page request");
-    let invalid = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let invalid = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(repo_root())
         .args(["app", "read-multi-leg-event-page"])
         .arg(&request_path)
@@ -164,7 +164,7 @@ fn cli_and_python_read_the_same_complete_bounded_multi_leg_report() {
         serde_json::to_vec_pretty(&spec).expect("encode spec"),
     )
     .expect("write multi-leg spec");
-    let outcome_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let outcome_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "multi-leg-backtest"])
         .arg(&spec_path)
         .output()
@@ -187,7 +187,7 @@ fn cli_and_python_read_the_same_complete_bounded_multi_leg_report() {
         serde_json::to_vec_pretty(&request).expect("encode report request"),
     )
     .expect("write report request");
-    let cli_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let cli_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(repo_root())
         .args(["app", "read-multi-leg-research-report"])
         .arg(&request_path)
@@ -237,7 +237,7 @@ fn cli_and_python_read_the_same_complete_bounded_multi_leg_report() {
         serde_json::to_vec(&invalid_request).expect("encode invalid report request"),
     )
     .expect("write invalid report request");
-    let invalid = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let invalid = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .current_dir(repo_root())
         .args(["app", "read-multi-leg-research-report"])
         .arg(&request_path)

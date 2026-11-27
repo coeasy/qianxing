@@ -139,7 +139,7 @@ fn l1_tick_run_has_the_same_hash_through_cli_http_and_python() {
     .to_string();
     let spec_path = root.join("depth-spec.json");
     std::fs::write(&spec_path, &spec).expect("write spec");
-    let cli_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let cli_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "depth-backtest"])
         .arg(&spec_path)
         .output()
@@ -162,7 +162,7 @@ fn l1_tick_run_has_the_same_hash_through_cli_http_and_python() {
 
     let outcome_path = root.join("depth-outcome.json");
     std::fs::write(&outcome_path, &cli_output.stdout).expect("write depth outcome");
-    let verify_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let verify_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "verify-depth"])
         .arg(&outcome_path)
         .output()
@@ -172,7 +172,7 @@ fn l1_tick_run_has_the_same_hash_through_cli_http_and_python() {
         serde_json::from_slice(&verify_output.stdout).expect("verification JSON");
     assert_eq!(cli_verification["verified"], true);
 
-    let cli_report_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let cli_report_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "read-depth-report"])
         .arg(&outcome_path)
         .output()
@@ -222,7 +222,7 @@ fn l1_tick_run_has_the_same_hash_through_cli_http_and_python() {
 
     let summary_path = PathBuf::from(cli["artifacts"]["summary"].as_str().unwrap());
     let xlsx_path = root.join("interactive-depth-report.xlsx");
-    let interactive_report = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let interactive_report = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["report"])
         .arg(&summary_path)
         .args(["--json", "--html", "--evidence", "--xlsx"])
@@ -252,7 +252,7 @@ fn l1_tick_run_has_the_same_hash_through_cli_http_and_python() {
         serde_json::to_vec(&tampered_summary).unwrap(),
     )
     .unwrap();
-    let rejected = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let rejected = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["report"])
         .arg(&summary_path)
         .arg("--json")
@@ -332,7 +332,7 @@ fn l2_market_making_spec_has_one_hash_through_cli_http_and_python() {
     .to_string();
     let spec_path = root.join("market-making-spec.json");
     std::fs::write(&spec_path, &spec).expect("write market-making spec");
-    let cli_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let cli_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "depth-backtest"])
         .arg(&spec_path)
         .output()
@@ -421,7 +421,7 @@ fn multi_account_depth_backtest_and_report_reader_work_through_cli() {
     let source_depth = root.join("source-depth.json");
     std::fs::copy(&fixture, &source_depth).expect("copy source depth frame");
     let source_quality = root.join("source-depth-quality.json");
-    let quality_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let quality_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .arg("data-validate-depth")
         .arg(&source_depth)
         .args(["--tier", "l1", "1000"])
@@ -469,7 +469,7 @@ fn multi_account_depth_backtest_and_report_reader_work_through_cli() {
         .expect("serialize multi-account Depth spec"),
     )
     .expect("write multi-account Depth spec");
-    let run_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let run_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "multi-account-depth-backtest"])
         .arg(&spec_path)
         .output()
@@ -487,7 +487,7 @@ fn multi_account_depth_backtest_and_report_reader_work_through_cli() {
 
     let outcome_path = root.join("multi-account-depth-outcome.json");
     std::fs::write(&outcome_path, &run_output.stdout).expect("save multi-account Depth result");
-    let report_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let report_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "read-multi-account-report"])
         .arg(&outcome_path)
         .output()
@@ -508,7 +508,7 @@ fn multi_account_depth_backtest_and_report_reader_work_through_cli() {
 
     let rich_html = root.join("multi-account-depth-report.html");
     let rich_xlsx = root.join("multi-account-depth-report.xlsx");
-    let rich_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let rich_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["report"])
         .arg(&outcome_path)
         .args(["--json", "--html", "--output"])
@@ -590,7 +590,7 @@ fn multi_account_depth_backtest_and_report_reader_work_through_cli() {
     .expect("write legacy path-sensitive result");
 
     let portable = root.join("portable-depth-batch");
-    let packed = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let packed = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["evidence", "pack-multi-account-depth-run"])
         .arg(&legacy_result_path)
         .arg("--spec")
@@ -640,7 +640,7 @@ fn multi_account_depth_backtest_and_report_reader_work_through_cli() {
     let moved = root.join("relocated/depth-batch");
     std::fs::create_dir_all(moved.parent().unwrap()).expect("create depth relocation parent");
     std::fs::rename(&portable, &moved).expect("relocate multi-account depth package");
-    let verified = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let verified = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["evidence", "verify-multi-account-depth-run"])
         .arg(&moved)
         .arg("--recompute")
@@ -664,7 +664,7 @@ fn partial_multi_account_depth_package_recomputes_missing_inputs_after_relocatio
     let source_depth = root.join("source-depth.json");
     std::fs::copy(&fixture, &source_depth).expect("copy successful source depth frame");
     let source_quality = root.join("source-quality.json");
-    let quality_output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let quality_output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .arg("data-validate-depth")
         .arg(&source_depth)
         .args(["--tier", "l1", "1000"])
@@ -713,7 +713,7 @@ fn partial_multi_account_depth_package_recomputes_missing_inputs_after_relocatio
         .expect("serialize partial depth spec"),
     )
     .expect("write partial depth spec");
-    let run = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let run = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["app", "multi-account-depth-backtest"])
         .arg(&spec_path)
         .output()
@@ -729,7 +729,7 @@ fn partial_multi_account_depth_package_recomputes_missing_inputs_after_relocatio
     assert_eq!(result["summary"]["accounts_failed"], 1);
     let result_path = root.join("partial-depth-result.json");
     std::fs::write(&result_path, &run.stdout).expect("save partial depth result");
-    let report = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let report = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .arg("report")
         .arg(&result_path)
         .args(["--json", "--evidence"])
@@ -742,7 +742,7 @@ fn partial_multi_account_depth_package_recomputes_missing_inputs_after_relocatio
         String::from_utf8_lossy(&report.stderr)
     );
     let portable = root.join("portable-partial-depth");
-    let packed = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let packed = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["evidence", "pack-multi-account-depth-run"])
         .arg(&result_path)
         .arg("--spec")
@@ -775,7 +775,7 @@ fn partial_multi_account_depth_package_recomputes_missing_inputs_after_relocatio
     let moved = root.join("relocated/partial-depth");
     std::fs::create_dir_all(moved.parent().unwrap()).expect("create partial relocation parent");
     std::fs::rename(&portable, &moved).expect("relocate partial depth package");
-    let verified = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let verified = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["evidence", "verify-multi-account-depth-run"])
         .arg(&moved)
         .arg("--recompute")

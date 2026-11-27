@@ -15,7 +15,7 @@ struct Observation {
 }
 
 fn binary() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_qx-cli"))
+    PathBuf::from(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
 }
 
 fn temp_dir(label: &str, replay: usize) -> PathBuf {

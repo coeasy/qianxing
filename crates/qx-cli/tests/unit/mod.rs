@@ -516,7 +516,9 @@ fn qx_cli_binary() -> PathBuf {
         assert_binary_fresh(&binary);
         return binary;
     }
-    if let Some(path) = option_env!("CARGO_BIN_EXE_qx-cli") {
+    if let Some(path) = std::env::var_os("CARGO_BIN_EXE_qx-cli")
+        .or_else(|| option_env!("CARGO_BIN_EXE_qx-cli").map(std::ffi::OsString::from))
+    {
         let binary = PathBuf::from(path);
         // Some Cargo invocations expose an OUT_DIR-style path for bin unit tests
         // without materializing that executable. Fall through to target/<profile>/qx-cli

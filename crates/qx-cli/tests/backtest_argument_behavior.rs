@@ -26,7 +26,7 @@ fn temp_case_dir() -> PathBuf {
 /// 而真正读取配置的子入口仍要在帮助中暴露它。
 #[test]
 fn backtest_rejects_the_config_flag_it_used_to_swallow() {
-    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args([
             "backtest",
             "--config",
@@ -44,7 +44,7 @@ fn backtest_rejects_the_config_flag_it_used_to_swallow() {
         stderr.contains("--config"),
         "错误必须点名被拒绝的旗标，让人知道它已不存在: {stderr}"
     );
-    let help = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let help = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args(["backtest", "builtin", "--help"])
         .output()
         .expect("启动 qx-cli 失败");
@@ -67,7 +67,7 @@ fn backtest_subcommand_rejects_outer_positionals_it_never_reads() {
     let outer_runtime = dir.join("outer-runtime.json").display().to_string();
     let outer_frame = dir.join("outer-frame.csv").display().to_string();
     let inner_frame = dir.join("inner-frame.csv").display().to_string();
-    let mixed = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+    let mixed = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
         .args([
             "backtest",
             &outer_runtime,
@@ -115,7 +115,7 @@ fn backtest_subcommand_rejects_outer_positionals_it_never_reads() {
             &outer_runtime,
         ),
     ] {
-        let legal = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        let legal = Command::new(std::env::var_os("CARGO_BIN_EXE_qx-cli").unwrap())
             .arg("backtest")
             .args(args)
             .output()
