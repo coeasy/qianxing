@@ -25,10 +25,27 @@ DOC_STATUS_LABELS = {
 }
 
 
+def architecture_status_note(package: dict[str, object]) -> str | None:
+    status = package.get("status")
+    blockers = package.get("blockers")
+    next_action = package.get("next_action")
+    if isinstance(blockers, list) and all(isinstance(item, str) for item in blockers):
+        blocker_text = "；".join(blockers)
+    elif isinstance(blockers, str):
+        blocker_text = blockers
+    else:
+        return None
+    if not isinstance(next_action, str):
+        return None
+    if status == "complete":
+        return f"已完成当前验收门槛；说明：{blocker_text}；持续项：{next_action}"
+    return f"当前缺口：{blocker_text}；下一步：{next_action}"
+
+
 def validate_architecture_status_sync(
     packages: list[object], markdown: str | None = None
 ) -> list[str]:
-    """Keep the human-readable plan status aligned with the canonical ledger."""
+    """Keep plan statuses and current gaps aligned with the canonical ledger."""
     if markdown is None:
         try:
             markdown = ARCHITECTURE_DOC.read_text(encoding="utf-8")
@@ -36,13 +53,13 @@ def validate_architecture_status_sync(
             return [f"cannot read architecture plan: {error}"]
 
     expected = {
-        item["id"]: item["status"]
+        item["id"]: item
         for item in packages
         if isinstance(item, dict)
         and isinstance(item.get("id"), str)
         and isinstance(item.get("status"), str)
     }
-    observed: dict[str, str] = {}
+    observed: dict[str, tuple[str, str]] = {}
     errors: list[str] = []
     for line in markdown.splitlines():
         if not line.startswith("| R"):
@@ -57,7 +74,12 @@ def validate_architecture_status_sync(
             errors.append(f"{package_id}: duplicate status row in architecture plan")
             continue
         status_cell = cells[2].strip()
-        observed[package_id] = status_cell.rsplit("/", 1)[-1].strip()
+        if len(cells) < 7:
+            errors.append(f"{package_id}: incomplete status row in architecture plan")
+            note = ""
+        else:
+            note = cells[5].strip()
+        observed[package_id] = (status_cell.rsplit("/", 1)[-1].strip(), note)
 
     if set(observed) != EXPECTED_IDS:
         missing = sorted(EXPECTED_IDS - set(observed))
@@ -65,14 +87,20 @@ def validate_architecture_status_sync(
         errors.append(
             f"architecture plan status IDs mismatch; missing={missing}, extra={extra}"
         )
-    for package_id, status in expected.items():
+    for package_id, package in expected.items():
+        status = package["status"]
         label = DOC_STATUS_LABELS.get(status)
         if label is None:
             continue
         actual = observed.get(package_id)
-        if actual is not None and actual != label:
+        if actual is not None and actual[0] != label:
             errors.append(
-                f"{package_id}: architecture plan status {actual!r} does not match ledger {status!r}"
+                f"{package_id}: architecture plan status {actual[0]!r} does not match ledger {status!r}"
+            )
+        expected_note = architecture_status_note(package)
+        if actual is not None and expected_note is not None and actual[1] != expected_note:
+            errors.append(
+                f"{package_id}: architecture plan blocker/next-action text does not match ledger"
             )
     return errors
 

@@ -15,6 +15,8 @@ class ArchitecturePlanStatusSyncTests(unittest.TestCase):
             {
                 "id": package_id,
                 "status": statuses.get(package_id, "partial"),
+                "blockers": [f"阻断条目 {package_id}"],
+                "next_action": f"下一步 {package_id}",
             }
             for package_id in sorted(ledger.EXPECTED_IDS)
         ]
@@ -23,7 +25,8 @@ class ArchitecturePlanStatusSyncTests(unittest.TestCase):
         rows = []
         for package in self.packages:
             label = ledger.DOC_STATUS_LABELS[package["status"]]
-            rows.append(f"| {package['id']} 示例 | P1/{label} | 代码 | — | 验收 |")
+            note = ledger.architecture_status_note(package)
+            rows.append(f"| {package['id']} 示例 | P1/{label} | 代码 | — | {note} |")
         return "\n".join(rows)
 
     def test_accepts_rows_when_every_status_matches_the_ledger(self) -> None:
@@ -37,6 +40,14 @@ class ArchitecturePlanStatusSyncTests(unittest.TestCase):
         errors = ledger.validate_architecture_status_sync(self.packages, markdown)
         self.assertIn(
             "R01: architecture plan status '部分' does not match ledger 'complete'",
+            errors,
+        )
+
+    def test_reports_stale_blockers_or_next_action(self) -> None:
+        markdown = self.markdown().replace("阻断条目 R05", "旧阻断条目 R05")
+        errors = ledger.validate_architecture_status_sync(self.packages, markdown)
+        self.assertIn(
+            "R05: architecture plan blocker/next-action text does not match ledger",
             errors,
         )
 

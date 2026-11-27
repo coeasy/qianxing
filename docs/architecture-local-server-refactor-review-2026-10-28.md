@@ -244,7 +244,7 @@ SQLite/PostgreSQL实现用事务提交本地数据；文件后端采用WAL/提�
 
 ## 11. 实施工作包与验收
 
-状态以 `maturity/strategy-run-refactor-work-packages.json` 为唯一台账；本表逐项同步当前状态、阻断项与下一步，CI 中的 `tools/check_strategy_refactor_ledger.py` 会校验状态一致性。优先级表示风险等级，不代表尚未实现。
+状态以 `maturity/strategy-run-refactor-work-packages.json` 为唯一台账；本表逐项同步当前状态、阻断项与下一步，CI 中的 `tools/check_strategy_refactor_ledger.py` 会校验这些字段的一致性。优先级表示风险等级，不代表尚未实现。
 
 | 工作包 | 优先级/状态 | 主要交付与代码落点 | 依赖 | 当前验收结果与下一步 |
 |---|---|---|---|---|

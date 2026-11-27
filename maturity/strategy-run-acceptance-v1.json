@@ -773,7 +773,7 @@
       "work_package": "R23",
       "status": "planned",
       "acceptance_criteria": [
-        "The architecture plan status for every R01-R23 package matches the canonical work-package ledger. The checker rejects a stale status and a missing row; successful command execution records evidence but does not satisfy the separate human-review gate."
+        "The architecture plan status, blockers, and next action for every R01-R23 package match the canonical work-package ledger. The checker rejects stale status or gap text and a missing row; successful command execution records evidence but does not satisfy the separate human-review gate."
       ],
       "required_artifacts": [
         "docs/architecture-local-server-refactor-review-2026-10-28.md",
@@ -21464,6 +21464,41 @@
         }
       ],
       "notes": "Windows acceptance covers complete, partial, blocked and not-started labels; the checker detects stale statuses and missing work-package rows. Evidence remains planned pending human review."
+    },
+    {
+      "run_id": "02e06094-be89-475a-a036-f6c177039ed0",
+      "acceptance_id": "R23-AC02",
+      "recorded_at_utc": "2026-11-27T00:11:25.252749Z",
+      "source_revision": "772abc4226a15dffebb1b89ba59f25c0f38bafef",
+      "source_tree_sha256": "b70378d92634694d0370c8fbd5d53d247c930589f3d7ac70519c1842009967fa",
+      "source_manifest": "maturity/acceptance-artifacts/02e06094-be89-475a-a036-f6c177039ed0.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "python",
+        "-m",
+        "unittest",
+        "tools.test_strategy_refactor_ledger",
+        "-q"
+      ],
+      "inputs": [],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/02e06094-be89-475a-a036-f6c177039ed0.log",
+          "sha256": "67c5cf3217608052b831096112b70f83ae036c793eceee7a571e1bbf10b2a6da"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/02e06094-be89-475a-a036-f6c177039ed0.source-tree.json",
+          "sha256": "5a4b421d84f70a8a98a65d4032d78ddffb9000c1e4f4d4cc7bae0d7da714c0db"
+        }
+      ],
+      "notes": "Windows acceptance verifies all 23 plan rows match the ledger for status, blocker and next action; unit tests reject stale status text, stale gap text and missing rows. Evidence remains planned pending human review."
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"
