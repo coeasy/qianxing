@@ -91,3 +91,10 @@ Windows workspace 验收之外，已用本地 Podman 启动 Linux Rust 1.98.1 �
 - 在 Debian 13 x86_64 Box 的全新 Git 克隆中，针对候选提交 `aecffc3db5d2a77c808dbd87f91b741179172bd4` 运行 `python -m unittest discover -s python/tests -q`：708 项运行、5 项跳过、0 项失败，用时 90.857 秒。Python 源码包加载自干净候选树，原生扩展来自已安装的 `qianxing==0.5.0` manylinux abi3 wheel；Python 为 3.13.5。wheel SHA-256 为 `013a87abbe8341fda12c8908f548d811bff262c13f907731e14e991af75c6370`，扩展 SHA-256 为 `cc690f1dba60f55a152dba1b260bd06f2ef233e5bdc75cb262082e9961dafec3`。
 - 本运行是 Python 包与 wheel 原生扩展的 CI 对照套件；测试内的隔离测试替身不构成交易所接口验收。OKX、Bitget 和 Binance 的真实公开行情验收见上方 R01 记录；本次没有加载账户凭据、调用私有接口或提交订单。
 - 运行日志和候选源码清单分别见[验收日志](../maturity/acceptance-artifacts/99c6a160-db09-4e32-af63-d128d7e31764.log)与[源码清单](../maturity/acceptance-artifacts/99c6a160-db09-4e32-af63-d128d7e31764.source-tree.json)。Box job `67ab11af` 属于本机验收，仍需在获准合并后的精确 tag 上重跑托管发布门禁。
+
+## Linux wheel 安装与首跑闭环（2026-11-27）
+
+- Debian 13 x86_64 的全新 Python 3.13.5 虚拟环境从本地 wheel 离线安装 `qianxing==0.5.0`，`pip check` 无依赖错误。运行 `doctor` 时，原生扩展为 `matched`，wheel 内置 renderer 为 `bundled/ready`；`doctor.cli=unavailable` 只代表没有单独安装到 PATH 的 Rust CLI，不影响 Python wheel 的 quickstart。该解释已补入[首跑指南](first-run.md)。
+- 一条 `qianxing quickstart <新目录>` 完成 600 根样例 Bar 预检、回测、HTML 报告和 EvidenceBundle 校验；项目运行 `succeeded`，产生 1 笔样例成交，输入身份和产物摘要校验通过。`result_recomputed=false` 被如实保留：验收确认输入身份与工件完整性，没有重跑策略复算结果。
+- 同一 wheel 的 `tools/python_wheel_smoke.py` 在干净源码 worktree `2d5c5df9d83cc86b24ad100912d50d44c4d44ac7` 上通过：80 根样例首跑耗时 0.573 秒，生成 66,955 字节 HTML；wheel 的内置 renderer 与版本、schema 和 Linux 平台匹配。附加 smoke 覆盖 17 个内置策略、基础 Bar/A 股回测、多账户与深度入口。
+- 两次验收使用的 wheel SHA-256 均为 `013a87abbe8341fda12c8908f548d811bff262c13f907731e14e991af75c6370`；其构建身份为 `2d5c5df`，所以这些是候选 wheel 的 Linux 安装证据，不是最终 tag 资产证明。完整首跑日志见[安装与 quickstart 日志](../maturity/acceptance-artifacts/9d503f32-17e5-4f89-805e-2759dfd4a628.log)，wheel smoke 见[集成 smoke 日志](../maturity/acceptance-artifacts/4c8a9e17-46c2-47f5-aad1-89d15200e4c2.log)；两者都绑定到该构建提交的[源码清单](../maturity/acceptance-artifacts/622eabcb-7d42-4b48-ab80-312758a42d53.source-tree.json)。这些样例验收使用本地样例数据，不连接交易所；真实公开行情结果见前述 R01 记录。

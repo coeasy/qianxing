@@ -145,6 +145,7 @@ python -c "import qianxing as qx; print(qx.doctor()['native_extension_compatibil
 基础包没有必装的第三方 Python 依赖。离线安装时先取得适配本机平台的 wheel，再运行 `python -m pip install --no-index <wheel 文件路径>`。
 `doctor` 里要看的是三格：原生扩展是否 `matched`、用例集是否 `complete`、`report_renderer` 的
 `origin` 是 `bundled` / `external` / `missing` 中的哪一个。
+其中 `doctor.cli` 只检查 PATH 上可独立调用的 `qx-cli`；它显示 `unavailable` 不代表 wheel 安装不完整，也不妨碍 `qianxing quickstart`。wheel 自带的报告器单独显示在 `report_renderer`：只装 Python wheel 时应看到 `origin=bundled`、`status=ready`。只有需要在 Python 命令之外直接使用 Rust CLI 时，才需要额外安装 `qx-cli`。
 
 wheel 由 `tools/build_python_wheel.ps1` / `.sh` 从当前工作树构建；它在打 wheel 之前先把宿主平台的
 `qx-cli` 复制进包内 `qianxing/_bin/`，所以只装 wheel 的用户不需要再装 Rust 也能出报告。这个先后顺序本身

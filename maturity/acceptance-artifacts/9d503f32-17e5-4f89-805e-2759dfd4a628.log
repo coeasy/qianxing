@@ -1,0 +1,364 @@
+acceptance=Linux offline Python wheel install and first-run quickstart
+box=agent-browser-xuc9 (Debian 13 x86_64)
+job_id=f6a4ef96
+source_commit=2d5c5df9d83cc86b24ad100912d50d44c4d44ac7
+source_manifest=maturity/acceptance-artifacts/622eabcb-7d42-4b48-ab80-312758a42d53.source-tree.json
+python=3.13.5
+wheel=qianxing-0.5.0-cp310-abi3-manylinux_2_34_x86_64.whl
+wheel_sha256=013a87abbe8341fda12c8908f548d811bff262c13f907731e14e991af75c6370
+native_extension_sha256=cc690f1dba60f55a152dba1b260bd06f2ef233e5bdc75cb262082e9961dafec3
+install=pip install --no-index --no-deps <wheel>; pip check
+command=qianxing doctor; qianxing quickstart /data/workspace/qx-first-run-evidence
+exit_code=0
+
+[stdout]
+Processing /data/workspace/qianxing-0.5.0-prep/dist/qianxing-0.5.0-cp310-abi3-manylinux_2_34_x86_64.whl
+Installing collected packages: qianxing
+Successfully installed qianxing-0.5.0
+No broken requirements found.
+{
+  "application_use_cases_available": true,
+  "cli": {
+    "action": "Install the qx-cli release matching this SDK.",
+    "path": null,
+    "platform_compatibility": "unavailable",
+    "repair_command": "cargo install --git https://github.com/coeasy/qianxing --tag v0.5.0 qx-cli --locked --force",
+    "schema_catalog_compatibility": "unavailable",
+    "schema_catalog_sha256": null,
+    "status": "unavailable",
+    "target": null,
+    "version": null
+  },
+  "implemented_use_cases": [
+    "dataset.validate.bar.v1",
+    "backtest.preflight.bar.v1",
+    "dataset.bundle.assemble.v1",
+    "strategy.execution.preflight.v1",
+    "strategy.project.validate.v1",
+    "strategy.runtime.plan.v1",
+    "backtest.bar.v1",
+    "backtest.bar.python-strategy.v1",
+    "run.verify.v1",
+    "report.read.bar.v1",
+    "report.read.depth.v1",
+    "report.read.provider-bar.v1",
+    "report.read.provider-depth.v1",
+    "report.read.multi-account.v1",
+    "report.read.multi-account-joint.v1",
+    "report.read.multi-leg.facts.v1",
+    "report.read.multi-leg.v1",
+    "report.read.multi-leg.event-page.v1",
+    "report.read.multi-market.event-page.v1",
+    "report.read.multi-market-depth.event-page.v1",
+    "report.read.multi-market.bar.v1",
+    "report.read.multi-market-depth.v1",
+    "backtest.compare.v1",
+    "portfolio.risk-parity.plan.v1",
+    "portfolio.capital-allocation.plan.v1",
+    "execution.algo.plan.v1",
+    "experiment.grid.bar.v1",
+    "experiment.grid.bar.python-strategy.v1",
+    "backtest.depth.tick-orderbook.v1",
+    "backtest.depth.python-strategy.v1",
+    "backtest.depth.strategy-slots.v1",
+    "experiment.grid.depth.tick-orderbook.v1",
+    "experiment.grid.depth.python-strategy.v1",
+    "run.verify.depth.v1",
+    "backtest.multi-leg.bar.v1",
+    "backtest.multi-leg.python-strategy.v1",
+    "experiment.grid.multi-leg.bar.v1",
+    "experiment.grid.multi-leg.python-strategy.v1",
+    "backtest.multi-market.bar.v1",
+    "backtest.multi-market.strategy-slots.v1",
+    "experiment.grid.multi-market.bar.v1",
+    "experiment.grid.multi-market.python-strategy.v1",
+    "backtest.multi-market.depth.v1",
+    "backtest.multi-market.depth.strategy-slots.v1",
+    "experiment.grid.multi-market.depth.v1",
+    "experiment.grid.multi-market.depth.python-strategy.v1",
+    "backtest.multi-account.bar.v1",
+    "backtest.multi-account.depth.v1",
+    "backtest.multi-account.joint.v1"
+  ],
+  "limitations": [
+    "Paper/Live submission requires a running qx-api service with matching workers; Live additionally requires authenticated operator policy."
+  ],
+  "missing_native_entrypoints": [],
+  "native_app_action": null,
+  "native_app_compatibility": "complete",
+  "native_extension_action": null,
+  "native_extension_available": true,
+  "native_extension_compatibility": "matched",
+  "native_extension_repair_command": null,
+  "native_extension_target": "x86_64-unknown-linux-gnu",
+  "native_extension_version": "0.5.0",
+  "native_platform_compatibility": "matched",
+  "native_schema_catalog_sha256": "f34b3973f81b7deb32408d51095aea94494a10f0d723b8c140a57beba964c8b6",
+  "package": "qianxing",
+  "platform": {
+    "python_cache_tag": "cpython-313",
+    "python_implementation": "CPython",
+    "python_platform": "linux-x86_64",
+    "python_version": "3.13.5",
+    "sys_platform": "linux"
+  },
+  "remote_workflows": [
+    "control.paper.v1",
+    "control.live.v1"
+  ],
+  "report_renderer": {
+    "action": null,
+    "identity": "qianxing 0.5.0 (build 2d5c5df, target x86_64-unknown-linux-gnu, profile release, schemas f34b3973f81b7deb32408d51095aea94494a10f0d723b8c140a57beba964c8b6)",
+    "origin": "bundled",
+    "path": "/data/workspace/qianxing-0.5.0-onboarding-evidence-venv/lib/python3.13/site-packages/qianxing/_bin/qx-cli",
+    "platform_compatibility": "matched",
+    "repair_command": null,
+    "schema_catalog_compatibility": "matched",
+    "schema_catalog_sha256": "f34b3973f81b7deb32408d51095aea94494a10f0d723b8c140a57beba964c8b6",
+    "selection": "bundled",
+    "status": "ready",
+    "target": "x86_64-unknown-linux-gnu",
+    "version": "0.5.0",
+    "version_compatibility": "matched"
+  },
+  "schema_catalog_compatibility": "unavailable",
+  "strategy_runtimes": {
+    "local": {
+      "trusted_python": {
+        "available": true
+      }
+    },
+    "local_default": "trusted_python",
+    "note": "Local trusted_python is the default. Installed remote packages are not configured or running; no remote runtime is selected and readiness is unverified.",
+    "remote": {
+      "e2b": {
+        "configured": null,
+        "distribution": "e2b",
+        "extra": "sandbox-e2b",
+        "installed": false,
+        "readiness": "unverified",
+        "running": null,
+        "version": null
+      },
+      "llm_sandbox": {
+        "configured": null,
+        "distribution": "llm-sandbox",
+        "extra": "sandbox-llm",
+        "installed": false,
+        "readiness": "unverified",
+        "running": null,
+        "version": null
+      },
+      "microsandbox": {
+        "configured": null,
+        "distribution": "microsandbox",
+        "extra": "sandbox-microsandbox",
+        "installed": false,
+        "readiness": "unverified",
+        "running": null,
+        "version": null
+      },
+      "opensandbox": {
+        "configured": null,
+        "distribution": "opensandbox",
+        "extra": "sandbox-opensandbox",
+        "installed": false,
+        "readiness": "unverified",
+        "running": null,
+        "version": null
+      }
+    },
+    "remote_readiness": "unverified",
+    "remote_selected": null
+  },
+  "version": "0.5.0",
+  "versioned_application_contracts": [
+    "dataset.validate.bar.v1",
+    "backtest.preflight.bar.v1",
+    "dataset.bundle.assemble.v1",
+    "strategy.execution.preflight.v1",
+    "strategy.project.validate.v1",
+    "strategy.runtime.plan.v1",
+    "backtest.bar.v1",
+    "backtest.bar.python-strategy.v1",
+    "run.verify.v1",
+    "report.read.bar.v1",
+    "report.read.depth.v1",
+    "report.read.provider-bar.v1",
+    "report.read.provider-depth.v1",
+    "report.read.multi-account.v1",
+    "report.read.multi-account-joint.v1",
+    "report.read.multi-leg.facts.v1",
+    "report.read.multi-leg.v1",
+    "report.read.multi-leg.event-page.v1",
+    "report.read.multi-market.event-page.v1",
+    "report.read.multi-market-depth.event-page.v1",
+    "report.read.multi-market.bar.v1",
+    "report.read.multi-market-depth.v1",
+    "backtest.compare.v1",
+    "portfolio.risk-parity.plan.v1",
+    "portfolio.capital-allocation.plan.v1",
+    "execution.algo.plan.v1",
+    "experiment.grid.bar.v1",
+    "experiment.grid.bar.python-strategy.v1",
+    "backtest.depth.tick-orderbook.v1",
+    "backtest.depth.python-strategy.v1",
+    "backtest.depth.strategy-slots.v1",
+    "experiment.grid.depth.tick-orderbook.v1",
+    "experiment.grid.depth.python-strategy.v1",
+    "run.verify.depth.v1",
+    "backtest.multi-leg.bar.v1",
+    "backtest.multi-leg.python-strategy.v1",
+    "experiment.grid.multi-leg.bar.v1",
+    "experiment.grid.multi-leg.python-strategy.v1",
+    "backtest.multi-market.bar.v1",
+    "backtest.multi-market.strategy-slots.v1",
+    "experiment.grid.multi-market.bar.v1",
+    "experiment.grid.multi-market.python-strategy.v1",
+    "backtest.multi-market.depth.v1",
+    "backtest.multi-market.depth.strategy-slots.v1",
+    "experiment.grid.multi-market.depth.v1",
+    "experiment.grid.multi-market.depth.python-strategy.v1",
+    "backtest.multi-account.bar.v1",
+    "backtest.multi-account.depth.v1",
+    "backtest.multi-account.joint.v1"
+  ]
+}
+Project run: bf4fa4fbca1e455db966c7c0b2bf10b0
+{
+  "artifacts_verified": true,
+  "data": {
+    "instrument": "SYNTHETIC.SAMPLE",
+    "is_sample": true,
+    "rows": 600,
+    "source": "sample"
+  },
+  "preflight": {
+    "checked_markets": [
+      {
+        "content_fingerprint": "barframe:980739134a4bdbf3",
+        "dataset_snapshot_sha256": "f80c6b1a6bbef01592e4e4c53e8ab821c19b5d4180833959648c44274e678588",
+        "instrument": "SYNTHETIC.SAMPLE",
+        "label": "SYNTHETIC.SAMPLE",
+        "rows": 600
+      }
+    ],
+    "credential_access": "not_provided_by_local_project_runner",
+    "data_level": "bar",
+    "datasets": [],
+    "execution_boundary": "trusted_local_python",
+    "host_capabilities": {
+      "host_id": "local_python_bar",
+      "profile": "local",
+      "schema_version": 1,
+      "supported": [
+        "bar",
+        "bar_history",
+        "multi_instrument",
+        "fill_updates",
+        "order_status_updates"
+      ]
+    },
+    "input_spec": "/data/workspace/qx-first-run-evidence/.qianxing/runs/bf4fa4fbca1e455db966c7c0b2bf10b0/preflight-input.json",
+    "input_spec_sha256": "00af5e7a01b397d3c05f8e66a4ad91b1a629c85f5274da5de5405a178a889fd6",
+    "profile": "local",
+    "project_id": "qx-first-run-evidence",
+    "project_root": "/data/workspace/qx-first-run-evidence",
+    "status": "ready",
+    "strategy_bundle_sha256": "c8f22bcaa3286a08c60c6ecabb0c58829b3abb7e2ad6bf272f81d10083d71846",
+    "strategy_file": "/data/workspace/qx-first-run-evidence/.qianxing/runs/bf4fa4fbca1e455db966c7c0b2bf10b0/strategy-bundle/main.py",
+    "strategy_id": "demo-sma-cross",
+    "strategy_source_sha256": "af1416390a3fc289784243eb88fdb8a0d4187018c10dff86fd5c226758631fe2",
+    "strategy_version": "0.1.0",
+    "warmup_bars": 21
+  },
+  "profile": "sample",
+  "project_root": "/data/workspace/qx-first-run-evidence",
+  "project_run_id": "bf4fa4fbca1e455db966c7c0b2bf10b0",
+  "report": {
+    "evidence_requested": true,
+    "exit_code": 0,
+    "formats": [
+      "html"
+    ],
+    "generated_at": "2026-11-27T05:08:41.390562+00:00",
+    "log_path": "/data/workspace/qx-first-run-evidence/.qianxing/runs/bf4fa4fbca1e455db966c7c0b2bf10b0/report.log",
+    "project_dependency_lock_sha256": null,
+    "project_dependency_wheelhouse_sha256": null,
+    "project_run_id": "bf4fa4fbca1e455db966c7c0b2bf10b0",
+    "report_artifacts": {
+      "evidence": {
+        "bytes": 6953,
+        "path": "/data/workspace/qx-first-run-evidence/.qianxing/runs/bf4fa4fbca1e455db966c7c0b2bf10b0/artifacts/demo.evidence.json",
+        "present": true,
+        "sha256": "701a04f8ae8b1a4d0c6aa5b6f96db1af05403ccd3d89d62e670115f347d9d53f"
+      },
+      "html": {
+        "bytes": 217084,
+        "path": "/data/workspace/qx-first-run-evidence/.qianxing/runs/bf4fa4fbca1e455db966c7c0b2bf10b0/report.html",
+        "present": true,
+        "sha256": "c2b648541c7dd6bfeaca982cef5f7170794020e9ff0431377385d60b210edd16"
+      }
+    },
+    "report_path": "/data/workspace/qx-first-run-evidence/.qianxing/runs/bf4fa4fbca1e455db966c7c0b2bf10b0/report.html",
+    "report_paths": {
+      "html": "/data/workspace/qx-first-run-evidence/.qianxing/runs/bf4fa4fbca1e455db966c7c0b2bf10b0/report.html"
+    },
+    "report_renderer": {
+      "action": null,
+      "identity": "qianxing 0.5.0 (build 2d5c5df, target x86_64-unknown-linux-gnu, profile release, schemas f34b3973f81b7deb32408d51095aea94494a10f0d723b8c140a57beba964c8b6)",
+      "origin": "bundled",
+      "path": "/data/workspace/qianxing-0.5.0-onboarding-evidence-venv/lib/python3.13/site-packages/qianxing/_bin/qx-cli",
+      "platform_compatibility": "matched",
+      "repair_command": null,
+      "schema_catalog_compatibility": "matched",
+      "schema_catalog_sha256": "f34b3973f81b7deb32408d51095aea94494a10f0d723b8c140a57beba964c8b6",
+      "selection": "bundled",
+      "status": "ready",
+      "target": "x86_64-unknown-linux-gnu",
+      "version": "0.5.0",
+      "version_compatibility": "matched"
+    },
+    "report_sha256": "c2b648541c7dd6bfeaca982cef5f7170794020e9ff0431377385d60b210edd16",
+    "run_evidence": {
+      "bundle_path": "/data/workspace/qx-first-run-evidence/.qianxing/runs/bf4fa4fbca1e455db966c7c0b2bf10b0/artifacts/demo.evidence.json",
+      "input_identity_recomputed": true,
+      "integrity_verified": true,
+      "result_hash": "c6c7d4e2d005385e",
+      "result_recomputed": false,
+      "run_id": "demo"
+    },
+    "runtime_import_files_sha256": "a53ae48bac5de03ac96a3cd7d9b5be829f2f95d335a045e5ebfb1aaff136b6c6",
+    "source_artifacts_verified_after_render": true,
+    "status": "succeeded",
+    "strategy_bundle_sha256": "matched",
+    "strategy_runtime_environment_sha256": "f0a11f05f11ce985998f0d7840a2c98e6cb44cfc408f81518168c77940eda739"
+  },
+  "run": {
+    "account_id": null,
+    "artifacts": {
+      "equity": "/data/workspace/qx-first-run-evidence/.qianxing/runs/bf4fa4fbca1e455db966c7c0b2bf10b0/artifacts/demo.equity.csv",
+      "event_trace": "/data/workspace/qx-first-run-evidence/.qianxing/runs/bf4fa4fbca1e455db966c7c0b2bf10b0/artifacts/demo.events.jsonl",
+      "fills": "/data/workspace/qx-first-run-evidence/.qianxing/runs/bf4fa4fbca1e455db966c7c0b2bf10b0/artifacts/demo.fills.csv",
+      "run_manifest": "/data/workspace/qx-first-run-evidence/.qianxing/runs/bf4fa4fbca1e455db966c7c0b2bf10b0/artifacts/demo.run.json",
+      "summary": "/data/workspace/qx-first-run-evidence/.qianxing/runs/bf4fa4fbca1e455db966c7c0b2bf10b0/artifacts/demo.summary.json"
+    },
+    "data_fingerprint": "barframe:980739134a4bdbf3",
+    "equity_points": 600,
+    "fills": 1,
+    "instrument": "SYNTHETIC.SAMPLE",
+    "max_drawdown_bps": 27,
+    "result_hash": "c6c7d4e2d005385e",
+    "return_bps": -16,
+    "run_id": "demo"
+  },
+  "run_evidence": {
+    "bundle_path": "/data/workspace/qx-first-run-evidence/.qianxing/runs/bf4fa4fbca1e455db966c7c0b2bf10b0/artifacts/demo.evidence.json",
+    "input_identity_recomputed": true,
+    "integrity_verified": true,
+    "result_hash": "c6c7d4e2d005385e",
+    "result_recomputed": false,
+    "run_id": "demo"
+  },
+  "status": "succeeded"
+}

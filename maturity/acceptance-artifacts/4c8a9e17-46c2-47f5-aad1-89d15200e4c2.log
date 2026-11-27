@@ -1,0 +1,14 @@
+acceptance=Linux clean-install Python wheel smoke
+box=agent-browser-xuc9 (Debian 13 x86_64)
+job_id=8e6e0b41
+source_commit=2d5c5df9d83cc86b24ad100912d50d44c4d44ac7
+source_manifest=maturity/acceptance-artifacts/622eabcb-7d42-4b48-ab80-312758a42d53.source-tree.json
+python=3.13.5
+wheel=qianxing-0.5.0-cp310-abi3-manylinux_2_34_x86_64.whl
+wheel_sha256=013a87abbe8341fda12c8908f548d811bff262c13f907731e14e991af75c6370
+native_extension_sha256=cc690f1dba60f55a152dba1b260bd06f2ef233e5bdc75cb262082e9961dafec3
+command=python tools/python_wheel_smoke.py /data/workspace/qianxing-wheel-smoke-2d5c5df
+exit_code=0
+
+[stdout]
+wheel e2e quickstart_run=d32ed0e63c754be58eb636331fceb68c quickstart_rows=80 quickstart_seconds=0.573 quickstart_report_bytes=66955 quickstart_report_sha256=fc0fa6626e453b78c160ee6f1ac467a645bcdd9a6d38a3172c11bb94072258ac quickstart_renderer=bundled strategies=17 rows=70 fills=17 ashare_fills=1 classic_selection=13/13 parameter_grid=4/4 accounts=2 account_overflow_preflight=True depth_account_overflow_preflight=True multileg=1/2 depth_fills=2 custom_fills=1 run_handle=succeeded verified=True
