@@ -1,6 +1,6 @@
 # Qianxing 0.5.0 发布候选范围（未发布）
 
-状态（2026-11-27）：这是隔离候选树中的版本准备，不是正式发行。`0.5.0` 尚无 Git tag、PyPI 版本或 crates.io 包；候选分支 `codex/release-0.5.0-prep` 当前 HEAD 为 `979c8346d25b89bbfe3fa2253f454cdb6dbddae4`，仍未合并到 `main`。下文分别标出各次验收实际运行的源码提交。本机验收不等同于干净 tag 的发布证据；正式构建必须在获准合并后的精确 tag 上重新运行。
+状态（2026-11-27）：这是隔离候选树中的版本准备，不是正式发行。`0.5.0` 尚无 Git tag、PyPI 版本或 crates.io 包；候选分支 `codex/release-0.5.0-prep` 已推送但仍未合并到 `main`。Rust 包闭包验收所用的候选源码提交为 `979c8346d25b89bbfe3fa2253f454cdb6dbddae4`；后续仅补充文档和验收证据。本机验收不等同于干净 tag 的发布证据；正式构建必须在获准合并后的精确 tag 上重新运行。
 
 ## 版本边界
 
@@ -101,7 +101,7 @@ Windows workspace 验收之外，已用本地 Podman 启动 Linux Rust 1.98.1 �
 
 ## 发布门禁现状（2026-11-27 05:49 UTC）
 
-- 远端候选分支 `codex/release-0.5.0-prep` 为 `979c8346d25b89bbfe3fa2253f454cdb6dbddae4`；远端 `main` 为 `643f1293d006915c931adb9fd1fd61f91a73d422`。候选提交已推送，尚未合并。
+- 远端候选分支 `codex/release-0.5.0-prep` 已推送，仍未合并；该次 Rust 包闭包验收的源码提交为 `979c8346d25b89bbfe3fa2253f454cdb6dbddae4`。远端 `main` 为 `643f1293d006915c931adb9fd1fd61f91a73d422`。
 - GitHub 当前仍列出待审 PR #37–39、#42–47、#49–53 共 14 个；#37→#38→#39 按依赖顺序处理。上一轮核验记录这些 PR 的 CI/公共行情检查成功且无未解决评审线程；PR #42 head `1978d87c` 的 [CI run #943](https://github.com/coeasy/qianxing/actions/runs/45944520263) 为 30/30。PR #48 已合并。开放 PR 的合并仍待项目所有者授权。
 - 在干净候选提交 `979c8346d25b89bbfe3fa2253f454cdb6dbddae4` 上，R01-AC01 [Rust 归档闭包验收日志](../maturity/acceptance-artifacts/d4fb3567-805b-4a53-88d7-44d3b7d0e9aa.log)与[源码清单](../maturity/acceptance-artifacts/d4fb3567-805b-4a53-88d7-44d3b7d0e9aa.source-tree.json)记录了 14 个 crates 归档包的离线打包和独立编译，以及仅使用这些归档依赖的 Rust quickstart（70 根示例 Bar、1 笔成交、`Verified: true`）。该检查没有从 crates.io 安装或发布。
 - 05:39 UTC 核验的 GitHub `v0.5.0` tag 不存在；官方 [PyPI qianxing 0.5.0 查询](https://pypi.org/pypi/qianxing/0.5.0/json)与 [crates.io qx-sdk 0.5.0 查询](https://crates.io/api/v1/crates/qx-sdk/0.5.0)均返回 404。没有创建 tag 或发布包；这些状态不是版本预留。创建 0.5.0 发布仍需明确授权，且正式包必须在最终 tag 上重跑构建、字节一致性与 crates.io 注册表消费者验收。
