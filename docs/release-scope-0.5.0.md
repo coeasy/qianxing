@@ -98,3 +98,10 @@ Windows workspace 验收之外，已用本地 Podman 启动 Linux Rust 1.98.1 �
 - 一条 `qianxing quickstart <新目录>` 完成 600 根样例 Bar 预检、回测、HTML 报告和 EvidenceBundle 校验；项目运行 `succeeded`，产生 1 笔样例成交，输入身份和产物摘要校验通过。`result_recomputed=false` 被如实保留：验收确认输入身份与工件完整性，没有重跑策略复算结果。
 - 同一 wheel 的 `tools/python_wheel_smoke.py` 在干净源码 worktree `2d5c5df9d83cc86b24ad100912d50d44c4d44ac7` 上通过：80 根样例首跑耗时 0.573 秒，生成 66,955 字节 HTML；wheel 的内置 renderer 与版本、schema 和 Linux 平台匹配。附加 smoke 覆盖 17 个内置策略、基础 Bar/A 股回测、多账户与深度入口。
 - 两次验收使用的 wheel SHA-256 均为 `013a87abbe8341fda12c8908f548d811bff262c13f907731e14e991af75c6370`；其构建身份为 `2d5c5df`，所以这些是候选 wheel 的 Linux 安装证据，不是最终 tag 资产证明。完整首跑日志见[安装与 quickstart 日志](../maturity/acceptance-artifacts/9d503f32-17e5-4f89-805e-2759dfd4a628.log)，wheel smoke 见[集成 smoke 日志](../maturity/acceptance-artifacts/4c8a9e17-46c2-47f5-aad1-89d15200e4c2.log)；两者都绑定到该构建提交的[源码清单](../maturity/acceptance-artifacts/622eabcb-7d42-4b48-ab80-312758a42d53.source-tree.json)。这些样例验收使用本地样例数据，不连接交易所；真实公开行情结果见前述 R01 记录。
+
+## 发布门禁现状（2026-11-27 05:39 UTC）
+
+- 远端候选分支 `codex/release-0.5.0-prep` 为 `81bd28f239d9e29715b706ebde164ffae5ec63c2`；远端 `main` 为 `643f1293d006915c931adb9fd1fd61f91a73d422`。候选提交已推送，但尚未合并。
+- 待审 PR #37–39、#42–47、#49–53 共 14 个，均为 open、GitHub 标记可合并、最新相关 CI/公共行情 workflow 成功、无未解决评审线程。#37→#38→#39 按依赖顺序处理；PR #42 最新 head `1978d87c` 的 [CI run #943](https://github.com/coeasy/qianxing/actions/runs/45944520263) 30/30 成功。PR #48 已合并。
+- 复核 GitHub `v0.5.0` tag 不存在；官方 [PyPI qianxing 0.5.0 查询](https://pypi.org/pypi/qianxing/0.5.0/json)与 [crates.io qx-sdk 0.5.0 查询](https://crates.io/api/v1/crates/qx-sdk/0.5.0)均返回 404。没有创建 tag 或发布包；这些状态不是版本预留。合并到 `main` 与创建 0.5.0 发布仍需各自明确授权，且正式包必须在最终 tag 上重跑构建、字节一致性与注册表消费者验收。
+- PR 工作流的 Binance testnet 凭据步骤被跳过，因此当前证据只支持回测、Paper、公共行情和已执行的本地/托管合同检查，不证明私有测试网或实盘下单。
