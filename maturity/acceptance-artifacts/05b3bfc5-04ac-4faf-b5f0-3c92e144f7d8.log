@@ -1,0 +1,15 @@
+$ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .task-tmp/verify_box_r01.ps1
+exit_code=0
+
+[stdout]
+Pushed 1 file (3.0 KiB, sha256 d8e3d42f7739d23d911a12a95688b440e4d6aec8b16146fac77394e2cbedd126) to agent-browser-xuc9:/data/workspace/verify_box_r01.sh
+013a87abbe8341fda12c8908f548d811bff262c13f907731e14e991af75c6370  dist/qianxing-0.5.0-cp310-abi3-manylinux_2_34_x86_64.whl
+No broken requirements found.
+doctor.report_renderer={"action": null, "identity": "qianxing 0.5.0 (build 2d5c5df, target x86_64-unknown-linux-gnu, profile release, schemas f34b3973f81b7deb32408d51095aea94494a10f0d723b8c140a57beba964c8b6)", "origin": "bundled", "path": "/data/workspace/qianxing-0.5.0-clean-venv-2d5c5df9/lib/python3.13/site-packages/qianxing/_bin/qx-cli", "platform_compatibility": "matched", "repair_command": null, "schema_catalog_compatibility": "matched", "schema_catalog_sha256": "f34b3973f81b7deb32408d51095aea94494a10f0d723b8c140a57beba964c8b6", "selection": "bundled", "status": "ready", "target": "x86_64-unknown-linux-gnu", "version": "0.5.0", "version_compatibility": "matched"}
+quickstart.status=succeeded rows=600 sample=true artifacts=HTML,JSON,XLSX evidence.integrity_verified=true
+evidence_bundle=/data/workspace/qianxing-0.5.0-first-run-2d5c5df9/.qianxing/runs/940f7f869215411790b5eafff5d38261/artifacts/demo.evidence.json
+artifact_sizes={"first-run.html": 217288, "first-run.json": 8429, "first-run.xlsx": 140744}
+{"generation":"run","input_identity_recomputed":true,"input_row_count_recomputed":600,"limitation":"此命令核验工件摘要、RunManifest 身份与输入数据指纹；未启用 --recompute 时不声称独立复算 result_hash。运行配置 SHA-256 已核验；策略运行的路径解析可能使搬运后的配置指纹无法直接与来源 config_hash 对比。","ok":true,"operation":"run-evidence-input-and-artifact-verified","result_hash":"c6c7d4e2d005385e","result_recomputed":false,"run_id":"demo","runtime_config_fingerprint_matches_run_hash":null,"strategy_diagnostics_verified":false,"verified_artifact_count":4,"verified_attachment_count":0}
+source_revision=2d5c5df9d83cc86b24ad100912d50d44c4d44ac7
+
+[stderr]
