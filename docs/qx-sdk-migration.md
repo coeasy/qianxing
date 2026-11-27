@@ -7,7 +7,7 @@
 本文是迁移指南。
 
 初次体验可运行[独立快速入门工程](../examples/rust-sdk-quickstart/README.md)，
-它自带教学数据并从 crates.io 安装当前正式版 `qx-sdk 0.4.1`。源码 Git 消费路径由后文的独立消费者脚本单独验证。
+它自带教学数据并从 crates.io 安装当前正式版 `qx-sdk 0.4.2`。源码 Git 消费路径由后文的独立消费者脚本单独验证。
 需要连接运行中的 API，可参考源码工作区内的[可选 HTTP 适配器](../crates/qx-sdk-http/README.md)；
 该适配器尚未发布，必须使用包含它的源码版本。
 
@@ -26,11 +26,11 @@
 
 ### 1. 依赖
 
-v0.4.1 crates.io 发布和独立消费者验收已完成，普通用户可使用 registry 依赖：
+v0.4.2 已发布到 crates.io，普通用户可使用 registry 依赖：
 
 ```toml
 [dependencies]
-qx-sdk = "0.4.1"
+qx-sdk = "0.4.2"
 ```
 
 需要复现旧版源码或测试尚未发布的源码时，可使用下面固定到完整提交的 Git 依赖；一般用户应使用上面的 crates.io 版本。
@@ -100,9 +100,7 @@ python tools/check_crates_io_artifacts.py qx-sdk --json
 设为精确的 `vX.Y.Z`，并把确认输入填写为 `qx-sdk@X.Y.Z`。工作流从默认分支读取已审阅的发布器，另行 checkout
 精确源码 tag，再执行依赖闭包预检、顺序上传、逐包 checksum 等待与独立 crates.io quickstart。不得从 PR 分支调度，
 也不要把 token 写入仓库文件或命令参数。
-首次发布会永久占用成功上传的 crate 名称和版本；如果中途失败，先检查 crates.io 已发布记录与 checksum，修复权限或
-名称冲突后从同一源码 tag 重新调度，工具只会跳过字节完全一致且未撤回的版本。续发 v0.4.1 时将 `release_tag` 设为
-`v0.4.1`、确认值设为 `qx-sdk@0.4.1`。请以 GitHub Actions 的逐包 checksum 和独立 crates.io quickstart 结果作为发布证据。
+crate 名称和版本一经上传就永久占用；中途失败时，先核对已经上传的包及其 checksum，再从原样未移动的源码 tag 续跑。工具只会跳过字节完全一致且未撤回的版本，其他构件会失败关闭。续跑时让 `release_tag` 与确认值对应同一个确切版本，并以逐包 checksum 和独立 crates.io quickstart 作为验收依据。当前 v0.4.2 的 14 包发布及三平台 consumer 验收已经完成，详见下方发布记录。
 
 ### 2. 导入前缀
 
@@ -194,7 +192,7 @@ Bar Provider 的 `ProviderBarFrame::dataset_manifest(...)` 与 Python `fetch_bar
 
 已发布版本的跨平台 clean-consumer 检查可从默认分支运行 [Rust SDK crates.io consumer matrix](../.github/workflows/rust-sdk-registry-consumer.yml)：传入精确版本号后，会在独立 Cargo home 中从 registry 安装并运行同一 quickstart，覆盖 Ubuntu、Windows 和 macOS。`qx-sdk 0.4.1` 的三平台验收已通过 [workflow run #45030066158](https://github.com/coeasy/qianxing/actions/runs/45030066158)：每个平台均验证 70 根 Bar、1 笔成交和 `Verified: true`。当前 `qx-sdk` 未声明额外 Cargo features，因此此矩阵不把空的 `--no-default-features` 组合包装成独立能力。
 
-当前源码中的 14-crate crates.io SDK 闭包统一声明 `rust-version = "1.87"`，发布分类门禁会检查每个包与目录台账一致，CI 在 Rust 1.87 上编译 `qx-sdk` 及其完整依赖闭包。选择该下限是因为 SDK 闭包使用的无符号整数 `is_multiple_of` 从 Rust 1.87 起稳定。此元数据和验收只适用于合入后的源码候选；已发布的 `qx-sdk 0.4.1` artifact 不会被追溯修改，仍需在后续版本发布后以 registry consumer 再验收该 MSRV。
+当前源码中的 14-crate crates.io SDK 闭包统一声明 `rust-version = "1.87"`，发布分类门禁会检查每个包与目录台账一致，CI 在 Rust 1.87 上编译 `qx-sdk` 及其完整依赖闭包。选择该下限是因为 SDK 闭包使用的无符号整数 `is_multiple_of` 从 Rust 1.87 起稳定。已发布的 [qx-sdk 0.4.2](https://crates.io/crates/qx-sdk/0.4.2) 声明 Rust 1.87。
 
 ## Rust 远端 Paper 算法生命周期与事件游标
 

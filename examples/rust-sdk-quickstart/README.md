@@ -6,7 +6,7 @@
 cargo run --locked --release
 ```
 
-这个独立示例直接依赖已发布到 crates.io 的 `qx-sdk 0.4.1`；首次构建需要访问 crates.io 和 Cargo 依赖源。
+这个独立示例直接依赖已发布到 crates.io 的 `qx-sdk 0.4.2`；首次构建需要访问 crates.io 和 Cargo 依赖源。
 示例自带 70 根教学用 K 线，程序会校验数据、确认 1 笔 SMA 成交、复核结果并打印产物路径。
 数据是示例数据，不代表真实历史行情或投资结论。每次执行在当前目录的 `runs/` 下创建独立目录。
 

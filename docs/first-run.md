@@ -4,7 +4,7 @@
 每条命令都可以直接复制；一份命令属于哪个二进制写在行内，不做混写。能力全景与排障口径不在这里，见
 [工业化易用性收口指南](工业化易用性收口指南-V1.md)；完整安装前置与坑表见[安装指南](installation.md)。
 
-本页按 v0.4.2 发布候选准备。当前公开稳定版仍是 v0.4.1：下面 A 节与 B1 的安装命令可立即使用；v0.4.2 tag 已创建，但首次发布因性能门禁失败，PyPI wheel 和 GitHub Release 尚未发布。v0.4.2 专属的 Python CCXT 入口须等发布完成后再安装使用。使用 v0.4.1 的 Python 用户要跑真实行情，请按 A 节安装 `qx-cli`，并为行情 worker 安装 `qianxing[ccxt]`。
+v0.4.2 回测 / Paper 正式版已发布。Python 使用 [PyPI 的 qianxing 0.4.2](https://pypi.org/project/qianxing/0.4.2/)，Rust 工程使用 [crates.io 的 qx-sdk 0.4.2](https://crates.io/crates/qx-sdk/0.4.2)，CLI 与 Web Console 从 [GitHub Release v0.4.2](https://github.com/coeasy/qianxing/releases/tag/v0.4.2) 下载。本文中的 `quickstart --profile paper` 是 tag 后加入的一键首跑入口，尚未进入 v0.4.2 CLI 或 wheel；v0.4.2 仍可使用该版本已有的 Paper 命令和控制流程。
 
 > 标注口径：**【已实现】**= 命令在当前工作树里可执行，且行为由常驻用例或门禁钉住；
 > **进阶**= 能力存在，但不属于首跑承诺，本页只在末尾点名，不给步骤。本页不重复登记未实现的设计意图，
@@ -31,24 +31,24 @@ CLI 还提供按角色分流的五步指南：`qx-cli guide researcher`、`qx-cl
 
 ## A. 只装 CLI（不需要 Python）【已实现】
 
-最快方式是从 [GitHub 最新 Release](https://github.com/coeasy/qianxing/releases/latest) 下载对应平台的预编译 CLI，无需安装 Rust 或 Python。当前稳定版 v0.4.1 的资产名为 Windows x64 `qx-cli-v0.4.1-Windows-X64.exe`、Linux x64 `qx-cli-v0.4.1-Linux-X64`、Apple Silicon `qx-cli-v0.4.1-macOS-ARM64`；Release 同时提供 SHA-256 校验文件。下载后在文件所在目录直接运行：
+最快方式是从 [GitHub 最新 Release](https://github.com/coeasy/qianxing/releases/latest) 下载对应平台的预编译 CLI，无需安装 Rust 或 Python。当前稳定版 v0.4.2 的资产名为 Windows x64 `qx-cli-v0.4.2-Windows-X64.exe`、Linux x64 `qx-cli-v0.4.2-Linux-X64`、Apple Silicon `qx-cli-v0.4.2-macOS-ARM64`；Release 同时提供 SHA-256 校验文件。下载后在文件所在目录直接运行：
 
 ```powershell
 # Windows x64
-Invoke-WebRequest https://github.com/coeasy/qianxing/releases/download/v0.4.1/qx-cli-v0.4.1-Windows-X64.exe -OutFile qx-cli.exe
+Invoke-WebRequest https://github.com/coeasy/qianxing/releases/download/v0.4.2/qx-cli-v0.4.2-Windows-X64.exe -OutFile qx-cli.exe
 .\qx-cli.exe quickstart my-qx --html
 ```
 
 ```bash
 # Linux x64（Debian 12 / Ubuntu 22.04 基线）
-curl -L https://github.com/coeasy/qianxing/releases/download/v0.4.1/qx-cli-v0.4.1-Linux-X64 -o qx-cli
+curl -L https://github.com/coeasy/qianxing/releases/download/v0.4.2/qx-cli-v0.4.2-Linux-X64 -o qx-cli
 chmod +x qx-cli
 ./qx-cli quickstart my-qx --html
 ```
 
 ```bash
 # macOS Apple Silicon
-curl -L https://github.com/coeasy/qianxing/releases/download/v0.4.1/qx-cli-v0.4.1-macOS-ARM64 -o qx-cli
+curl -L https://github.com/coeasy/qianxing/releases/download/v0.4.2/qx-cli-v0.4.2-macOS-ARM64 -o qx-cli
 chmod +x qx-cli
 ./qx-cli quickstart my-qx --html
 ```
@@ -56,13 +56,14 @@ chmod +x qx-cli
 要将 `qx-cli` 安装到 PATH 并由 Cargo 编译，可在仓库外固定到当前 tag：
 
 ```bash
-cargo install --git https://github.com/coeasy/qianxing --tag v0.4.1 --locked qx-cli
+cargo install --git https://github.com/coeasy/qianxing --tag v0.4.2 --locked qx-cli
 qx-cli quickstart my-qx                          # 建项目 → 静态检查 → 回测 → 生成/核验证据包 → 安全状态
 qx-cli quickstart my-rsi --strategy rsi           # 同一条链路直接运行 RSI 内置策略
 qx-cli quickstart my-ashare --profile ashare     # A 股样例 → 静态检查 → 回测 → 生成/核验证据包 → 安全状态
-qx-cli quickstart my-paper --profile paper        # 本地合成报价 → Scheduler → Strategy → Paper Execution → Ledger
 qx-cli quickstart my-okx --profile ccxt --days 30 --timeframe 1h --html  # 真实公开行情 → 回测 → HTML/SVG 与证据包
 ```
+
+`my-paper --profile paper` 一键首跑仅适用于包含 tag 后变更的当前源码或基于它构建的 CLI；v0.4.2 预编译 CLI 和 `cargo install --tag v0.4.2` 不支持此 quickstart 参数。
 
 已在仓库内开发时可用 `cargo install --path crates/qx-cli --locked`；该方式需要完整源码和 Rust 工具链。Release 二进制没有
 仓库相对路径依赖，可从任意工作目录运行。
@@ -84,13 +85,13 @@ qx-cli quickstart my-okx --profile ccxt --days 30 --timeframe 1h --html  # 真�
 若只安装了 Rust CLI，可在同一 Python 环境补装行情 worker：`python -m pip install "qianxing[ccxt]"`；运行时用 `QX_PYTHON` 指向该环境的解释器。
 双腿套利策略需要两份行情，quickstart 会拒绝它们并提示使用 `multi-builtin` 入口。
 
-Paper 有独立的首跑入口：
+Paper 有独立的首跑入口（当前源码 / 后续版本）：
 
 ```bash
 qx-cli quickstart ./paper-demo --profile paper
 ```
 
-它会在新目录生成 `paper` 运行配置，完成静态检查、Scheduler → Strategy → Paper Execution → Ledger 主链路和状态检查。成交来自本地合成 L1 报价，
+该入口是在 v0.4.2 tag 后加入的；从当前源码构建的 CLI 会在新目录生成 `paper` 运行配置，完成静态检查、Scheduler → Strategy → Paper Execution → Ledger 主链路和状态检查。成交来自本地合成 L1 报价，
 不会联网、读取交易凭据或发送实盘订单；它证明的是本机 Paper 管道可执行，不代表真实交易所撮合或收益。该流程保护已有持久账本，不支持 `--force`；
 每次新的首跑请使用新的项目目录。Paper 与回测 quickstart 分开运行，避免把合成 Paper 成交混进历史回测结果。
 
@@ -99,13 +100,12 @@ cd my-qx
 qx-cli init qianxing.runtime.json --strategy macd   # 配置 + 样例 BarFrame + README.qianxing.md
 qx-cli doctor qianxing.runtime.json                 # 静态检查：不联网、不启动 worker、不下单
 qx-cli backtest qianxing.runtime.json               # 跑一轮 MACD 回测，产物落 data_dir 指向的 runs/
-qx-cli report qianxing.runtime.json --evidence      # 读回摘要并生成 EvidenceBundle
-# 用 report 输出的 [Report] evidence= 后完整路径执行离线校验
-qx-cli evidence verify-run /path/printed/by/report.evidence.json
+evidence=$(qx-cli report qianxing.runtime.json --evidence | sed -n 's/^\[Report\] evidence=//p')
+qx-cli evidence verify-run "$evidence"
 qx-cli status qianxing.runtime.json                 # 本地配置/worker/回测结果的安全状态；不连交易所
 ```
 
-`evidence verify-run` 的路径直接复制上一条输出的 `[Report] evidence=` 值；它检查 bundle、报告产物和行情输入的一致性，
+上面的 Bash 命令从报告输出中提取证据包路径，`evidence verify-run` 检查 bundle、报告产物和行情输入的一致性，
 不声称独立重跑策略。需要复算结果时，另行显式传 `--recompute`。
 
 要可视化结果就在回测后加 `--html`：`qx-cli report qianxing.runtime.json --html` 写一份可离线打开的
@@ -113,7 +113,7 @@ HTML 和三张独立 SVG，`-o reports/latest.html` 改输出前缀。
 
 `quickstart` 与逐条执行的回测链相等不是文档承诺：同一条输入下两者的 `result_hash` 必须逐字符相同，
 由 `crates/qx-cli/tests/quickstart_first_run.rs` 钉成用例。落盘份数同样由用例逐个计数
-（`init --strategy macd` 落 11 份（含 Grafana 面板）、首轮回测再写 6 份、EvidenceBundle 1 份，共 18 份，见 `crates/qx-cli/tests/init_onboarding_process.rs` 与 `crates/qx-cli/tests/quickstart_first_run.rs`）。`--html` 额外生成一份 HTML 和三张 SVG，共 22 份；v0.4.1 已发布 CLI 仍保持原先 17/21 份行为，证据包自动生成随 v0.4.2 候选生效。
+（`init --strategy macd` 落 11 份（含 Grafana 面板）、首轮回测再写 6 份、EvidenceBundle 1 份，共 18 份，见 `crates/qx-cli/tests/init_onboarding_process.rs` 与 `crates/qx-cli/tests/quickstart_first_run.rs`）。`--html` 额外生成一份 HTML 和三张 SVG，共 22 份。
 
 ---
 
@@ -124,26 +124,27 @@ HTML 和三张独立 SVG，`-o reports/latest.html` 改输出前缀。
 普通使用直接从 PyPI 安装当前稳定包：
 
 ```bash
-python -m pip install "qianxing==0.4.1"
+python -m pip install "qianxing==0.4.2"
 qianxing doctor
 ```
 
 需要交易所真实公共行情时安装带 CCXT 的可选依赖：
 
 ```bash
-python -m pip install "qianxing[ccxt]==0.4.1"
+python -m pip install "qianxing[ccxt]==0.4.2"
 ```
 
 只有从 GitHub Release 下载 wheel 或测试本地构建时，才需要按文件名安装指定 wheel：
 
 ```bash
-python -m pip install dist/qianxing-0.4.1-cp310-abi3-win_amd64.whl    # 按平台下载 v0.4.1 wheel 后替换文件名
-python -c "import qianxing as qx; print(qx.doctor()['status'])"
+python -m pip install dist/qianxing-0.4.2-cp310-abi3-win_amd64.whl    # 按平台下载 v0.4.2 wheel 后替换文件名
+python -c "import qianxing as qx; print(qx.doctor()['native_extension_compatibility'])"
 ```
 
-顶层 `dependencies` 是空的（`python/pyproject.toml`），所以这一步不联网也装得成，`--no-deps` 不再是必需项。
+基础包没有必装的第三方 Python 依赖。离线安装时先取得适配本机平台的 wheel，再运行 `python -m pip install --no-index <wheel 文件路径>`。
 `doctor` 里要看的是三格：原生扩展是否 `matched`、用例集是否 `complete`、`report_renderer` 的
 `origin` 是 `bundled` / `external` / `missing` 中的哪一个。
+其中 `doctor.cli` 只检查 PATH 上可独立调用的 `qx-cli`；它显示 `unavailable` 不代表 wheel 安装不完整，也不妨碍 `qianxing quickstart`。wheel 自带的报告器单独显示在 `report_renderer`：只装 Python wheel 时应看到 `origin=bundled`、`status=ready`。只有需要在 Python 命令之外直接使用 Rust CLI 时，才需要额外安装 `qx-cli`。
 
 wheel 由 `tools/build_python_wheel.ps1` / `.sh` 从当前工作树构建；它在打 wheel 之前先把宿主平台的
 `qx-cli` 复制进包内 `qianxing/_bin/`，所以只装 wheel 的用户不需要再装 Rust 也能出报告。这个先后顺序本身
@@ -160,7 +161,7 @@ wheel 由 `tools/build_python_wheel.ps1` / `.sh` 从当前工作树构建；它�
 
 ```bash
 qianxing quickstart ./demo
-qianxing quickstart ./demo --format html,xlsx,json --report-output reports/first-run.html
+qianxing quickstart ./demo-formats --format html,xlsx,json --report-output reports/first-run.html
 ```
 
 它会在指定目录创建 600 根内置合成 Bar 样例，复用下方相同的项目快照、预检、Rust 引擎、运行回执和报告校验流程；
@@ -169,9 +170,9 @@ qianxing quickstart ./demo --format html,xlsx,json --report-output reports/first
 可改用新目录，或继续按下方 `project init` / `project run` / `project report` 分步操作。`--cli` 可显式指定报告渲染器，
 默认优先使用 wheel 内的 `qx-cli`，再查找 PATH。
 
-#### 本地 Paper 生命周期
+#### 本地 Paper 生命周期（当前源码 / 后续版本）
 
-安装包含 Paper quickstart 的 wheel 后，Python 入口复用 wheel 内匹配版本的 Rust CLI：
+`--profile paper` 一键首跑尚未包含在 PyPI `qianxing==0.4.2` 中。使用当前源码构建并安装 wheel 后，Python 入口复用 wheel 内匹配版本的 Rust CLI：
 
 ```bash
 qianxing quickstart ./paper-demo --profile paper
@@ -181,20 +182,20 @@ qianxing quickstart ./paper-demo --profile paper
 目标目录必须是新的，Paper 的持久订单与账本不会由 quickstart 自动清空；此入口不需要安装 `ccxt` extra。
 
 ```bash
-qianxing quickstart ./demo --rows 120 --cli qx-cli
+qianxing quickstart ./demo-custom --rows 120 --cli qx-cli
 ```
 
 #### 真实公共行情（只读 CCXT）
 
-已发布的 PyPI `qianxing==0.4.1` wheel 尚不含 Python CCXT 便捷入口；当前请使用 A 节的 `qx-cli quickstart --profile ccxt`。本候选发布为 `qianxing==0.4.2` 后，Python wheel 才可直接运行下面的只读公开行情流程：
+安装带 CCXT 可选依赖的 wheel 后，使用下列命令下载公开行情并生成回测报告。
 
 ```bash
-python -m pip install "qianxing[ccxt]==0.4.2"  # v0.4.2 发布后可用
+python -m pip install "qianxing[ccxt]==0.4.2"
 qianxing quickstart ./okx-btc --profile ccxt --exchange okx --days 30 --timeframe 1h
 qianxing quickstart ./bitget-btc --profile ccxt --exchange bitget --days 52 --timeframe 15m
 ```
 
-发布后，省略 `--instrument` 时会按交易所自动选用对应的 `BTC/USDT:USDT.<EXCHANGE>` 永续标的；策略默认 `ema_cross`，可用
+省略 `--instrument` 时会按交易所自动选用对应的 `BTC/USDT:USDT.<EXCHANGE>` 永续标的；策略默认 `ema_cross`，可用
 `--strategy` 指定单标的内置策略。该路径调用公共行情 API，不读取账户凭据、不启用执行 worker、不提交订单；结果中的
 `report_html_path` 给出报告路径，`run_evidence.bundle_path` 给出证据包路径，`quickstart_output` 保留完整 Rust CLI 首跑日志。
 `run_evidence.integrity_verified` 与 `input_identity_recomputed` 表示工件摘要和行情输入身份已离线核验；
@@ -352,23 +353,23 @@ mkdir -p .qianxing/api-data
 cp deploy/qianxing.bar-frame.example.json .qianxing/api-data/sample.json
 ```
 
-如果设置了 `QX_API_DATA_ROOT`，请把 `sample.json` 放到那个目录；未设置时服务按启动工作目录使用 `.qianxing/api-data`。仓库外使用预编译 CLI 时，样例 BarFrame 可从 [v0.4.1 教学 fixture](https://raw.githubusercontent.com/coeasy/qianxing/v0.4.1/deploy/qianxing.bar-frame.example.json) 下载为 `sample.json`，并保存到刚创建的 `.qianxing/api-data/`。
+如果设置了 `QX_API_DATA_ROOT`，请把 `sample.json` 放到那个目录；未设置时服务按启动工作目录使用 `.qianxing/api-data`。仓库外使用预编译 CLI 时，样例 BarFrame 可从 [v0.4.2 教学 fixture](https://raw.githubusercontent.com/coeasy/qianxing/v0.4.2/deploy/qianxing.bar-frame.example.json) 下载为 `sample.json`，并保存到刚创建的 `.qianxing/api-data/`。
 
 不含源码仓库时，可用以下命令下载样例：
 
 ```powershell
-Invoke-WebRequest -Uri https://raw.githubusercontent.com/coeasy/qianxing/v0.4.1/deploy/qianxing.bar-frame.example.json -OutFile .qianxing/api-data/sample.json
+Invoke-WebRequest -Uri https://raw.githubusercontent.com/coeasy/qianxing/v0.4.2/deploy/qianxing.bar-frame.example.json -OutFile .qianxing/api-data/sample.json
 ```
 
 ```bash
-curl -L https://raw.githubusercontent.com/coeasy/qianxing/v0.4.1/deploy/qianxing.bar-frame.example.json -o .qianxing/api-data/sample.json
+curl -L https://raw.githubusercontent.com/coeasy/qianxing/v0.4.2/deploy/qianxing.bar-frame.example.json -o .qianxing/api-data/sample.json
 ```
 
-源码 checkout 已包含 `web/console/`。使用预编译 CLI 时，先把对应版本的 [Web Console 发布包](https://github.com/coeasy/qianxing/releases/download/v0.4.1/qianxing-web-console-v0.4.1.tar.gz) 解压到当前工作目录的 `web/console/`（归档里的 `qianxing-web-console/` 目录层级需去掉），然后创建本机 Paper 配置并启动：
+源码 checkout 已包含 `web/console/`。使用预编译 CLI 时，先把对应版本的 [Web Console 发布包](https://github.com/coeasy/qianxing/releases/download/v0.4.2/qianxing-web-console-v0.4.2.tar.gz) 解压到当前工作目录的 `web/console/`（归档里的 `qianxing-web-console/` 目录层级需去掉），然后创建本机 Paper 配置并启动：
 
 ```powershell
 New-Item -ItemType Directory -Force web/console | Out-Null
-Invoke-WebRequest -Uri https://github.com/coeasy/qianxing/releases/download/v0.4.1/qianxing-web-console-v0.4.1.tar.gz -OutFile qianxing-web-console.tar.gz
+Invoke-WebRequest -Uri https://github.com/coeasy/qianxing/releases/download/v0.4.2/qianxing-web-console-v0.4.2.tar.gz -OutFile qianxing-web-console.tar.gz
 tar -xzf qianxing-web-console.tar.gz -C web/console --strip-components=1
 qx-cli console --init qianxing.runtime.console.json
 qx-cli console qianxing.runtime.console.json
@@ -378,7 +379,7 @@ Linux/macOS 的发布包安装方式：
 
 ```bash
 mkdir -p web/console
-curl -L https://github.com/coeasy/qianxing/releases/download/v0.4.1/qianxing-web-console-v0.4.1.tar.gz -o qianxing-web-console.tar.gz
+curl -L https://github.com/coeasy/qianxing/releases/download/v0.4.2/qianxing-web-console-v0.4.2.tar.gz -o qianxing-web-console.tar.gz
 tar -xzf qianxing-web-console.tar.gz -C web/console --strip-components=1
 qx-cli console --init qianxing.runtime.console.json
 qx-cli console qianxing.runtime.console.json
@@ -386,7 +387,7 @@ qx-cli console qianxing.runtime.console.json
 
 在仓库 checkout 中，也可直接使用 `deploy/qianxing.runtime.console.example.json` 替代 `--init` 生成的配置。
 
-服务会在终端打印一次性本机入口 URL；打开后点击“连接”，在“Bar 研究工作流”先点“只校验数据”，通过后点“回测并复核”。样例是合成教学数据，不联网、不代表真实行情或策略收益，也不会读取凭据或发送订单。CLI 与静态包必须使用同一版本。当前稳定版 v0.4.1 若更换策略或参数，请在 JSON 中手动改成新 `run_id`；v0.4.2 发布后，策略选择会自动更新 ID，手工改其他输入时用“生成新运行 ID”。
+服务会在终端打印一次性本机入口 URL；打开后点击“连接”，在“Bar 研究工作流”先点“只校验数据”，通过后点“回测并复核”。样例是合成教学数据，不联网、不代表真实行情或策略收益，也不会读取凭据或发送订单。CLI 与静态包必须使用同一版本。v0.4.2 中选择策略会自动更新运行 ID，手工修改其他输入后点击“生成新运行 ID”。
 
 ---
 

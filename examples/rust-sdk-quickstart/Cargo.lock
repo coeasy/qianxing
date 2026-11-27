@@ -99,9 +99,9 @@ dependencies = [
 
 [[package]]
 name = "qx-app"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7451778e38e717f00d6e2d5793ae044af1c657fc6445fc5eea0b4d39db5692e9"
+checksum = "1fa84d3d91f04124abdc569289c382223135a5a12f95e53acac44ab6b0e7b422"
 dependencies = [
  "qx-control",
  "qx-core",
@@ -120,9 +120,9 @@ dependencies = [
 
 [[package]]
 name = "qx-control"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5e96d0fb03738a57ec532dc734d0eaa6f5ef634d7d438a3e1576293b2fc4112"
+checksum = "a6857428de421aa80e4d487eb8bedfecb597653bc6069d878d9015d07dae6b77"
 dependencies = [
  "qx-core",
  "serde",
@@ -131,9 +131,9 @@ dependencies = [
 
 [[package]]
 name = "qx-core"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "650700f66adf22a75bcf890fcf0cca2debea5cb43654a6222f952a43c781b579"
+checksum = "6873279f73368cf38105c906194635accfc7eb1d2c31bc6c2a134a0b58ae767d"
 dependencies = [
  "serde",
  "serde_json",
@@ -141,9 +141,9 @@ dependencies = [
 
 [[package]]
 name = "qx-data"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "534857f0042fc1a5f7d871387e636feb57dadd162d5564667455fbfcd43e8575"
+checksum = "01141ffbbd385a19a9bb2797b49a4f916e6a7beaed238af18e1f6a90a9884475"
 dependencies = [
  "qx-core",
  "qx-datastruct",
@@ -154,9 +154,9 @@ dependencies = [
 
 [[package]]
 name = "qx-datastruct"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05fadc77c29e24dea948e8e9e745a138320412379823469e9627359a7bb18fc7"
+checksum = "54615c3beb65c9a6f4fd7b90bf1c37ac4dd6709508bc7096a315b4c7d43b29e0"
 dependencies = [
  "qx-core",
  "qx-guanxing",
@@ -166,9 +166,9 @@ dependencies = [
 
 [[package]]
 name = "qx-execution"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a52d0aa140ab78bacc925621f03ce6e6a948e9ef0f3785ba1faa29f44a5bd50a"
+checksum = "8a3aff23bea370916b29332ee014faf7f67ae02ebbe4399fa74cb1c6ba0dde01"
 dependencies = [
  "qx-control",
  "qx-core",
@@ -181,9 +181,9 @@ dependencies = [
 
 [[package]]
 name = "qx-guanxing"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd543875ef132ebeb38bda0bcfa39e27bf06d40de8272ec715acc34af4f2893c"
+checksum = "9ff92ee3b89bb10fcdffbc8d389bb94f20098f5ed96af299f19024dfe31f90e9"
 dependencies = [
  "qx-core",
  "serde",
@@ -192,9 +192,9 @@ dependencies = [
 
 [[package]]
 name = "qx-provider"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfe8629a2ad9f46d797d4c04a970b927a3082ef4fb0ce9d5b61a26e423575d26"
+checksum = "851419116a268843c9c53ce27d638ff1cab58b432f7a0e99eff6cb1cc764d468"
 dependencies = [
  "qx-core",
  "qx-data",
@@ -206,9 +206,9 @@ dependencies = [
 
 [[package]]
 name = "qx-risk"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "396d82d9c8527022935a3da1c56297cdc51f6c7a02094ac0eb92aeeafa8ba2b3"
+checksum = "d35fd0b55fbe1f8e23370bc3329972c54372649b66f48a7dc8624d812059e68f"
 dependencies = [
  "qx-core",
  "serde",
@@ -216,9 +216,9 @@ dependencies = [
 
 [[package]]
 name = "qx-sdk"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "433758d3c42c182f918216c85d137c79655671d0b42170e8fe910522206b0d51"
+checksum = "50fbf354182d47edf4e87a3c633ddd173c3de496c0dafe2e8f1585f3ca0eccfc"
 dependencies = [
  "qx-app",
  "qx-execution",
@@ -230,9 +230,9 @@ dependencies = [
 
 [[package]]
 name = "qx-spec"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7cae94c58db3a975ba1d85dc24085aa6886f9cf8c25541c16d219b4b77b84391"
+checksum = "0fb4826686fb4fec888121b4498b505389f16d7bb91b1f9e3479c90fdad96963"
 dependencies = [
  "qx-core",
  "qx-data",
@@ -242,9 +242,9 @@ dependencies = [
 
 [[package]]
 name = "qx-strategy"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "063bde33f4ab6d8bddcbfd16601b04d2135f68ced142871d66f9adfb93030aa5"
+checksum = "2ca0ff73447cfc8f65f054d4c886a3a5401f4e76a07ae25b27501154984ce5a3"
 dependencies = [
  "libloading",
  "memmap2",
@@ -256,9 +256,9 @@ dependencies = [
 
 [[package]]
 name = "qx-xingban"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd17d12643e2cadcf8daf2c75e219498ac933c5296100a9f9bb923fc75760637"
+checksum = "36d7042aa210b2fe0df0ed845b8ef5a45d097e0bad1a483f1aa20ea4a2853434"
 dependencies = [
  "qx-core",
  "qx-data",
@@ -272,9 +272,9 @@ dependencies = [
 
 [[package]]
 name = "qx-zhenlu"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "046c9f00fb646e072f695f7f95727dee717b5bd9936ae3d1d5f1fc13aeb2fa92"
+checksum = "fd48567d0feb4dab172fc1fd83e280fba239ae340fb678e68208bc14ad0e8f74"
 dependencies = [
  "qx-core",
  "qx-guanxing",
