@@ -360,7 +360,7 @@ qianxing run -f strategies/main.py --spec input.json         # 显式版本化 s
 
 ## C. 本机 Web Console（研究 / Paper）
 
-`qx-cli console` 在回环地址启动同源控制台和 API；默认监听 `127.0.0.1:18091`，只用于本机研究与 Paper。页面默认 Bar 规格会读取 `sample.json`，因此先从仓库根目录把教学 BarFrame 放进 API 数据根目录：
+`qx-cli console` 在回环地址启动同源控制台和 API；默认监听 `127.0.0.1:18091`，只用于本机研究与 Paper。页面默认 Bar 规格会读取 `sample.json`，服务不会自动创建它。包含本改进的源码构建和后续 Web Console 发布包会随页面提供同版本样例下载；下载后保存到 API 数据根目录。已发布的 v0.4.2 页面仍需使用该版本的教学 fixture：
 
 ```powershell
 New-Item -ItemType Directory -Force .qianxing/api-data | Out-Null
@@ -374,7 +374,7 @@ mkdir -p .qianxing/api-data
 cp deploy/qianxing.bar-frame.example.json .qianxing/api-data/sample.json
 ```
 
-如果设置了 `QX_API_DATA_ROOT`，请把 `sample.json` 放到那个目录；未设置时服务按启动工作目录使用 `.qianxing/api-data`。仓库外使用预编译 CLI 时，样例 BarFrame 可从 [v0.4.2 教学 fixture](https://raw.githubusercontent.com/coeasy/qianxing/v0.4.2/deploy/qianxing.bar-frame.example.json) 下载为 `sample.json`，并保存到刚创建的 `.qianxing/api-data/`。
+如果设置了 `QX_API_DATA_ROOT`，请把 `sample.json` 放到那个目录；未设置时服务按启动工作目录使用 `.qianxing/api-data`。包含本改进的 Web Console 在页面内提供同版本下载，可避免静态页与教学行情来自不同版本。
 
 不含源码仓库时，可用以下命令下载样例：
 
