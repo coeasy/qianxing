@@ -106,6 +106,16 @@ fn generation_note_tells_apart_older_schema_from_missing_block() {
         note.contains("metrics.max_drawdown_raw=MISSING_IN_THIS_GENERATION"),
         "v8 必须指出新增的原始最大回撤指标缺失: {note}"
     );
+    assert!(
+        note.contains("rejection_detail_readout=not_declared_before_v9"),
+        "v8 不应假定有 v9 的逐笔拒单详情: {note}"
+    );
+    let v9_without_rejections = serde_json::json!({"schema_version": 9});
+    let note = summary_generation_note(&v9_without_rejections);
+    assert!(
+        note.contains("rejection_detail_readout=MISSING_IN_THIS_GENERATION"),
+        "v9 必须点名缺失的逐笔拒单摘要块: {note}"
+    );
     // 连世代都没写的产物：报 absent，而不是默认自己就是最新世代。
     let note = summary_generation_note(&serde_json::json!({"strategy_id": "s"}));
     assert!(
@@ -127,11 +137,11 @@ fn generation_note_tells_apart_older_schema_from_missing_block() {
 
 #[test]
 fn backtest_summary_reader_compatibility_matches_matrix() {
-    for version in 5..=8 {
+    for version in 5..=9 {
         require_current_summary_schema(&serde_json::json!({"schema_version": version}))
             .unwrap_or_else(|error| panic!("summary v{version} must remain reportable: {error}"));
     }
-    for version in [1, 2, 3, 4, 9, 99] {
+    for version in [1, 2, 3, 4, 10, 99] {
         let error = require_current_summary_schema(&serde_json::json!({"schema_version": version}))
             .expect_err("unsupported summary generations must be refused");
         assert!(

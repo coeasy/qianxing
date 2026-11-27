@@ -86,6 +86,7 @@ pub(crate) fn summary_generation_note(summary: &Value) -> String {
         ("ashare_analysis", 6),
         ("execution_attempts", 7),
         ("metrics.max_drawdown_raw", 8),
+        ("rejection_detail_readout", 9),
     ] {
         let declared = if key.contains('.') {
             let pointer = format!("/{}", key.replace('.', "/"));

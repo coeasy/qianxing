@@ -90,7 +90,7 @@ pub use self::performance::{backtest_risk_metrics, BacktestRiskMetrics};
 pub use self::retry::{Backoff, RetryPolicy};
 pub use self::sourcing::{
     EventLog, Fnv1a, ReplayFacts, ReplayVerifier, RunManifest, StreamingReplayResult,
-    StreamingReplayVerifier,
+    StreamingReplayVerifier, MAX_REJECTION_DETAIL_SNAPSHOTS,
 };
 pub use self::target::TargetPosition;
 pub use self::trading::{

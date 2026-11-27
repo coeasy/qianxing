@@ -51,6 +51,7 @@ pub(super) fn replay_execution_updates(
             EventKind::Rejected {
                 client_order_id,
                 reason,
+                ..
             } => {
                 if is_strategy_order(&oms, *client_order_id, strategy_id) {
                     let order = oms
@@ -1200,6 +1201,8 @@ mod tests {
                 EventKind::Rejected {
                     client_order_id: 12,
                     reason: "venue rejected".into(),
+                    reference_price_exact: None,
+                    order_snapshot: None,
                 },
             ),
             Event::new(

@@ -204,9 +204,9 @@ migrations:
 backtest_summary_contract:
   writer_file: crates/qx-app/src/artifact_store/backtest_summary.rs
   writer_const: BACKTEST_SUMMARY_SCHEMA_VERSION
-  current_version: 8
+  current_version: 9
   report_reader_file: crates/qx-cli/src/report_command/verified_summary.rs
-  report_accepts: "5,6,7,8"
+  report_accepts: "5,6,7,8,9"
   acceptance_case: backtest_summary_reader_compatibility_matches_matrix
   refusal_case: legacy_summary_refusal_precedes_html_and_evidence_side_effects
 backtest_summary_versions:
@@ -225,9 +225,9 @@ backtest_summary_versions:
   v7:
     report: read
   v8:
-    report: read_write
+    report: read
   v9:
-    report: refuse
+    report: read_write
   future:
     report: refuse
 backtest_summary_features:
@@ -245,3 +245,5 @@ backtest_summary_features:
     introduced_in: 7
   max_drawdown_raw:
     introduced_in: 8
+  rejection_detail_readout:
+    introduced_in: 9

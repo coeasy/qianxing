@@ -64,7 +64,7 @@ impl Fnv1a {
 }
 
 mod event_log;
-pub use event_log::EventLog;
+pub use event_log::{EventLog, MAX_REJECTION_DETAIL_SNAPSHOTS};
 
 /// 运行 Manifest：代码+数据+配置+随机性+结果的全量指纹。
 #[derive(Clone, PartialEq, Eq, Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -402,6 +402,7 @@ mod tests {
     use super::*;
     use crate::clock::Ts;
     use crate::event::{Event, EventKind};
+    use crate::{InstrumentId, Order, OrderStatus, Priority, Quantity, Side};
 
     fn sample(n: u64) -> EventLog {
         let mut l = EventLog::new();
@@ -409,6 +410,46 @@ mod tests {
             l.append(Event::new(i, i as Ts * 10, 2, EventKind::Settle));
         }
         l
+    }
+
+    fn rejected_with_snapshot(seq: u64) -> Event {
+        let order = Order {
+            client_id: seq,
+            instrument: InstrumentId::parse("BTC/USDT.BINANCE").unwrap(),
+            side: Side::Buy,
+            qty: Quantity::from_raw(1_000_000_000),
+            limit: None,
+            status: OrderStatus::PendingSubmit,
+            filled: Quantity::ZERO,
+            account_id: "main".into(),
+            trace: None,
+            policy: None,
+            exact_amounts: None,
+        };
+        Event::new(
+            seq,
+            seq as Ts * 10,
+            Priority::COMMAND,
+            EventKind::Rejected {
+                client_order_id: seq,
+                reason: "minimum notional".into(),
+                reference_price_exact: None,
+                order_snapshot: Some(Box::new(order)),
+            },
+        )
+    }
+
+    #[test]
+    fn rejection_detail_capacity_is_bounded_and_survives_clone_and_restore() {
+        let mut log = EventLog::new();
+        assert!(log.can_record_rejection_detail());
+        for seq in 0..MAX_REJECTION_DETAIL_SNAPSHOTS as u64 {
+            log.append(rejected_with_snapshot(seq));
+        }
+        assert!(!log.can_record_rejection_detail());
+        assert!(!log.clone().can_record_rejection_detail());
+        let restored = EventLog::from_json(&log.to_json().unwrap()).unwrap();
+        assert!(!restored.can_record_rejection_detail());
     }
 
     #[test]
