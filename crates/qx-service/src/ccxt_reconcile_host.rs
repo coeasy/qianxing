@@ -983,6 +983,18 @@ fn reconcile_bitget_triggered_oco_children(
         )?;
         return Ok(0);
     }
+    let filled_leg_indices = matched
+        .iter()
+        .filter_map(|(leg_index, child, _)| {
+            child
+                .get("cum_exec_qty")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|value| qx_core::ExactDecimal::parse(value).ok())
+                .filter(|amount| amount.is_positive())
+                .map(|_| *leg_index)
+        })
+        .collect::<Vec<_>>();
+    let multiple_filled_legs = bitget_oco_has_multiple_filled_legs(&filled_leg_indices);
     store.require_reconciliation(&group.intent.group_id)?;
     let mut updates = 0;
     let mut snapshots = Vec::with_capacity(2);
@@ -1118,7 +1130,30 @@ fn reconcile_bitget_triggered_oco_children(
         snapshots.push((reconciled, Some(remote_id)));
     }
     store_ccxt_group_snapshots(&group.intent.group_id, snapshots, true, store)?;
+    if multiple_filled_legs {
+        let remains_fenced = store
+            .load(&group.intent.group_id)?
+            .is_some_and(|state| state.status == qx_core::OrderGroupStatus::ReconcileRequired);
+        if !remains_fenced {
+            return Err("Bitget OCO 双腿均有成交，但持久化订单组未保留人工对账围栏".into());
+        }
+        push_ccxt_group_issue(
+            issues,
+            group,
+            "native_order_group_dual_execution",
+            "Bitget OCO 止盈与止损腿均产生非零成交；成交事实已对账入账，订单组保持人工对账围栏，需核实净头寸后处置",
+        );
+    }
     Ok(updates + group.legs.len())
+}
+
+fn bitget_oco_has_multiple_filled_legs(filled_leg_indices: &[usize]) -> bool {
+    filled_leg_indices
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>()
+        .len()
+        > 1
 }
 
 pub(crate) fn bitget_cancel_children_are_unfilled(
@@ -2300,10 +2335,10 @@ fn runtime_timestamp_ms() -> u64 {
 mod native_order_group_reconcile_tests {
     use super::{
         bitget_cancel_children_are_unfilled, bitget_oco_child_matches_leg,
-        bitget_rejected_oco_children_prove_no_execution, classify_okx_oco_observation,
-        mark_ccxt_group_query_failed, okx_algo_client_order_id, reconcile_ccxt_native_order_groups,
-        reconcile_order_group_amendment_overlays, sync_ccxt_order_groups_from_user_stream,
-        OkxOcoObservation,
+        bitget_oco_has_multiple_filled_legs, bitget_rejected_oco_children_prove_no_execution,
+        classify_okx_oco_observation, mark_ccxt_group_query_failed, okx_algo_client_order_id,
+        reconcile_ccxt_native_order_groups, reconcile_order_group_amendment_overlays,
+        sync_ccxt_order_groups_from_user_stream, OkxOcoObservation,
     };
     use crate::pipeline_metrics_report::ccxt_error_metric_category;
 
@@ -3055,6 +3090,14 @@ mod native_order_group_reconcile_tests {
             }),
             &group.legs[0]
         ));
+    }
+
+    #[test]
+    fn bitget_oco_dual_execution_is_reported_only_for_two_filled_legs() {
+        assert!(bitget_oco_has_multiple_filled_legs(&[0, 1]));
+        assert!(!bitget_oco_has_multiple_filled_legs(&[0, 0]));
+        assert!(!bitget_oco_has_multiple_filled_legs(&[0]));
+        assert!(!bitget_oco_has_multiple_filled_legs(&[]));
     }
 
     #[test]
