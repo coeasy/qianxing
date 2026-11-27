@@ -22925,6 +22925,7 @@ WEB_CONSOLE_WRITE_CALLS = (
     "postJson(API_PATHS.controlCommands",
     "postJson(API_PATHS.strategyDeploymentRevisions",
     "postJson(API_PATHS.strategyDeploymentOperations",
+    'postJsonText("/console/sample-data"',
 )
 WEB_CONSOLE_FORBIDDEN_WRITE_TOKENS = (
     "/order/submit",
@@ -22994,6 +22995,15 @@ def web_console_check() -> None:
     # Include the qx-api module-level app route declarations as well as its main router and
     # asynchronous run table; synchronous qx-app use cases are dispatched from app_surface.rs.
     routes.update(_api_declared_routes())
+    # The teaching sample installer is owned by the authenticated same-origin BFF, not by the
+    # general qx-api router. Only explicitly registered BFF routes join the frontend contract.
+    console_front = production_text((ROOT / "crates/qx-api/src/console.rs").read_text(encoding="utf-8"))
+    routes.update(
+        re.findall(
+            r'pub const CONSOLE_[A-Z0-9_]+_PATH: &str = "(/console/[a-z0-9/-]+)"',
+            console_front,
+        )
+    )
     unknown = sorted(path for path in declared if path not in routes)
     check(
         bool(declared) and not unknown,
@@ -23722,10 +23732,11 @@ CONSOLE_PUBLIC_CONSTS = (
     "CONSOLE_CSRF_COOKIE",
     "CONSOLE_CSRF_HEADER",
     "CONSOLE_TOKEN_QUERY",
+    "CONSOLE_SAMPLE_INSTALL_PATH",
     "DEFAULT_CONSOLE_SESSION_TTL_SECONDS",
     "CONSOLE_ASSETS",
 )
-CONSOLE_ASSET_NAMES = ("index.html", "app.js", "styles.css", "research-comparison.js")
+CONSOLE_ASSET_NAMES = ("index.html", "app.js", "styles.css", "research-comparison.js", "sample.json")
 # `ConsoleConfig::new` 的四类拒绝：这一层最贵的错是"配错了也起得来"。
 CONSOLE_CONFIG_REJECTIONS = (
     "console.operator 不能为空",
@@ -23766,8 +23777,17 @@ def console_front_check() -> None:
     missing = [name for name in CONSOLE_PUBLIC_CONSTS if f"pub const {name}" not in front]
     check(
         not missing and all(f'"{asset}"' in front for asset in CONSOLE_ASSET_NAMES),
-        "会话/CSRF/令牌查询参数与缺省 TTL 六个公开常量齐备，静态资源表只认那四份",
+        "会话/CSRF/令牌查询参数、样例安装路由与缺省 TTL 常量齐备，静态资源表只认那五份",
         f"缺常量 {missing}",
+    )
+    check(
+        "if route == CONSOLE_SAMPLE_INSTALL_PATH" in front
+        and "self.install_packaged_sample()" in front
+        and "install_console_sample(&self.service.app_paths.data_root, &sample)" in front
+        and "fs::hard_link(&temporary.0, &destination)" in front
+        and 'json_response(409, "console_sample_destination_conflict")' in front,
+        "教学样例安装只写固定数据根文件、原子且不覆盖不同内容",
+        "BFF 样例安装入口缺少固定路径、原子发布或冲突保护",
     )
     check(
         "pub fn new(" in front and all(item in front for item in CONSOLE_CONFIG_REJECTIONS),
@@ -30329,6 +30349,7 @@ ARTIFACT_PUBLISH_EXEMPT = {
     "crates/qx-cli/src/workers/strategy_worker/execution_updates/cursor_state.rs": "策略执行 cursor/checkpoint：有 fencing 的运行期恢复状态，非研究/回测产物",
     "crates/qx-cli/src/workers/strategy_worker/execution_updates/prepared_evaluation.rs": "Strategy PreparedEvaluation durable journal：命令恢复用运行期事务状态，非研究/回测产物",
     "crates/qx-orchestrator/src/strategy_deployment.rs": "按部署 revision 原子物化的运行期 worker 配置：由 supervisor 自身消费，非研究或回测产物",
+    "crates/qx-api/src/console.rs": "Web Console 将仓库内固定 sample.json 首次安装到 API data_root；这是受会话/CSRF 保护的数据初始化入口，不是可变回测/研究产物",
 }
 
 

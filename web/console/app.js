@@ -946,6 +946,37 @@ async function postJsonText(path, body) {
   return { status: response.status, ok: response.ok, body: await readJson(response) };
 }
 
+async function installConsoleSample() {
+  const button = $("install-sample");
+  const output = $("sample-install-status");
+  if (!state.connected) {
+    output.textContent = "请先连接已登录的 qx-cli Console。";
+    return;
+  }
+  if (!state.viaBff) {
+    output.textContent = "一键安装仅由同源 Console 提供；静态页面请下载样例并手工保存到 API 数据目录。";
+    return;
+  }
+  button.disabled = true;
+  output.textContent = "正在校验并安装教学数据…";
+  try {
+    const response = await postJsonText("/console/sample-data", "");
+    if (response.ok && response.body?.status === "installed") {
+      output.textContent = `教学数据已安装（${response.body.bytes} 字节，SHA-256 ${response.body.sha256}）。现在可运行“只校验数据”。`;
+    } else if (response.ok && response.body?.status === "already_present") {
+      output.textContent = "相同教学数据已存在，没有改写文件。现在可运行“只校验数据”。";
+    } else if (response.status === 409) {
+      output.textContent = "安装已停止：API 数据目录中的 sample.json 已存在且内容不同，原文件未改写。请先备份后自行处理。";
+    } else {
+      output.textContent = `教学数据安装失败：HTTP ${response.status} · ${response.body?.error || "请检查 Console 与 API 数据目录权限"}`;
+    }
+  } catch (error) {
+    output.textContent = `教学数据安装失败：${error.message}`;
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function newRequestId() {
   if (globalThis.crypto?.randomUUID) return crypto.randomUUID();
   return `${Date.now()}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`;
@@ -4286,6 +4317,7 @@ window.addEventListener("DOMContentLoaded", () => {
   if (seeded) $("api-base").value = seeded;
   $("connect").addEventListener("click", connect);
   $("disconnect").addEventListener("click", disconnect);
+  $("install-sample").addEventListener("click", () => { void installConsoleSample(); });
   $("account-activity-prev").addEventListener("click", () => {
     const cursor = state.activityPage?.previous_before;
     if (cursor === null || cursor === undefined) return;

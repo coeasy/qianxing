@@ -65,3 +65,45 @@ test("packaged console does not invent a CSRF token when the cookie is absent", 
   await auth.postJsonText("/control/commands", "{}");
   assert.equal(calls[0].init.headers["X-QX-CSRF"], undefined);
 });
+
+function loadSampleInstaller({ connected, viaBff, response }) {
+  const calls = [];
+  const button = { disabled: false };
+  const output = { textContent: "" };
+  const context = {
+    state: { connected, viaBff },
+    $(id) {
+      return id === "install-sample" ? button : output;
+    },
+    postJsonText: async (path, body) => {
+      calls.push({ path, body });
+      return response;
+    },
+  };
+  const installer = sourceBetween("async function installConsoleSample() {", "function newRequestId(");
+  vm.runInNewContext(`${installer}\nglobalThis.install = installConsoleSample;`, context);
+  return { install: context.install, calls, button, output };
+}
+
+test("one-click sample installation uses the authenticated Console BFF and reports its outcome", async () => {
+  const sample = loadSampleInstaller({
+    connected: true,
+    viaBff: true,
+    response: {
+      status: 201,
+      ok: true,
+      body: { status: "installed", bytes: 4096, sha256: "a".repeat(64) },
+    },
+  });
+  await sample.install();
+  assert.deepEqual(sample.calls, [{ path: "/console/sample-data", body: "" }]);
+  assert.match(sample.output.textContent, /教学数据已安装/);
+  assert.equal(sample.button.disabled, false);
+});
+
+test("static Console never sends the BFF-only sample installation write", async () => {
+  const sample = loadSampleInstaller({ connected: true, viaBff: false, response: null });
+  await sample.install();
+  assert.equal(sample.calls.length, 0);
+  assert.match(sample.output.textContent, /仅由同源 Console 提供/);
+});
