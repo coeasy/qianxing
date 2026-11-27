@@ -8,7 +8,7 @@
   },
   "source_sha256": {
     "maturity/capability-matrix.yaml": "60aea21929b5751fd228c81c211fd1a14161d01ddfe62243c793174bae4fd03e",
-    "maturity/capabilities.yaml": "6f141114dc0846e714abff888a6d13600163f25ab3c49ca761c64b671de64425",
+    "maturity/capabilities.yaml": "cf1f0089ec20c28c17d240e74cf50a9dfeba504bd3c8766ab6695d3e27a5a754",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
   "product_levels": [
@@ -192,7 +192,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 245,
+      "evidence_path_count": 248,
       "limitation_count": 10
     },
     {
@@ -1565,9 +1565,12 @@
             "tools/check_cli_test_data_isolation.py + .github/workflows/ci.yml verify the post-test checkout has no tracked, untracked, or ignored outputs under deploy/data or crates/qx-cli/data; tools/test_cli_test_data_isolation.py tests each detection class, and tools/check_architecture.py cli_test_data_isolation_check keeps the gate wired after workspace and CLI subprocess tests (V13 R2",
             "crates/qx-cli/src/path_resolution.rs anchor_init_data_dir is the only place init rewrites storage.data_dir, it leaves an already-absolute value untouched, and the backtest writer plus the report and status readers all take Path::new on that same field, so one runtime config cannot name two artifact trees (V13 R2",
             "crates/qx-cli/tests/multi_leg_attribution/margin_and_return.rs verifies [Multi-leg · Account] reports combined and per-leg principal, pooled ending equity, and the multi-leg funding-rule source against persisted facts",
-            "crates/qx-service/src/backtest_bindings/builtin_snapshot.rs and strategy_batch.rs bind builtin strategy.version to the selected BuiltinStrategyKind, and crates/qx-cli/tests/builtin_signal_from_config.rs both_bar_chains_read_the_same_declared_signal asserts equal result_hash as well as fills/return/drawdown; tools/check_architecture.py builtin_signal_check keeps the invariant wired (V13 Q64 result identity)"
+            "crates/qx-service/src/backtest_bindings/builtin_snapshot.rs and strategy_batch.rs bind builtin strategy.version to the selected BuiltinStrategyKind, and crates/qx-cli/tests/builtin_signal_from_config.rs both_bar_chains_read_the_same_declared_signal asserts equal result_hash as well as fills/return/drawdown; tools/check_architecture.py builtin_signal_check keeps the invariant wired (V13 Q64 result identity)",
+            "crates/qx-strategy/src/builtin/config.rs BuiltinStrategyKind::ALL lists 17 native strategies and marks four as requiring a reference leg; crates/qx-app/src/strategy_catalog.rs and strategy_recipe.rs expose the full strategy catalog with defaults and research cautions",
+            "crates/qx-cli/tests/unit/backtest_entries.rs builtin_strategy_entries_match_the_printed_partition counts 13 single-leg and 4 multi-leg strategies, verifies every kind against its accepted backtest entry, and checks the CLI catalog/help output",
+            "crates/qx-sdk/tests/consumer/strategy_catalog.rs independently consumes the Rust-owned builtin strategy catalog; crates/qx-api/src/app_surface.rs publishes the catalog and actionable recipes"
           ],
-          "limitations_count": 11
+          "limitations_count": 10
         },
         {
           "id": "paper_execution",
