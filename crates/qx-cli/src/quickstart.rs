@@ -126,6 +126,7 @@ pub(crate) fn run(
     instrument: Option<String>,
     exchange: Option<String>,
     selected_market_type: Option<cli_args::QuickstartMarketType>,
+    json_result: bool,
 ) {
     let ccxt_options_used = days.is_some()
         || timeframe.is_some()
@@ -205,7 +206,7 @@ pub(crate) fn run(
                 eprintln!("[止步] {error}");
                 std::process::exit(2);
             }
-            run_paper_quickstart(&absolute, &runtime, &runtime_text, &root_text);
+            run_paper_quickstart(&absolute, &runtime, &runtime_text, &root_text, json_result);
             return;
         }
     };
@@ -286,6 +287,9 @@ pub(crate) fn run(
     }
     if force {
         retry_arguments.push("--force");
+    }
+    if json_result {
+        retry_arguments.push("--json-result");
     }
     let retry = command_line(&retry_arguments);
     println!(
@@ -445,6 +449,9 @@ pub(crate) fn run(
         &retry,
         run_status(&runtime, false),
     );
+    if json_result {
+        emit_backtest_quickstart_result(profile_name, &absolute, &runtime, &evidence_path, html);
+    }
     let (files, truncated) = project_file_count(&absolute, PROJECT_FILE_COUNT_BUDGET);
     println!();
     let counted = if truncated {
@@ -507,9 +514,25 @@ pub(crate) fn run(
 /// Local, credential-free Paper onboarding is intentionally a separate workflow from
 /// historical backtesting. It uses the canonical `paper` runtime template and the same
 /// Scheduler → Strategy → Paper Execution → Ledger pipeline as `paper-check`.
-fn run_paper_quickstart(absolute: &Path, runtime: &Path, runtime_text: &str, root_text: &str) {
+fn run_paper_quickstart(
+    absolute: &Path,
+    runtime: &Path,
+    runtime_text: &str,
+    root_text: &str,
+    json_result: bool,
+) {
     let retry_path = format!("{root_text}-retry");
-    let retry = command_line(&["quickstart", &retry_path, "--profile", "paper"]);
+    let retry = if json_result {
+        command_line(&[
+            "quickstart",
+            &retry_path,
+            "--profile",
+            "paper",
+            "--json-result",
+        ])
+    } else {
+        command_line(&["quickstart", &retry_path, "--profile", "paper"])
+    };
     println!(
         "quickstart 使用 paper profile，依次执行 4 步（建项目 → 静态检查 → Paper 主链路 → 安全状态），只写 {}：",
         absolute.display()
@@ -570,6 +593,30 @@ fn run_paper_quickstart(absolute: &Path, runtime: &Path, runtime_text: &str, roo
             &error.to_string(),
         ),
     }
+    if json_result {
+        let payload = serde_json::json!({
+            "schema_version": 1,
+            "operation": "quickstart-result",
+            "status": "succeeded",
+            "profile": "paper",
+            "project_root": absolute.display().to_string(),
+            "runtime_config_path": runtime.display().to_string(),
+            "summary_path": null,
+            "report_html_path": null,
+            "evidence_bundle_path": null,
+            "verification": null,
+            "paper": result,
+        });
+        match serde_json::to_string(&payload) {
+            Ok(json) => println!("[QuickstartResult] {json}"),
+            Err(error) => paper_quickstart_stop(
+                "输出机器可读 Paper 首跑结果",
+                "qx-cli quickstart --json-result",
+                &retry,
+                &error.to_string(),
+            ),
+        }
+    }
 
     let (files, truncated) = project_file_count(absolute, PROJECT_FILE_COUNT_BUDGET);
     let counted = if truncated {
@@ -584,6 +631,65 @@ fn run_paper_quickstart(absolute: &Path, runtime: &Path, runtime_text: &str, roo
         command_line(&["paper-check", runtime_text, "--json"]),
         command_line(&["help"]),
     );
+}
+
+fn emit_backtest_quickstart_result(
+    profile: &str,
+    project_root: &Path,
+    runtime: &Path,
+    evidence_path: &Path,
+    html: bool,
+) {
+    let result = (|| -> Result<serde_json::Value, String> {
+        let summary_path = resolve_backtest_summary_path(runtime)?;
+        let report_paths = crate::report_output_paths::report_artifact_paths(&summary_path)?;
+        let evidence_text = std::fs::read_to_string(evidence_path).map_err(|error| {
+            format!(
+                "读取 quickstart 已核验证据包失败 {}: {error}",
+                evidence_path.display()
+            )
+        })?;
+        let evidence =
+            <qx_spec::EvidenceBundle as qx_spec::FoundationDocument>::from_json(&evidence_text)
+                .map_err(|error| format!("quickstart EvidenceBundle 无效: {error}"))?;
+        let qx_spec::EvidenceGeneration::Run(run_evidence) = evidence.generation else {
+            return Err("quickstart EvidenceBundle generation 必须为 run".into());
+        };
+        Ok(serde_json::json!({
+            "schema_version": 1,
+            "operation": "quickstart-result",
+            "status": "succeeded",
+            "profile": profile,
+            "project_root": project_root.display().to_string(),
+            "runtime_config_path": runtime.display().to_string(),
+            "summary_path": summary_path.display().to_string(),
+            "report_html_path": html.then(|| report_paths.html.display().to_string()),
+            "evidence_bundle_path": evidence_path.display().to_string(),
+            "verification": {
+                "integrity_verified": true,
+                "input_identity_recomputed": true,
+                "result_recomputed": false,
+            },
+            "run": {
+                "run_id": run_evidence.run.run_id,
+                "result_hash": run_evidence.run.result_hash,
+                "data_fingerprint": run_evidence.run.data_fingerprint,
+            },
+        }))
+    })();
+    match result {
+        Ok(payload) => match serde_json::to_string(&payload) {
+            Ok(json) => println!("[QuickstartResult] {json}"),
+            Err(error) => {
+                eprintln!("[止步] 编码 quickstart 机器结果失败：{error}");
+                std::process::exit(2);
+            }
+        },
+        Err(error) => {
+            eprintln!("[止步] 生成 quickstart 机器结果失败：{error}");
+            std::process::exit(2);
+        }
+    }
 }
 
 fn validate_fresh_paper_project(project: &Path) -> Result<(), String> {

@@ -892,7 +892,7 @@ def _run_ccxt_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any] 
         else f"BTC/USDT:USDT.{exchange.upper()}"
     )
     instrument = args.instrument or default_instrument
-    project = Path(args.directory).expanduser().resolve(strict=False)
+    project = Path(os.path.abspath(Path(args.directory).expanduser()))
     command = [
         executable,
         "quickstart",
@@ -910,6 +910,7 @@ def _run_ccxt_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any] 
         "--timeframe",
         timeframe,
         "--html",
+        "--json-result",
     ]
     if args.as_of_ms is not None:
         command.extend(("--as-of-ms", str(args.as_of_ms)))
@@ -936,53 +937,41 @@ def _run_ccxt_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any] 
             print(completed.stderr, file=sys.stderr, end="" if completed.stderr.endswith("\n") else "\n")
         return completed.returncode or 2, None
 
-    html_report_path = next(
-        (
-            line.removeprefix("[Report] html=")
-            for line in completed.stdout.splitlines()
-            if line.startswith("[Report] html=")
-        ),
-        None,
+    quickstart_result = _read_rust_quickstart_result(completed.stdout, "ccxt", project)
+    report_path = _quickstart_project_path(
+        quickstart_result, "report_html_path", project, require_file=True
     )
-    if html_report_path is None:
-        raise ValueError("Rust quickstart exited successfully without reporting its HTML report path")
-    report_path = Path(html_report_path).expanduser()
-    if not report_path.is_absolute():
-        report_path = (Path.cwd() / report_path).resolve(strict=False)
+    summary_path = _quickstart_project_path(
+        quickstart_result, "summary_path", project, require_file=True
+    )
+    runtime_path = _quickstart_project_path(
+        quickstart_result, "runtime_config_path", project, require_file=True
+    )
     if not report_path.is_file() or report_path.stat().st_size == 0:
         raise ValueError(f"Rust quickstart did not produce a non-empty HTML report: {report_path}")
-    evidence_path_text = next(
-        (
-            line.removeprefix("[Report] evidence=")
-            for line in completed.stdout.splitlines()
-            if line.startswith("[Report] evidence=")
-        ),
-        None,
+    if summary_path.stat().st_size == 0:
+        raise ValueError(f"Rust quickstart did not produce a non-empty summary: {summary_path}")
+    evidence_path = _quickstart_project_path(
+        quickstart_result, "evidence_bundle_path", project, require_file=True
     )
-    if evidence_path_text is None:
-        raise ValueError("Rust quickstart exited successfully without reporting its EvidenceBundle path")
-    evidence_path = Path(evidence_path_text).expanduser()
-    if not evidence_path.is_absolute():
-        evidence_path = (Path.cwd() / evidence_path).resolve(strict=False)
     if not evidence_path.is_file() or evidence_path.stat().st_size == 0:
         raise ValueError(f"Rust quickstart did not produce a non-empty EvidenceBundle: {evidence_path}")
-    verification = None
-    for line in completed.stdout.splitlines():
-        if not line.startswith("{"):
-            continue
-        try:
-            candidate = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if candidate.get("operation") == "run-evidence-input-and-artifact-verified":
-            verification = candidate
-            break
+    verification = quickstart_result.get("verification")
     if (
         not isinstance(verification, dict)
-        or verification.get("ok") is not True
+        or verification.get("integrity_verified") is not True
         or verification.get("input_identity_recomputed") is not True
     ):
         raise ValueError("Rust quickstart exited successfully without a successful EvidenceBundle verification")
+    run_identity = quickstart_result.get("run")
+    if (
+        not isinstance(run_identity, dict)
+        or not isinstance(run_identity.get("run_id"), str)
+        or not run_identity["run_id"]
+        or not isinstance(run_identity.get("result_hash"), str)
+        or not run_identity["result_hash"]
+    ):
+        raise ValueError("Rust quickstart result is missing the verified run identity")
     return 0, {
         "status": "succeeded",
         "profile": "ccxt",
@@ -1011,8 +1000,8 @@ def _run_ccxt_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any] 
             "integrity_verified": True,
             "input_identity_recomputed": True,
             "result_recomputed": verification.get("result_recomputed") is True,
-            "run_id": verification.get("run_id"),
-            "result_hash": verification.get("result_hash"),
+            "run_id": run_identity["run_id"],
+            "result_hash": run_identity["result_hash"],
         },
         "quickstart_output": completed.stdout,
         "quickstart_diagnostics": completed.stderr,
@@ -1051,7 +1040,7 @@ def _run_paper_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any]
     # Keep the final path component lexical so the Rust CLI can reject a symlink
     # project root before it writes persistent Paper order/ledger state.
     project = Path(os.path.abspath(Path(args.directory).expanduser()))
-    command = [executable, "quickstart", str(project), "--profile", "paper"]
+    command = [executable, "quickstart", str(project), "--profile", "paper", "--json-result"]
     environment = os.environ.copy()
     environment["QX_PYTHON"] = sys.executable
     completed = subprocess.run(
@@ -1070,17 +1059,8 @@ def _run_paper_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any]
             print(completed.stderr, file=sys.stderr, end="" if completed.stderr.endswith("\n") else "\n")
         return completed.returncode or 2, None
 
-    result_line = next(
-        (line.removeprefix("[QuickstartPaperResult] ") for line in completed.stdout.splitlines()
-         if line.startswith("[QuickstartPaperResult] ")),
-        None,
-    )
-    if result_line is None:
-        raise ValueError("Rust Paper quickstart exited successfully without a machine-readable Paper result")
-    try:
-        paper_result = json.loads(result_line)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Rust Paper quickstart returned invalid result JSON: {exc}") from exc
+    quickstart_result = _read_rust_quickstart_result(completed.stdout, "paper", project)
+    paper_result = quickstart_result.get("paper")
     if (
         not isinstance(paper_result, dict)
         or paper_result.get("profile") != "paper"
@@ -1096,9 +1076,9 @@ def _run_paper_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any]
         or paper_result.get("live_orders_submitted") is not False
     ):
         raise ValueError("Rust Paper quickstart did not prove a new local Paper order with no exchange access")
-    runtime_path = project / "qianxing.runtime.json"
-    if not runtime_path.is_file():
-        raise ValueError(f"Rust Paper quickstart did not create the expected runtime configuration: {runtime_path}")
+    runtime_path = _quickstart_project_path(
+        quickstart_result, "runtime_config_path", project, require_file=True
+    )
     return 0, {
         "status": "succeeded",
         "profile": "paper",
@@ -1115,6 +1095,58 @@ def _run_paper_quickstart(args: argparse.Namespace) -> tuple[int, dict[str, Any]
         "quickstart_output": completed.stdout,
         "quickstart_diagnostics": completed.stderr,
     }
+
+
+def _read_rust_quickstart_result(
+    stdout: str, expected_profile: str, expected_root: Path
+) -> dict[str, Any]:
+    """Read the versioned result contract instead of extracting fields from human log text."""
+    prefix = "[QuickstartResult] "
+    records = [line[len(prefix):] for line in stdout.splitlines() if line.startswith(prefix)]
+    if len(records) != 1:
+        raise ValueError(
+            "Rust quickstart must emit exactly one [QuickstartResult] machine result; "
+            f"found {len(records)}"
+        )
+    try:
+        result = json.loads(records[0])
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Rust quickstart returned invalid result JSON: {exc}") from exc
+    if (
+        not isinstance(result, dict)
+        or result.get("schema_version") != 1
+        or result.get("operation") != "quickstart-result"
+        or result.get("status") != "succeeded"
+        or result.get("profile") != expected_profile
+        or not isinstance(result.get("project_root"), str)
+        or not result["project_root"]
+    ):
+        raise ValueError("Rust quickstart returned an unsupported or incomplete result contract")
+    reported_root = os.path.normcase(os.path.abspath(result["project_root"]))
+    expected_root_text = os.path.normcase(os.path.abspath(expected_root))
+    if reported_root != expected_root_text:
+        raise ValueError("Rust quickstart result project_root does not match the requested project")
+    return result
+
+
+def _quickstart_project_path(
+    result: Mapping[str, Any], field: str, project: Path, *, require_file: bool
+) -> Path:
+    value = result.get(field)
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"Rust quickstart result is missing {field}")
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = project / path
+    resolved_project = project.resolve(strict=False)
+    resolved_path = path.resolve(strict=False)
+    try:
+        resolved_path.relative_to(resolved_project)
+    except ValueError as exc:
+        raise ValueError(f"Rust quickstart result {field} escapes the requested project directory") from exc
+    if require_file and not resolved_path.is_file():
+        raise ValueError(f"Rust quickstart did not produce {field}: {resolved_path}")
+    return resolved_path
 
 
 def _dispatch_command(argv: Sequence[str] | None = None) -> int:

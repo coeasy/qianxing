@@ -75,6 +75,7 @@ pub(crate) fn run() {
             instrument,
             exchange,
             market_type,
+            json_result,
         } => project_command::dispatch_quickstart(
             project,
             html,
@@ -87,6 +88,7 @@ pub(crate) fn run() {
             instrument,
             exchange,
             market_type,
+            json_result,
         ),
         Command::Guide(args) => project_command::dispatch_guide(args),
         Command::Doctor {

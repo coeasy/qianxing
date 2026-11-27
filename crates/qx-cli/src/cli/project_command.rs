@@ -41,6 +41,7 @@ pub(super) fn dispatch_quickstart(
     instrument: Option<String>,
     exchange: Option<String>,
     market_type: Option<crate::cli_args::QuickstartMarketType>,
+    json_result: bool,
 ) {
     quickstart::run(
         project,
@@ -54,6 +55,7 @@ pub(super) fn dispatch_quickstart(
         instrument,
         exchange,
         market_type,
+        json_result,
     );
 }
 

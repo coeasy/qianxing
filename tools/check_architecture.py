@@ -21046,7 +21046,7 @@ def cli_project_command_module_check() -> None:
             module,
         ) is not None
         and re.search(
-            r"quickstart::run\(\s*project,\s*html,\s*force,\s*profile,\s*strategy,\s*days,\s*timeframe,\s*as_of_ms,\s*instrument,\s*exchange,\s*market_type,\s*\)",
+            r"quickstart::run\(\s*project,\s*html,\s*force,\s*profile,\s*strategy,\s*days,\s*timeframe,\s*as_of_ms,\s*instrument,\s*exchange,\s*market_type,\s*json_result,\s*\)",
             module,
         ) is not None
         and "guide::run(args)" in module
@@ -25732,6 +25732,27 @@ def cli_guide_acceptance_check() -> None:
         "WP-5.4 四角色指南共用定义支持文本与版本化 JSON，研究者路径实际生成摘要并复读同一 result_hash",
         "缺少四角色共享指南、可选角色 JSON，或 guide 集成用例未注册/未覆盖产物与指纹，"
         "或 quickstart 生产模块重新隐式依赖 crate 根导入",
+    )
+
+
+def quickstart_result_contract_check() -> None:
+    """Keep Python/Rust first-run integration on a versioned result, not console prose."""
+    args = _read_text(ROOT / "crates/qx-cli/src/cli_args.rs")
+    quickstart = _read_text(ROOT / "crates/qx-cli/src/quickstart.rs")
+    python_cli = _read_text(ROOT / "python/qianxing/cli.py")
+    check(
+        "json_result: bool" in args
+        and "#[arg(long)]\n        json_result: bool" in args
+        and '"operation": "quickstart-result"' in quickstart
+        and '"schema_version": 1' in quickstart
+        and 'println!("[QuickstartResult] {json}")' in quickstart
+        and '"--json-result"' in python_cli
+        and "_read_rust_quickstart_result" in python_cli
+        and "_quickstart_project_path" in python_cli
+        and 'line.startswith("[Report] html=")' not in python_cli
+        and 'line.startswith("[Report] evidence=")' not in python_cli,
+        "Rust/Python quickstart share a versioned machine result and Python confines returned artifacts to the requested project",
+        "Quickstart integration regressed to log scraping, unversioned output, or unchecked project paths",
     )
 
 
@@ -34707,6 +34728,7 @@ def main() -> int:
     cli_migrated_backtest_parity_check()
     cli_behavior_parity_check()
     cli_guide_acceptance_check()
+    quickstart_result_contract_check()
     nats_outbox_publish_identity_check()
     eventlog_outbox_source_identity_check()
     module_map_english_roles_check()

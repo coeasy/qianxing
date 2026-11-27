@@ -118,6 +118,14 @@ HTML 和三张独立 SVG，`-o reports/latest.html` 改输出前缀。
 由 `crates/qx-cli/tests/quickstart_first_run.rs` 钉成用例。落盘份数同样由用例逐个计数
 （`init --strategy macd` 落 11 份（含 Grafana 面板）、首轮回测再写 6 份、EvidenceBundle 1 份，共 18 份，见 `crates/qx-cli/tests/init_onboarding_process.rs` 与 `crates/qx-cli/tests/quickstart_first_run.rs`）。`--html` 额外生成一份 HTML 和三张 SVG，共 22 份。
 
+脚本、Python 和控制台集成可以追加 `--json-result`（当前源码构建提供；v0.4.2 预编译 CLI 尚不支持）：
+
+```bash
+qx-cli quickstart ./qianxing-demo --html --json-result
+```
+
+成功后会追加一行 `[QuickstartResult] {…}`，其 JSON 包含 `schema_version=1`、运行摘要与结果指纹、报告/证据包路径，以及证据校验状态。Python wheel 使用该合同读取 Rust CLI 结果；不要解析人类可读日志中的路径文案。Paper profile 使用相同外层合同，报告和回测字段为 `null`，并在 `paper` 对象中列出本地执行事实。该结果行不替代 `EvidenceBundle` 本身或独立复算。
+
 ---
 
 ## B. 只装 wheel（Python 策略作者）【已实现】

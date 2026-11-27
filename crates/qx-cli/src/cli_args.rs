@@ -105,6 +105,9 @@ pub(crate) enum Command {
         /// CCXT 产品：swap（默认）或 spot；当前 spot quickstart 仅支持 Binance 公共行情。
         #[arg(long, value_enum)]
         market_type: Option<QuickstartMarketType>,
+        /// 在人类可读输出之外追加带版本号的机器结果行，供 Python 和自动化入口消费。
+        #[arg(long)]
+        json_result: bool,
     },
     #[command(name = "guide")]
     Guide(super::guide_args::GuideArgs),
