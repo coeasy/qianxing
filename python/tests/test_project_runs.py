@@ -632,19 +632,39 @@ class ProjectRunTests(unittest.TestCase):
 
         output = io.StringIO()
         renderer = {"path": "qx-cli", "origin": "bundled", "status": "ready"}
-        report_file = self.root / "report.html"
+        project = self.root / "crypto"
+        report_file = project / "data" / "report.html"
+        report_file.parent.mkdir(parents=True, exist_ok=True)
         report_file.write_text("<html>verified report</html>", encoding="utf-8")
-        evidence_file = self.root / "run.evidence.json"
+        (project / "qianxing.runtime.json").write_text("{}", encoding="utf-8")
+        (project / "data" / "summary.json").write_text("{}", encoding="utf-8")
+        evidence_file = project / "data" / "run.evidence.json"
         evidence_file.write_text("{}", encoding="utf-8")
         process = types.SimpleNamespace(
             returncode=0,
             stdout=(
                 f"[真实公开行情] exchange=bitget\n"
-                f"[Report] html={report_file}\n"
-                f"[Report] evidence={evidence_file}\n"
-                '{"ok":true,"operation":"run-evidence-input-and-artifact-verified",'
-                '"input_identity_recomputed":true,"result_recomputed":false,'
-                '"run_id":"test-run","result_hash":"abc123"}\n'
+                "[QuickstartResult] " + json.dumps({
+                    "schema_version": 1,
+                    "operation": "quickstart-result",
+                    "status": "succeeded",
+                    "profile": "ccxt",
+                    "project_root": str(project),
+                    "runtime_config_path": str(project / "qianxing.runtime.json"),
+                    "summary_path": str(project / "data" / "summary.json"),
+                    "report_html_path": str(report_file),
+                    "evidence_bundle_path": str(evidence_file),
+                    "verification": {
+                        "integrity_verified": True,
+                        "input_identity_recomputed": True,
+                        "result_recomputed": False,
+                    },
+                    "run": {
+                        "run_id": "test-run",
+                        "result_hash": "abc123",
+                        "data_fingerprint": "bars123",
+                    },
+                }) + "\n"
             ),
             stderr="",
         )
@@ -669,6 +689,7 @@ class ProjectRunTests(unittest.TestCase):
         self.assertEqual(command[command.index("--days") + 1], "52")
         self.assertEqual(command[command.index("--as-of-ms") + 1], "1700001000000")
         self.assertIn("--html", command)
+        self.assertIn("--json-result", command)
         self.assertEqual(run.call_args.kwargs["env"]["QX_PYTHON"], sys.executable)
         self.assertEqual(run.call_args.kwargs["check"], False)
         document = json.loads(output.getvalue())
@@ -677,9 +698,11 @@ class ProjectRunTests(unittest.TestCase):
         self.assertEqual(document["data"]["market_type"], "swap")
         self.assertFalse(document["data"]["is_sample"])
         self.assertFalse(document["data"]["orders_submitted"])
-        self.assertEqual(document["report_html_path"], str(report_file))
-        self.assertIn(f"[Report] html={report_file}", document["quickstart_output"])
-        self.assertEqual(document["run_evidence"]["bundle_path"], str(evidence_file))
+        self.assertEqual(Path(document["report_html_path"]).resolve(), report_file.resolve())
+        self.assertIn("[QuickstartResult]", document["quickstart_output"])
+        self.assertEqual(
+            Path(document["run_evidence"]["bundle_path"]).resolve(), evidence_file.resolve()
+        )
         self.assertTrue(document["run_evidence"]["integrity_verified"])
         self.assertTrue(document["run_evidence"]["input_identity_recomputed"])
         self.assertFalse(document["run_evidence"]["result_recomputed"])
@@ -690,19 +713,33 @@ class ProjectRunTests(unittest.TestCase):
 
         output = io.StringIO()
         renderer = {"path": "qx-cli", "origin": "bundled", "status": "ready"}
-        report_file = self.root / "spot-report.html"
+        project = self.root / "binance-spot"
+        report_file = project / "data" / "spot-report.html"
+        report_file.parent.mkdir(parents=True, exist_ok=True)
         report_file.write_text("<html>spot report</html>", encoding="utf-8")
-        evidence_file = self.root / "spot.evidence.json"
+        (project / "qianxing.runtime.json").write_text("{}", encoding="utf-8")
+        (project / "data" / "spot-summary.json").write_text("{}", encoding="utf-8")
+        evidence_file = project / "data" / "spot.evidence.json"
         evidence_file.write_text("{}", encoding="utf-8")
         process = types.SimpleNamespace(
             returncode=0,
-            stdout=(
-                f"[Report] html={report_file}\n"
-                f"[Report] evidence={evidence_file}\n"
-                '{"ok":true,"operation":"run-evidence-input-and-artifact-verified",'
-                '"input_identity_recomputed":true,"result_recomputed":false,'
-                '"run_id":"spot-run","result_hash":"spot123"}\n'
-            ),
+            stdout="[QuickstartResult] " + json.dumps({
+                "schema_version": 1,
+                "operation": "quickstart-result",
+                "status": "succeeded",
+                "profile": "ccxt",
+                "project_root": str(project),
+                "runtime_config_path": str(project / "qianxing.runtime.json"),
+                "summary_path": str(project / "data" / "spot-summary.json"),
+                "report_html_path": str(report_file),
+                "evidence_bundle_path": str(evidence_file),
+                "verification": {
+                    "integrity_verified": True,
+                    "input_identity_recomputed": True,
+                    "result_recomputed": False,
+                },
+                "run": {"run_id": "spot-run", "result_hash": "spot123"},
+            }) + "\n",
             stderr="",
         )
         with patch.object(CcxtExchangeClient, "_load_ccxt"), \
@@ -759,11 +796,25 @@ class ProjectRunTests(unittest.TestCase):
             "credentials_loaded": False,
             "live_orders_submitted": False,
         }
+        runtime_path = project / "qianxing.runtime.json"
         process = types.SimpleNamespace(
             returncode=0,
             stdout=(
                 "quickstart 使用 paper profile\n"
                 f"[QuickstartPaperResult] {json.dumps(paper_result)}\n"
+                "[QuickstartResult] " + json.dumps({
+                    "schema_version": 1,
+                    "operation": "quickstart-result",
+                    "status": "succeeded",
+                    "profile": "paper",
+                    "project_root": str(project),
+                    "runtime_config_path": str(runtime_path),
+                    "summary_path": None,
+                    "report_html_path": None,
+                    "evidence_bundle_path": None,
+                    "verification": None,
+                    "paper": paper_result,
+                }) + "\n"
             ),
             stderr="",
         )
@@ -783,7 +834,7 @@ class ProjectRunTests(unittest.TestCase):
 
         command = invoke.call_args.args[0]
         self.assertEqual(command[:2], ["qx-cli", "quickstart"])
-        self.assertEqual(command[-2:], ["--profile", "paper"])
+        self.assertEqual(command[-3:], ["--profile", "paper", "--json-result"])
         self.assertEqual(invoke.call_args.kwargs["env"]["QX_PYTHON"], sys.executable)
         document = json.loads(output.getvalue())
         self.assertEqual(document["profile"], "paper")
@@ -832,11 +883,28 @@ class ProjectRunTests(unittest.TestCase):
     def test_ccxt_quickstart_does_not_report_success_without_evidence_bundle(self):
         from qianxing_ccxt import CcxtExchangeClient
 
-        report_file = self.root / "report.html"
+        project = self.root / "crypto"
+        report_file = project / "data" / "report.html"
+        report_file.parent.mkdir(parents=True, exist_ok=True)
         report_file.write_text("<html>verified report</html>", encoding="utf-8")
+        (project / "qianxing.runtime.json").write_text("{}", encoding="utf-8")
+        (project / "data" / "summary.json").write_text("{}", encoding="utf-8")
+        quickstart_result = {
+            "schema_version": 1,
+            "operation": "quickstart-result",
+            "status": "succeeded",
+            "profile": "ccxt",
+            "project_root": str(project),
+            "runtime_config_path": str(project / "qianxing.runtime.json"),
+            "summary_path": str(project / "data" / "summary.json"),
+            "report_html_path": str(report_file),
+            "evidence_bundle_path": None,
+            "verification": {"integrity_verified": True, "input_identity_recomputed": True},
+            "run": {"run_id": "test", "result_hash": "abc"},
+        }
         process = types.SimpleNamespace(
             returncode=0,
-            stdout=f"[Report] html={report_file}\n",
+            stdout="[QuickstartResult] " + json.dumps(quickstart_result) + "\n",
             stderr="",
         )
         with patch.object(CcxtExchangeClient, "_load_ccxt"), \
@@ -847,18 +915,35 @@ class ProjectRunTests(unittest.TestCase):
                 cli.main(["quickstart", str(self.root / "crypto"), "--profile", "ccxt"]),
                 2,
             )
-        self.assertIn("without reporting its EvidenceBundle path", self.output.getvalue())
+        self.assertIn("missing evidence_bundle_path", self.output.getvalue())
 
     def test_ccxt_quickstart_rejects_bundle_without_successful_verification(self):
         from qianxing_ccxt import CcxtExchangeClient
 
-        report_file = self.root / "report.html"
+        project = self.root / "crypto"
+        report_file = project / "data" / "report.html"
+        report_file.parent.mkdir(parents=True, exist_ok=True)
         report_file.write_text("<html>verified report</html>", encoding="utf-8")
-        evidence_file = self.root / "run.evidence.json"
+        (project / "qianxing.runtime.json").write_text("{}", encoding="utf-8")
+        (project / "data" / "summary.json").write_text("{}", encoding="utf-8")
+        evidence_file = project / "data" / "run.evidence.json"
         evidence_file.write_text("{}", encoding="utf-8")
+        quickstart_result = {
+            "schema_version": 1,
+            "operation": "quickstart-result",
+            "status": "succeeded",
+            "profile": "ccxt",
+            "project_root": str(project),
+            "runtime_config_path": str(project / "qianxing.runtime.json"),
+            "summary_path": str(project / "data" / "summary.json"),
+            "report_html_path": str(report_file),
+            "evidence_bundle_path": str(evidence_file),
+            "verification": {"integrity_verified": False, "input_identity_recomputed": False},
+            "run": {"run_id": "test", "result_hash": "abc"},
+        }
         process = types.SimpleNamespace(
             returncode=0,
-            stdout=f"[Report] html={report_file}\n[Report] evidence={evidence_file}\n",
+            stdout="[QuickstartResult] " + json.dumps(quickstart_result) + "\n",
             stderr="",
         )
         with patch.object(CcxtExchangeClient, "_load_ccxt"), \
@@ -885,6 +970,26 @@ class ProjectRunTests(unittest.TestCase):
         renderer.assert_not_called()
         process.assert_not_called()
         self.assertIn("install qianxing[ccxt]", self.output.getvalue())
+
+    def test_rust_quickstart_machine_result_rejects_a_different_project_root(self):
+        result = {
+            "schema_version": 1,
+            "operation": "quickstart-result",
+            "status": "succeeded",
+            "profile": "ccxt",
+            "project_root": str(self.root / "other-project"),
+        }
+        with self.assertRaisesRegex(ValueError, "does not match the requested project"):
+            cli._read_rust_quickstart_result(
+                "[QuickstartResult] " + json.dumps(result), "ccxt", self.root / "crypto"
+            )
+
+    def test_rust_quickstart_machine_result_rejects_artifact_paths_outside_project(self):
+        result = {"report_html_path": str(self.root / "outside.html")}
+        with self.assertRaisesRegex(ValueError, "escapes the requested project directory"):
+            cli._quickstart_project_path(
+                result, "report_html_path", self.root / "crypto", require_file=False
+            )
 
     def test_quickstart_rejects_ccxt_options_in_sample_profile_before_writing(self):
         with patch.object(cli, "init_strategy_project") as initialize, \
@@ -919,7 +1024,19 @@ class ProjectRunTests(unittest.TestCase):
 
         process = types.SimpleNamespace(
             returncode=0,
-            stdout="[真实公开行情] exchange=okx\n[Report] html=missing-report.html\n",
+            stdout="[QuickstartResult] " + json.dumps({
+                "schema_version": 1,
+                "operation": "quickstart-result",
+                "status": "succeeded",
+                "profile": "ccxt",
+                "project_root": str(self.root / "crypto"),
+                "runtime_config_path": str(self.root / "crypto" / "qianxing.runtime.json"),
+                "summary_path": str(self.root / "crypto" / "data" / "summary.json"),
+                "report_html_path": str(self.root / "crypto" / "missing-report.html"),
+                "evidence_bundle_path": str(self.root / "crypto" / "missing-evidence.json"),
+                "verification": {"integrity_verified": True, "input_identity_recomputed": True},
+                "run": {"run_id": "test", "result_hash": "abc"},
+            }) + "\n",
             stderr="",
         )
         with patch.object(CcxtExchangeClient, "_load_ccxt"), \
@@ -930,7 +1047,7 @@ class ProjectRunTests(unittest.TestCase):
                 cli.main(["quickstart", str(self.root / "crypto"), "--profile", "ccxt"]),
                 2,
             )
-        self.assertIn("did not produce a non-empty HTML report", self.output.getvalue())
+        self.assertIn("did not produce report_html_path", self.output.getvalue())
 
     def test_latest_report_refuses_failed_corrupt_or_ambiguous_runs(self):
         with self.assertRaisesRegex(ValueError, "no project runs"):

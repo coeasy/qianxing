@@ -128,7 +128,10 @@ fn one_command_lands_the_same_chain_as_the_command_by_command_chain() {
     let project_text = project.to_string_lossy().into_owned().replace('\\', "/");
     let deploy_data = repository_root().join("deploy").join("data");
     let deploy_before = count_files(&deploy_data);
-    let (code, stdout, stderr) = run(&base, &["quickstart", &project.to_string_lossy()]);
+    let (code, stdout, stderr) = run(
+        &base,
+        &["quickstart", &project.to_string_lossy(), "--json-result"],
+    );
     assert_eq!(code, 0, "quickstart 首跑失败: {stderr}");
     assert!(
         stdout.contains("[Backtest · Preflight] ready=true instrument="),
@@ -186,6 +189,44 @@ fn one_command_lands_the_same_chain_as_the_command_by_command_chain() {
         stdout.contains("\"operation\":\"run-evidence-input-and-artifact-verified\""),
         "quickstart 必须真的执行离线 EvidenceBundle 校验:\n{stdout}"
     );
+    let hashes = result_hashes(&stdout);
+    assert_eq!(
+        hashes.len(),
+        1,
+        "一条链条只该有一个 result_hash，实际 {hashes:?}"
+    );
+    let result = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("[QuickstartResult] "))
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("机器结果必须是 JSON"))
+        .expect("--json-result 必须输出版本化机器结果");
+    assert_eq!(result["schema_version"], 1);
+    assert_eq!(result["operation"], "quickstart-result");
+    assert_eq!(result["profile"], "builtin");
+    assert_eq!(result["verification"]["integrity_verified"], true);
+    assert_eq!(result["verification"]["input_identity_recomputed"], true);
+    assert_eq!(result["verification"]["result_recomputed"], false);
+    let evidence = <qx_spec::EvidenceBundle as qx_spec::FoundationDocument>::from_json(
+        &std::fs::read_to_string(&evidence_path).expect("证据包必须可读"),
+    )
+    .expect("证据包必须可解析");
+    let qx_spec::EvidenceGeneration::Run(run_evidence) = evidence.generation else {
+        panic!("首跑 EvidenceBundle 必须使用 run generation");
+    };
+    assert_eq!(result["run"]["run_id"], run_evidence.run.run_id);
+    assert_eq!(result["run"]["result_hash"], run_evidence.run.result_hash);
+    assert_eq!(
+        result["run"]["data_fingerprint"],
+        run_evidence.run.data_fingerprint
+    );
+    assert_eq!(
+        result["run"]["result_hash"].as_str(),
+        hashes.first().map(String::as_str)
+    );
+    assert_eq!(
+        PathBuf::from(result["evidence_bundle_path"].as_str().expect("证据包路径")),
+        evidence_path
+    );
     assert!(
         stdout.contains(&format!(
             "EvidenceBundle 已离线核验：{}",
@@ -227,12 +268,6 @@ fn one_command_lands_the_same_chain_as_the_command_by_command_chain() {
         count_files(&deploy_data),
         deploy_before,
         "quickstart 弄脏了仓库的 deploy/data（发布口径要求工作树只读）"
-    );
-    let hashes = result_hashes(&stdout);
-    assert_eq!(
-        hashes.len(),
-        1,
-        "一条链条只该有一个 result_hash，实际 {hashes:?}"
     );
     // 对照链在项目目录之外另起一棵：`temp_base` 只建了 base，这一层得自己建。
     let direct = base.join("direct");
@@ -346,6 +381,7 @@ fn paper_profile_runs_the_full_local_paper_chain_without_exchange_access() {
             &project.to_string_lossy(),
             "--profile",
             "paper",
+            "--json-result",
         ],
     );
     assert_eq!(code, 0, "Paper quickstart 失败: {stderr}");
@@ -380,6 +416,20 @@ fn paper_profile_runs_the_full_local_paper_chain_without_exchange_access() {
     assert_eq!(result["network_accessed"], false);
     assert_eq!(result["credentials_loaded"], false);
     assert_eq!(result["live_orders_submitted"], false);
+    let machine_result = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("[QuickstartResult] "))
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("机器结果必须是 JSON"))
+        .expect("--json-result 必须输出版本化机器结果");
+    assert_eq!(machine_result["schema_version"], 1);
+    assert_eq!(machine_result["profile"], "paper");
+    assert!(
+        machine_result["paper"]["new_orders"]
+            .as_u64()
+            .unwrap_or_default()
+            > 0
+    );
+    assert_eq!(machine_result["report_html_path"], serde_json::Value::Null);
     assert!(project.join("qianxing.runtime.json").is_file());
     assert!(!base.join("data").exists(), "Paper 首跑不得污染启动目录");
     let _ = std::fs::remove_dir_all(base);
