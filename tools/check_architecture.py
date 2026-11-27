@@ -23101,6 +23101,16 @@ def web_console_check() -> None:
         "预填被摘掉（连接入口回到空白）或条件丢失（静态形态也预填），后者会把静态服务的源当成 API 源连上去",
     )
     check(
+        'id="run-console-quickstart"' in html
+        and 'addEventListener("click", () => { void runConsoleQuickstart(); })' in code
+        and 'spec.bars_path !== "sample.json"' in code
+        and "if (!await installConsoleSample())" in code
+        and "if (!await runResearch(false))" in code
+        and "回测产物复核通过" in code,
+        "Console 教学首跑按顺序安装样例、运行现有研究链并以产物复核作为成功条件",
+        "首跑按钮、固定样例路径、现有 Bar 流程或复核成功判定断开",
+    )
+    check(
         "if (!base) {" in code and "if (!base) return;" not in code,
         "空基地址要有可见反馈（徽标 + 健康面板一行），「连接」不能静默无反应",
         "静默返回回来了：点按钮没有任何信号，运维会读成页面坏了或已经连上",

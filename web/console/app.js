@@ -951,11 +951,11 @@ async function installConsoleSample() {
   const output = $("sample-install-status");
   if (!state.connected) {
     output.textContent = "请先连接已登录的 qx-cli Console。";
-    return;
+    return false;
   }
   if (!state.viaBff) {
     output.textContent = "一键安装仅由同源 Console 提供；静态页面请下载样例并手工保存到 API 数据目录。";
-    return;
+    return false;
   }
   button.disabled = true;
   output.textContent = "正在校验并安装教学数据…";
@@ -963,8 +963,10 @@ async function installConsoleSample() {
     const response = await postJsonText("/console/sample-data", "");
     if (response.ok && response.body?.status === "installed") {
       output.textContent = `教学数据已安装（${response.body.bytes} 字节，SHA-256 ${response.body.sha256}）。现在可运行“只校验数据”。`;
+      return true;
     } else if (response.ok && response.body?.status === "already_present") {
       output.textContent = "相同教学数据已存在，没有改写文件。现在可运行“只校验数据”。";
+      return true;
     } else if (response.status === 409) {
       output.textContent = "安装已停止：API 数据目录中的 sample.json 已存在且内容不同，原文件未改写。请先备份后自行处理。";
     } else {
@@ -972,6 +974,49 @@ async function installConsoleSample() {
     }
   } catch (error) {
     output.textContent = `教学数据安装失败：${error.message}`;
+  } finally {
+    button.disabled = false;
+  }
+  return false;
+}
+
+async function runConsoleQuickstart() {
+  const button = $("run-console-quickstart");
+  const output = $("console-quickstart-status");
+  if (!state.connected) {
+    output.textContent = "请先连接已登录的 qx-cli Console。";
+    return false;
+  }
+  if (!state.viaBff) {
+    output.textContent = "一键首跑仅由同源 Console 提供；静态页面请按步骤下载样例并运行 Bar 研究工作流。";
+    return false;
+  }
+  let spec;
+  try {
+    spec = JSON.parse($("research-spec").value.trim());
+  } catch (error) {
+    output.textContent = `当前 BacktestSpec JSON 无效：${error.message}`;
+    return false;
+  }
+  if (!spec || typeof spec !== "object" || Array.isArray(spec) || spec.bars_path !== "sample.json") {
+    output.textContent = "一键首跑要求下方 BacktestSpec 的 bars_path 保持为 sample.json；自定义数据请使用 Bar 研究工作流。";
+    return false;
+  }
+
+  button.disabled = true;
+  output.textContent = "正在准备教学数据…";
+  try {
+    if (!await installConsoleSample()) {
+      output.textContent = "教学数据未能安装；请查看上方安装状态，原有文件不会被覆盖。";
+      return false;
+    }
+    output.textContent = "教学数据已就绪，正在校验、回测并复核产物…";
+    if (!await runResearch(false)) {
+      output.textContent = "首跑未完成或产物复核未通过；请查看 Bar 研究工作流的详细结果。";
+      return false;
+    }
+    output.textContent = "教学首跑完成，回测产物复核通过。下方已显示收益、回撤、成交和数据摘要。";
+    return true;
   } finally {
     button.disabled = false;
   }
@@ -1207,7 +1252,7 @@ async function submitCommand(event) {
 async function runResearch(validateOnly) {
   const output = $("research-output");
   const buttons = [$("research-validate"), $("research-run")];
-  if (!state.base) return;
+  if (!state.base) return false;
   clearResearchReport();
   for (const button of buttons) button.disabled = true;
   output.textContent = "正在校验数据集…";
@@ -1222,29 +1267,32 @@ async function runResearch(validateOnly) {
     const validation = await postJson(API_PATHS.appValidateDataset, dataset);
     if (!validation.ok || !validation.body?.usable) {
       output.textContent = JSON.stringify({ validation }, null, 2);
-      return;
+      return false;
     }
     if (validateOnly) {
       output.textContent = JSON.stringify({ validation }, null, 2);
-      return;
+      return true;
     }
     output.textContent = "数据可用，正在回测…";
     // 保留 i128 *_raw 字面量原文；JSON.parse/ stringify 会把大整数舍入到 IEEE-754 精度。
     const backtest = await postJsonText(API_PATHS.appBacktest, specText);
     if (!backtest.ok) {
       output.textContent = JSON.stringify({ validation, backtest }, null, 2);
-      return;
+      return false;
     }
     output.textContent = "回测完成，正在复核四份产物…";
     const verification = await postJson(API_PATHS.appVerify, backtest.body);
     output.textContent = JSON.stringify({ validation, backtest, verification }, null, 2);
     if (verification.ok && verification.body?.verified === true) {
       renderResearchReport(backtest.body, verification.body);
+      return true;
     }
+    return false;
   } catch (error) {
     output.textContent = error instanceof SyntaxError
       ? `回测规格 JSON 无效：${error.message}`
       : `研究请求失败：${error}`;
+    return false;
   } finally {
     for (const button of buttons) button.disabled = false;
   }
@@ -4318,6 +4366,7 @@ window.addEventListener("DOMContentLoaded", () => {
   $("connect").addEventListener("click", connect);
   $("disconnect").addEventListener("click", disconnect);
   $("install-sample").addEventListener("click", () => { void installConsoleSample(); });
+  $("run-console-quickstart").addEventListener("click", () => { void runConsoleQuickstart(); });
   $("account-activity-prev").addEventListener("click", () => {
     const cursor = state.activityPage?.previous_before;
     if (cursor === null || cursor === undefined) return;
