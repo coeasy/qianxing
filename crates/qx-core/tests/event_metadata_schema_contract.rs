@@ -31,14 +31,11 @@ fn event_metadata_v2_matches_the_registered_cross_process_golden() {
     let fixture: Value = serde_json::from_str(V2_FIXTURE).expect("v2 golden is valid JSON");
     let encoded = serde_json::to_value(&metadata).expect("metadata serializes");
     assert_eq!(schema["properties"]["schema_version"]["const"], 2);
-    assert_eq!(
-        schema["required"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|v| v == "source_kind"),
-        true
-    );
+    assert!(schema["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v == "source_kind"));
     assert_eq!(encoded, fixture);
 
     let restored: EventMetadata = serde_json::from_value(fixture).expect("v2 golden deserializes");
