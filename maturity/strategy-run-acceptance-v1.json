@@ -21850,6 +21850,134 @@
         }
       ],
       "notes": "PostgreSQL deployment blobs are hash-verified and rehydrated into an immutable runtime cache"
+    },
+    {
+      "run_id": "274ddb07-6228-4159-a08d-71f12f8a9d8a",
+      "acceptance_id": "R01-AC01",
+      "recorded_at_utc": "2026-11-27T03:22:01.240010Z",
+      "source_revision": "5eed760e62db026d7906301c62a697bed324a7cd",
+      "source_tree_sha256": "25d0bb65042d18b0f90cc3ba7000fe81777431dbfc3109a685bbb1a2eaa4415b",
+      "source_manifest": "maturity/acceptance-artifacts/274ddb07-6228-4159-a08d-71f12f8a9d8a.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "python",
+        "tools/check_rust_sdk_packages.py",
+        "qx-sdk",
+        "--offline",
+        "--allow-dirty"
+      ],
+      "inputs": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "008d1fd87e3607c908c1b309e9dd1df09ac4bff2a09ae0ea7768719f32217938"
+        },
+        {
+          "path": "Cargo.lock",
+          "sha256": "494f811113d9cb90a486698912e817a0390d5b531e58f521f4385bf07b95a9e6"
+        },
+        {
+          "path": "crates/qx-core/Cargo.toml",
+          "sha256": "6fd546978db29e5408b6f7592e1dd8584aa8209c537134cfbe12297be7af9856"
+        },
+        {
+          "path": "crates/qx-control/Cargo.toml",
+          "sha256": "075819f3473adb3b53676167de1bd697c2939ec7228a4b89eed9bf2b9c75e4d7"
+        },
+        {
+          "path": "crates/qx-guanxing/Cargo.toml",
+          "sha256": "2c63a09f691214575d257ff8f1b0d51e4fd32c0035cc13a3e61493e98d00341f"
+        },
+        {
+          "path": "crates/qx-datastruct/Cargo.toml",
+          "sha256": "b6f26c008cce451905516eea698885ce4903539f560ea66f0f1910db39c8cffa"
+        },
+        {
+          "path": "crates/qx-data/Cargo.toml",
+          "sha256": "822178837205331f7e879eeecf1622bf81478bac99f83c9ad173ba60b902780f"
+        },
+        {
+          "path": "crates/qx-provider/Cargo.toml",
+          "sha256": "57c3c8049c0928aef2b6bece2d812b4be80e72dd99e63528a8dcdc1e859e496d"
+        },
+        {
+          "path": "crates/qx-risk/Cargo.toml",
+          "sha256": "c920bb8d3db735216ed0f38ece0d01e021d060b72f7818f6dc0fe02535777989"
+        },
+        {
+          "path": "crates/qx-spec/Cargo.toml",
+          "sha256": "4daee9a58041aed192f4d7bc8b94239049bab009eecf3605bd599bf512fe142d"
+        },
+        {
+          "path": "crates/qx-strategy/Cargo.toml",
+          "sha256": "4dec3f4847866e0a39a7d9ae6451707ff6418dcf8ed4a460bbd35a3f43bd06c9"
+        },
+        {
+          "path": "crates/qx-zhenlu/Cargo.toml",
+          "sha256": "ed96611fa8cedffb2469941fb969b32d86d313a8cb66525a2682b6eda4d8640d"
+        },
+        {
+          "path": "crates/qx-xingban/Cargo.toml",
+          "sha256": "a7812ffc5abd61aafa5d4552b50a61f91816a64f6d24ae315a183433e40f0f70"
+        },
+        {
+          "path": "crates/qx-app/Cargo.toml",
+          "sha256": "0ba51bbb728b3d58e4418d8275e0fa6893b91d24ecb84ef134854e1c45a7e3e9"
+        },
+        {
+          "path": "crates/qx-execution/Cargo.toml",
+          "sha256": "6190423cdcd4f69b4567634d804ac08da4c3160216a43e8fd3a95fb2b11f2144"
+        },
+        {
+          "path": "crates/qx-sdk/Cargo.toml",
+          "sha256": "daea2c29f493cd587d00cfdcfe8a2460ba2535172de2271bd75b38d9acf9c4f6"
+        },
+        {
+          "path": "crates/qx-sdk/README.md",
+          "sha256": "5b4ead84f630cd72cde60451d084a6c5a6ed36e68beecce589d6340dfddd480b"
+        },
+        {
+          "path": "examples/rust-sdk-quickstart/Cargo.toml",
+          "sha256": "7706d77056ae7473a14701101fadd046bce18f0824e0f0865d8e7f28088bcdcb"
+        },
+        {
+          "path": "examples/rust-sdk-quickstart/Cargo.lock",
+          "sha256": "95946dd55d8666c69f5ec9d0c9a2617bd5a2634b2cd14a7e0af80221f1414299"
+        },
+        {
+          "path": "examples/rust-sdk-quickstart/src/main.rs",
+          "sha256": "34be60024db7cfe243582afcfea5313d89f802efe34bb21535532513029b424b"
+        },
+        {
+          "path": "tools/check_rust_sdk_packages.py",
+          "sha256": "9267b2274895cd112814fbd2abc4d7e65724fd3698850f5fad01533fb1e3434e"
+        },
+        {
+          "path": "tools/cargo_publish_plan.py",
+          "sha256": "d6b1ffe1cb250b93b7169f6187f823ef19833ad71f0467076e84f09bf1ee40c0"
+        },
+        {
+          "path": "tools/check_crates_io_artifacts.py",
+          "sha256": "9ff0ed448d860527630cb1e6f241d722482859d459a3daa28003a5ca19ae0796"
+        }
+      ],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/274ddb07-6228-4159-a08d-71f12f8a9d8a.log",
+          "sha256": "ac11d27b6af12273589d26ab00c48b809c8aa90a0b736c684513373407080794"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/274ddb07-6228-4159-a08d-71f12f8a9d8a.source-tree.json",
+          "sha256": "5e9975277cc1a11fdf494816d4ea13d60e9a75b5bf9159486fdcbf6220677571"
+        }
+      ],
+      "notes": "Offline packaging and compile check for all 14 qx-sdk crates on candidate 5eed760e, followed by an independent quickstart built from packaged crates; 70 illustrative bars, one fill, Verified true. This does not claim registry installation or publication."
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"
