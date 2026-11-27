@@ -324,6 +324,8 @@ jobs:
           base_dir="$RUNNER_TEMP/qianxing-performance-baseline"
           git fetch --no-tags --depth=1 origin "$BASE_REVISION"
           git worktree add --detach "$base_dir" FETCH_HEAD
+          # The checked-out parent may store generated benchmark frames under
+          # REPO_ROOT/target even though Cargo artifacts use the isolated target dir.
           mkdir -p "$base_dir/target"
           cargo build --release --manifest-path "$base_dir/Cargo.toml" -p qx-cli
           baseline_binary="$RUNNER_TEMP/qx-cli-performance-baseline"

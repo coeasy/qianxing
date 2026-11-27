@@ -119,8 +119,33 @@ fn backtest_preflight_reports_readiness_without_writing_artifacts() {
     let spec = backtest_spec("preflight-ready", &bars, &output_dir);
 
     let report = preflight_backtest_v1(&spec, &research("preflight-ready")).expect("预检成功");
+    let frame_payload = std::fs::read_to_string(&bars).expect("read the verified BarFrame");
+    let frame = qx_datastruct::BarFrame::from_json(&frame_payload).expect("parse BarFrame");
+    let (_, manifest) = qx_app::backtest_input_identity::barframe_dataset_identity(
+        std::path::Path::new(&bars),
+        &frame,
+    )
+    .expect("读取并核验 BarFrame 数据集身份");
+    let reused_report = qx_app::preflight_backtest_v1_with_verified_manifest(
+        &spec,
+        &frame,
+        &manifest,
+        &research("preflight-ready"),
+    )
+    .expect("复用已验证 BarFrame 数据集身份的预检成功");
 
     assert!(report.ready, "完整匹配的数据应通过: {:?}", report.checks);
+    assert_eq!(reused_report, report, "内存快照路径必须保持相同预检合同");
+    let mut mismatched_manifest = manifest.clone();
+    mismatched_manifest.end_timestamp += 1;
+    let mismatch = qx_app::preflight_backtest_v1_with_verified_manifest(
+        &spec,
+        &frame,
+        &mismatched_manifest,
+        &research("preflight-manifest-mismatch"),
+    )
+    .expect_err("另一份数据的 manifest 必须 fail closed");
+    assert_eq!(mismatch.category(), AppErrorCategory::InvalidInput);
     assert_eq!(report.schema_version, 1);
     assert_eq!(report.run_id, "preflight-ready");
     assert_eq!(report.data.rows, 40);
@@ -611,6 +636,28 @@ fn a_bar_frame_for_a_different_instrument_is_rejected() {
         error.message().contains("ETHUSDT.BINANCE"),
         "拒绝理由要点名对不上的标的: {}",
         error.message()
+    );
+}
+
+#[test]
+fn a_bar_backtest_rejects_the_exclusive_market_spec_end_timestamp() {
+    let root = scratch("bt-market-window");
+    let bars = write_frame(&root, "bars.json", "BTCUSDT.BINANCE", 60);
+    let mut spec = backtest_spec("run-market-window", &bars, &root.join("out"));
+    let instrument = qx_core::InstrumentId::parse("BTCUSDT.BINANCE").expect("instrument");
+    let mut market = qx_core::TradingInstrumentSpec::spot_default(&instrument, "USDT");
+    market.valid_from = 1_000;
+    market.valid_to = Some(60_000);
+    spec.market_spec = Some(market);
+    spec.fee_schedule = Some(qx_core::MakerTakerFeeSchedule::default());
+
+    let error = run_backtest(&spec, &research("run-market-window"))
+        .expect_err("valid_to is exclusive and must reject the final Bar at the boundary");
+
+    assert_eq!(error.category(), AppErrorCategory::InvalidInput);
+    assert_eq!(
+        error.message(),
+        "Bar 数据时间超出 BacktestSpec.market_spec 的有效期"
     );
 }
 

@@ -1,4 +1,4 @@
-"""Guard the paired performance workflow against cross-revision Cargo artifacts."""
+"""Guard paired performance builds against target-path mismatches."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 
 
 class PerformanceWorkflowTests(unittest.TestCase):
-    def test_parent_and_candidate_builds_use_separate_cargo_targets(self) -> None:
+    def test_parent_and_candidate_benchmarks_use_separate_cargo_targets(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
         baseline_start = workflow.index("- name: Build and measure the parent revision on this runner")
         candidate_start = workflow.index("- name: Build release CLI", baseline_start)
@@ -24,7 +24,7 @@ class PerformanceWorkflowTests(unittest.TestCase):
             candidate_build_end,
         )
         candidate_benchmark_end = workflow.index(
-            "- name: Block registered regressions above ledger thresholds",
+            "- name: Detect changes to measured Rust sources and workload inputs",
             candidate_benchmark_start,
         )
         baseline_step = workflow[baseline_start:candidate_start]
@@ -35,14 +35,12 @@ class PerformanceWorkflowTests(unittest.TestCase):
             "CARGO_TARGET_DIR: ${{ runner.temp }}/qianxing-performance-baseline-target",
             baseline_step,
         )
-        self.assertIn(
-            "CARGO_TARGET_DIR: ${{ github.workspace }}/target",
-            candidate_step,
-        )
+        self.assertIn("CARGO_TARGET_DIR: ${{ github.workspace }}/target", candidate_step)
+        self.assertNotIn('ln -s "$GITHUB_WORKSPACE/target" "$base_dir/target"', baseline_step)
+        self.assertIn('mkdir -p "$base_dir/target"', baseline_step)
+        self.assertIn('--workspace-root "$base_dir"', baseline_step)
         self.assertIn('--target-dir "$CARGO_TARGET_DIR"', baseline_step)
         self.assertIn('--target-dir "$CARGO_TARGET_DIR"', candidate_benchmark)
-        self.assertIn('mkdir -p "$base_dir/target"', baseline_step)
-        self.assertNotIn('ln -s "$GITHUB_WORKSPACE/target" "$base_dir/target"', baseline_step)
 
     def test_regression_gate_runs_only_when_measured_inputs_changed(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")

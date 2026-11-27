@@ -1,8 +1,8 @@
 use qx_app::{
     build_strategy_context, run_bar_backtest_with_outcome, run_bar_backtest_with_strategy,
-    run_native_builtin_strategy_backtest, BacktestDatasetInput, BacktestRiskRules, BacktestSpec,
-    BuiltinStrategySpec, CallerCapability, NativeStrategyBacktestContextBindings, RunContext,
-    StrategyContextBindings,
+    run_native_builtin_strategy_backtest, AppErrorCategory, BacktestDatasetInput,
+    BacktestRiskRules, BacktestSpec, BuiltinStrategySpec, CallerCapability,
+    NativeStrategyBacktestContextBindings, RunContext, StrategyContextBindings,
 };
 use qx_core::{InstrumentId, Money, Quantity};
 use qx_guanxing::Bar;
@@ -65,6 +65,41 @@ fn caller_supplied_bar_strategy_preserves_the_report_returning_api() {
     assert_eq!(report.equity.len(), bars.len());
     assert_eq!(report.clock_start, bars[0].ts);
     assert_eq!(report.clock_end, bars[2].ts);
+}
+
+#[test]
+fn strategy_engine_rejects_a_last_bar_at_the_exclusive_market_spec_end() {
+    let instrument = InstrumentId::parse("T.SIM").expect("valid test instrument");
+    let mut market = qx_core::TradingInstrumentSpec::spot_default(&instrument, "USD");
+    market.valid_from = 1;
+    market.valid_to = Some(3);
+    let mut spec = BacktestSpec::new(
+        BacktestDatasetInput {
+            run_id: "market-window-test".into(),
+            instrument: instrument.to_string(),
+            bars_path: "memory://market-window-test".into(),
+        },
+        "USD",
+        Money::from_i64(1_000).raw(),
+        7,
+        ".",
+        BuiltinStrategySpec::new(BuiltinStrategyKind::SmaCross, "market-window-test"),
+    );
+    spec.market_spec = Some(market);
+    let bars = [
+        Bar::new(1, 100, 101, 99, 100, 10),
+        Bar::new(2, 100, 102, 99, 101, 10),
+        Bar::new(3, 101, 103, 100, 102, 10),
+    ];
+    let mut strategy = NoOrders;
+    let context = RunContext::new(CallerCapability::Research, "market-window-test");
+
+    let error = match run_bar_backtest_with_outcome(&spec, &bars, &mut strategy, &context) {
+        Ok(_) => panic!("valid_to is exclusive and must reject a Bar at the boundary"),
+        Err(error) => error,
+    };
+
+    assert_eq!(error.category(), AppErrorCategory::InvalidInput);
 }
 
 #[test]

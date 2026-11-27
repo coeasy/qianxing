@@ -160,6 +160,13 @@ def load_thresholds(path: Path) -> dict[str, float]:
 # Cross-run confidence intervals for sub-microsecond operations are dominated by
 # clock and vCPU placement noise. Keep these estimates visible without blocking.
 MIN_CRITERION_BLOCKING_MS = 0.001
+# These reverse scans are benchmark-only reference implementations; production uses the indexed
+# query paths. Keep their measurements in the report, but do not treat reference-path drift as a
+# product regression.
+DIAGNOSTIC_CRITERION_PREFIXES = (
+    "qx_runtime_balance_snapshot_cursor/legacy_reverse_scan/",
+    "qx_runtime_latest_quote_lookup/legacy_reverse_scan/",
+)
 
 
 def benchmark_group(key: tuple[str, str]) -> str:
@@ -211,6 +218,16 @@ def main() -> int:
 
     failed = False
     for key in common:
+        if key[0].startswith("criterion:"):
+            benchmark_name = key[0][len("criterion:"):]
+            if any(
+                benchmark_name.startswith(prefix) for prefix in DIAGNOSTIC_CRITERION_PREFIXES
+            ):
+                print(
+                    f"[DIAGNOSTIC] {benchmark_name} is a benchmark-only legacy reference path; "
+                    "production regression gates use indexed queries."
+                )
+                continue
         group = benchmark_group(key)
         threshold = thresholds.get(group)
         if threshold is None:
