@@ -38,6 +38,11 @@ jobs:
           go-version: "1.24.x"
       - name: Validate workflow syntax and expressions
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/*.yml
+      - name: Verify paired performance builds use isolated Cargo targets
+        run: >-
+          python3 -m unittest
+          tools.test_performance_workflow
+          benchmarks.tests.test_measurement_source_changes
       - name: Validate Prometheus alert expressions
         run: >-
           docker run --rm --entrypoint=/bin/promtool
@@ -196,8 +201,7 @@ jobs:
         with:
           name: host-capability-acceptance-linux
           path: |
-            maturity/strategy-run-acceptance-v1.json
-            maturity/acceptance-artifacts/
+            ${{ runner.temp }}/qianxing-acceptance-evidence/
           if-no-files-found: error
           retention-days: 30
       - name: Capability unverified register
@@ -299,12 +303,53 @@ jobs:
           python3 -m unittest
           benchmarks.tests.test_source_fingerprint
           benchmarks.tests.test_compare_baseline
-          benchmarks.tests.test_select_compatible_baseline
+          benchmarks.tests.test_run_rust_bench
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           key: performance-${{ runner.os }}-${{ runner.arch }}
+      - name: Build and measure the parent revision on this runner
+        id: paired_baseline
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        env:
+          BASE_REVISION: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          CARGO_TARGET_DIR: ${{ runner.temp }}/qianxing-performance-baseline-target
+        shell: bash
+        run: |
+          if [[ -z "$BASE_REVISION" || "$BASE_REVISION" =~ ^0+$ ]]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "No parent revision is available; this run will seed benchmark evidence."
+            exit 0
+          fi
+          base_dir="$RUNNER_TEMP/qianxing-performance-baseline"
+          git fetch --no-tags --depth=1 origin "$BASE_REVISION"
+          git worktree add --detach "$base_dir" FETCH_HEAD
+          mkdir -p "$base_dir/target"
+          cargo build --release --manifest-path "$base_dir/Cargo.toml" -p qx-cli
+          baseline_binary="$RUNNER_TEMP/qx-cli-performance-baseline"
+          cp "$CARGO_TARGET_DIR/release/qx-cli" "$baseline_binary"
+          mkdir -p benchmarks/results/previous
+          python3 "$base_dir/benchmarks/run_baseline.py" \
+            --binary "$baseline_binary" \
+            --out "$GITHUB_WORKSPACE/benchmarks/results/previous/end-to-end.json" \
+            --json --repeats 7
+          python3 benchmarks/run_rust_bench.py \
+            --workspace-root "$base_dir" \
+            --target-dir "$CARGO_TARGET_DIR" \
+            --out "$GITHUB_WORKSPACE/benchmarks/results/previous/rust-micro.json" \
+            --profile "${{ github.event_name == 'pull_request' && 'pr' || 'full' }}"
+          python3 "$base_dir/benchmarks/run_ashare_profile_backtest.py" \
+            --binary "$baseline_binary" \
+            --out "$GITHUB_WORKSPACE/benchmarks/results/previous/ashare-rules-on.json" \
+            --repeats 7
+          python3 "$base_dir/benchmarks/run_crypto_paper_e2e.py" \
+            --binary "$baseline_binary" \
+            --out "$GITHUB_WORKSPACE/benchmarks/results/previous/crypto-paper-e2e.json" \
+            --repeats 7
+          echo "available=true" >> "$GITHUB_OUTPUT"
       - name: Build release CLI
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
         run: cargo build --release -p qx-cli
       - name: Measure frozen real-data backtest under Linux resource quotas
         shell: bash
@@ -351,14 +396,16 @@ jobs:
         run: |
           git fetch --no-tags origin "$BASE_SHA"
           python3 benchmarks/select_criterion_profile.py "$BASE_SHA" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
-      - name: Measure end-to-end and kernel performance
+      - name: Measure candidate end-to-end and kernel performance
         env:
           CRITERION_PROFILE: ${{ github.event_name == 'pull_request' && steps.criterion-scope.outputs.profile || 'full' }}
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
         run: |
           python3 benchmarks/run_baseline.py \
             --binary target/release/qx-cli \
             --out benchmarks/results/end-to-end.json --json --repeats 7
           python3 benchmarks/run_rust_bench.py \
+            --target-dir "$CARGO_TARGET_DIR" \
             --profile "$CRITERION_PROFILE" \
             --out benchmarks/results/rust-micro.json
           python3 benchmarks/run_ashare_profile_backtest.py \
@@ -367,78 +414,42 @@ jobs:
           python3 benchmarks/run_crypto_paper_e2e.py \
             --binary target/release/qx-cli \
             --out benchmarks/results/crypto-paper-e2e.json --repeats 7
-      - name: Find the latest successful benchmark on matching hardware
-        id: previous
+      - name: Detect changes to measured Rust sources and workload inputs
+        id: measured_source
+        if: steps.paired_baseline.outputs.available == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
-          BASELINE_BRANCH: ${{ github.head_ref || github.ref_name }}
+          BASE_REVISION: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        shell: bash
         run: |
-          mkdir -p benchmarks/results/previous
-          branches=(main)
-          if [[ "$BASELINE_BRANCH" != "main" ]]; then
-            branches+=("$BASELINE_BRANCH")
+          changed=$(python3 benchmarks/measurement_source_changes.py "$BASE_REVISION" "$GITHUB_SHA")
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          if [[ "$changed" == "true" ]]; then
+            echo "Measured Rust source, build manifests, fixtures, or performance policy changed."
+          else
+            echo "Only benchmark infrastructure or non-measured files changed; paired results will be recorded without regression blocking."
           fi
-          for branch in "${branches[@]}"; do
-            run_ids=$(gh run list --branch "$branch" --workflow ci.yml --limit 20 \
-              --json databaseId,conclusion \
-              --jq '.[] | select(.conclusion == "success") | .databaseId')
-            for run_id in $run_ids; do
-              artifact_id=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" \
-                --jq '[.artifacts[] | select(.name == "performance-baseline" and .expired == false)][0].id // empty')
-              if [[ -n "$artifact_id" ]]; then
-                candidate_dir="$RUNNER_TEMP/performance-baseline-$run_id"
-                mkdir -p "$candidate_dir"
-                if ! gh run download "$run_id" --name performance-baseline --dir "$candidate_dir"; then
-                  echo "Could not download baseline artifact from $branch run $run_id; trying an older run."
-                  continue
-                fi
-                if python3 benchmarks/select_compatible_baseline.py \
-                    --current-dir benchmarks/results \
-                    --baseline-dir "$candidate_dir"; then
-                  cp -a "$candidate_dir/." benchmarks/results/previous/
-                  echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
-                  echo "Selected matching-hardware performance baseline from $branch run $run_id."
-                  exit 0
-                fi
-                echo "Baseline artifact from $branch run $run_id is not comparable; trying an older run."
-              fi
-            done
-          done
-          echo "run_id=" >> "$GITHUB_OUTPUT"
-          echo "No matching-hardware benchmark baseline is retained; this run will seed one."
       - name: Block registered regressions above ledger thresholds
         run: |
-          if [[ -f benchmarks/results/previous/end-to-end.json ]]; then
-            python3 benchmarks/compare_baseline.py \
-              benchmarks/results/previous/end-to-end.json \
-              benchmarks/results/end-to-end.json \
-              --targets maturity/targets.yaml
+          if [[ "${{ steps.paired_baseline.outputs.available }}" == "true" && "${{ steps.measured_source.outputs.changed }}" == "true" ]]; then
+            for pair in \
+              "end-to-end.json end-to-end.json" \
+              "rust-micro.json rust-micro.json" \
+              "ashare-rules-on.json ashare-rules-on.json" \
+              "crypto-paper-e2e.json crypto-paper-e2e.json"; do
+              read -r baseline_name current_name <<< "$pair"
+              if [[ -f "benchmarks/results/previous/$baseline_name" ]]; then
+                python3 benchmarks/compare_baseline.py \
+                  "benchmarks/results/previous/$baseline_name" \
+                  "benchmarks/results/$current_name" \
+                  --targets maturity/targets.yaml
+              else
+                echo "No previous compatible $baseline_name baseline; recording first sample."
+              fi
+            done
+          elif [[ "${{ steps.paired_baseline.outputs.available }}" == "true" ]]; then
+            echo "Skipping regression comparison because no measured source changed; paired reports remain available in the uploaded artifact."
           else
-            echo "No previous compatible end-to-end baseline; recording first sample."
-          fi
-          if [[ -f benchmarks/results/previous/rust-micro.json ]]; then
-            python3 benchmarks/compare_baseline.py \
-              benchmarks/results/previous/rust-micro.json \
-              benchmarks/results/rust-micro.json \
-              --targets maturity/targets.yaml
-          else
-            echo "No previous compatible Rust microbenchmark baseline; recording first sample."
-          fi
-          if [[ -f benchmarks/results/previous/ashare-rules-on.json ]]; then
-            python3 benchmarks/compare_baseline.py \
-              benchmarks/results/previous/ashare-rules-on.json \
-              benchmarks/results/ashare-rules-on.json \
-              --targets maturity/targets.yaml
-          else
-            echo "No previous compatible A-share rules-on baseline; recording first sample."
-          fi
-          if [[ -f benchmarks/results/previous/crypto-paper-e2e.json ]]; then
-            python3 benchmarks/compare_baseline.py \
-              benchmarks/results/previous/crypto-paper-e2e.json \
-              benchmarks/results/crypto-paper-e2e.json \
-              --targets maturity/targets.yaml
-          else
-            echo "No previous compatible crypto Paper E2E baseline; recording first sample."
+            echo "No previous compatible performance baseline; recording first sample."
           fi
       - uses: actions/upload-artifact@v4
         with:
@@ -448,13 +459,14 @@ jobs:
             benchmarks/results/rust-micro.json
             benchmarks/results/ashare-rules-on.json
             benchmarks/results/crypto-paper-e2e.json
+            benchmarks/results/previous/*.json
             benchmarks/results/linux-resource-bounded-real-data.json
           if-no-files-found: error
           retention-days: 30
       - name: Record performance failure context
         if: failure()
         env:
-          BASELINE_RUN_ID: ${{ steps.previous.outputs.run_id }}
+          BASELINE_REVISION: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           EVENT_NAME: ${{ github.event_name }}
           HEAD_SHA: ${{ inputs.release_sha || github.sha }}
           REF_NAME: ${{ github.head_ref || github.ref_name }}
@@ -471,7 +483,7 @@ jobs:
           from pathlib import Path
 
           keys = (
-              "BASELINE_RUN_ID",
+              "BASELINE_REVISION",
               "EVENT_NAME",
               "HEAD_SHA",
               "REF_NAME",
@@ -828,9 +840,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: clean-install-acceptance-linux-py312
-          path: |
-            maturity/strategy-run-acceptance-v1.json
-            maturity/acceptance-artifacts/
+          path: ${{ runner.temp }}/qianxing-acceptance-evidence/
           if-no-files-found: error
           retention-days: 30
       - name: Upload Windows clean-install acceptance evidence
@@ -838,9 +848,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: clean-install-acceptance-windows-py312
-          path: |
-            maturity/strategy-run-acceptance-v1.json
-            maturity/acceptance-artifacts/
+          path: ${{ runner.temp }}/qianxing-acceptance-evidence/
           if-no-files-found: error
           retention-days: 30
       - name: Upload Linux process-tree acceptance evidence
@@ -849,8 +857,7 @@ jobs:
         with:
           name: process-tree-acceptance-linux-py312
           path: |
-            maturity/strategy-run-acceptance-v1.json
-            maturity/acceptance-artifacts/
+            ${{ runner.temp }}/qianxing-acceptance-evidence/
             maturity/evidence/strategy-preflight-process-tree-linux.json
           if-no-files-found: error
           retention-days: 30
@@ -860,8 +867,7 @@ jobs:
         with:
           name: process-identity-acceptance-linux-py312
           path: |
-            maturity/strategy-run-acceptance-v1.json
-            maturity/acceptance-artifacts/
+            ${{ runner.temp }}/qianxing-acceptance-evidence/
             maturity/evidence/project-run-identity-linux.json
           if-no-files-found: error
           retention-days: 30
@@ -871,8 +877,7 @@ jobs:
         with:
           name: process-identity-acceptance-macos-py312
           path: |
-            maturity/strategy-run-acceptance-v1.json
-            maturity/acceptance-artifacts/
+            ${{ runner.temp }}/qianxing-acceptance-evidence/
             maturity/evidence/project-run-identity-macos.json
           if-no-files-found: error
           retention-days: 30
@@ -1179,9 +1184,12 @@ jobs:
         with:
           name: strategy-storage-recovery-linux
           path: |
-            maturity/evidence/*-linux-*.json
-            maturity/strategy-run-acceptance-v1.json
-            maturity/acceptance-artifacts/
+            maturity/evidence/r13-strategy-deployment-lifecycle-linux-postgres.json
+            maturity/evidence/r13-strategy-deployment-lifecycle-linux-postgres-checkpoint-restart.json
+            maturity/evidence/job-queue-capacity-linux-*.json
+            maturity/evidence/control-command-queue-capacity-linux-*.json
+            maturity/evidence/strategy-worker-crash-recovery-linux-*.json
+            ${{ runner.temp }}/qianxing-acceptance-evidence/
           if-no-files-found: error
           retention-days: 30
 
