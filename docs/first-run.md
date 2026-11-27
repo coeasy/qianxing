@@ -364,6 +364,8 @@ qianxing run -f strategies/main.py --spec input.json         # 显式版本化 s
 
 包含本改进的同源 Console 登录后可点击“**一键跑通教学回测**”：先把当前 Console 包内的教学 BarFrame 安全安装为 API 数据根目录的 `sample.json`，再复用下方 BacktestSpec 执行数据校验、Bar 回测和四份产物复核。只有复核通过才报告首跑成功；失败详情仍在 Bar 研究面板中。该操作仅接受 `bars_path: sample.json`，不会改写用户的规格；若同名文件内容不同则拒绝安装且保留原文件。安装写入有会话、CSRF 与 Origin/Host 校验，不会联网取数。单独安装仍有“仅安装教学数据”按钮；静态 Console 没有安装写面，仍可手工下载与复制后使用现有工作流。已发布的 v0.4.2 页面没有这些按钮，继续用下面的手工方式：
 
+当前源码还提供“**获取公共行情并回测**”首跑入口。它只在登录后的同源 Console 中工作，并从服务端声明的 `crypto` / `Bar` / `bar` / `public` 历史 Provider 中选择数据源；浏览器不会直连交易所。点击后先执行能力预检，确认有匹配 Provider 才请求历史 K 线，再冻结快照、运行现有 BacktestSpec、复核产物并显示报告。标的需符合交易所和服务端 CCXT 配置使用的格式，例如 OKX 现货 `BTC/USDT.OKX`、OKX 永续 `BTC/USDT:USDT.OKX`；输入标的会同步到 BacktestSpec，若与其中冻结的 `market_spec.instrument` 不一致则请求会在本地被拒绝。期货和永续必须先在规格中绑定相符的 `market_spec`，避免按现货语义运行。单次最多请求 100,000 根 K 线，浏览器等待上限为 5 分钟；若等待超时，不应据此判断服务端任务未完成。严格数据质量检查发现缺口时会失败关闭。流程仅读取公开行情，不读取交易凭据，也不会下单。该功能要求服务端已配置可用的公开行情 Provider；没有匹配源时会在预检阶段停止，不发送行情请求。此入口尚未包含在 v0.4.2 已发布 Console 包中。
+
 ```powershell
 New-Item -ItemType Directory -Force .qianxing/api-data | Out-Null
 Copy-Item deploy/qianxing.bar-frame.example.json .qianxing/api-data/sample.json

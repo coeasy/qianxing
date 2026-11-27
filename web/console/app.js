@@ -30,6 +30,8 @@ const API_PATHS = {
   productCapabilityQuery: "/app/capabilities/query",
   appValidateDataset: "/app/validate-dataset",
   appBacktest: "/app/backtest",
+  appProviderBacktest: "/app/provider-backtest",
+  appProviderPreflight: "/app/capabilities/providers/preflight",
   appBacktestRun: "/app/backtest/start",
   appVerify: "/app/verify",
   appResearchArtifacts: "/app/research-artifacts",
@@ -89,6 +91,24 @@ const WS_PATH = API_PATHS.eventsLive;
 
 const POLL_MS = 5000;
 const FETCH_TIMEOUT_MS = 15000;
+const PUBLIC_PROVIDER_QUICKSTART_TIMEOUT_MS = 300000;
+const PUBLIC_PROVIDER_MAX_BAR_ROWS = 100000;
+const PUBLIC_PROVIDER_INTERVALS_MS = {
+  "1m": 60_000,
+  "3m": 180_000,
+  "5m": 300_000,
+  "15m": 900_000,
+  "30m": 1_800_000,
+  "1h": 3_600_000,
+  "2h": 7_200_000,
+  "4h": 14_400_000,
+  "6h": 21_600_000,
+  "8h": 28_800_000,
+  "12h": 43_200_000,
+  "1d": 86_400_000,
+  "3d": 259_200_000,
+  "1w": 604_800_000,
+};
 
 const state = {
   base: "",
@@ -133,6 +153,7 @@ const state = {
   activeResearchRunId: null,
   activeResearchRunEventSeq: 0,
   activeResearchRunEvents: [],
+  publicBarProviders: [],
 };
 
 const $ = (id) => document.getElementById(id);
@@ -506,9 +527,9 @@ async function readJson(response) {
   return body;
 }
 
-async function fetchWithTimeout(url, init) {
+async function fetchWithTimeout(url, init, timeoutMs = FETCH_TIMEOUT_MS) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, { ...init, signal: controller.signal });
   } finally {
@@ -933,7 +954,7 @@ async function postJson(path, payload) {
   return postJsonText(path, JSON.stringify(payload));
 }
 
-async function postJsonText(path, body) {
+async function postJsonText(path, body, timeoutMs = FETCH_TIMEOUT_MS) {
   const headers = { "Content-Type": "application/json", Accept: "application/json" };
   const csrf = csrfToken();
   if (csrf) headers[CSRF_HEADER_NAME] = csrf;
@@ -942,7 +963,7 @@ async function postJsonText(path, body) {
     credentials: "same-origin",
     headers,
     body,
-  });
+  }, timeoutMs);
   return { status: response.status, ok: response.ok, body: await readJson(response) };
 }
 
@@ -1017,6 +1038,257 @@ async function runConsoleQuickstart() {
     }
     output.textContent = "教学首跑完成，回测产物复核通过。下方已显示收益、回撤、成交和数据摘要。";
     return true;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function publicBarProviders(capabilities) {
+  if (!Array.isArray(capabilities)) return [];
+  return capabilities.filter((provider) => provider
+    && Array.isArray(provider.data_kinds) && provider.data_kinds.includes("Bar")
+    && Array.isArray(provider.data_tiers) && provider.data_tiers.includes("bar")
+    && Array.isArray(provider.asset_classes) && provider.asset_classes.includes("crypto")
+    && Array.isArray(provider.frequencies)
+    && provider.auth_scope === "public"
+    && provider.realtime === false);
+}
+
+async function refreshPublicMarketProviders() {
+  const refreshButton = $("public-market-providers-refresh");
+  const status = $("public-market-providers-status");
+  if (!state.connected) {
+    status.textContent = "请先连接 API。";
+    return false;
+  }
+  if (!state.viaBff) {
+    status.textContent = "真实公共行情首跑需要登录同源 Console；静态页面请使用 qx-cli 的 CCXT quickstart。";
+    return false;
+  }
+  refreshButton.disabled = true;
+  status.textContent = "正在读取服务端公开 Bar Provider 声明；此步骤不会联网取行情。";
+  try {
+    const response = await getJson(API_PATHS.productCapabilityCatalog);
+    if (!response.ok) throw new Error(`HTTP ${response.status} · ${response.body?.error || "能力读取失败"}`);
+    state.publicBarProviders = publicBarProviders(response.body?.provider_capabilities);
+    const frequencies = [...new Set(state.publicBarProviders.flatMap((provider) => provider.frequencies))]
+      .filter((frequency) => Object.hasOwn(PUBLIC_PROVIDER_INTERVALS_MS, frequency));
+    const preferred = ["1h", "15m", "5m", "1m", "4h", "1d"];
+    frequencies.sort((left, right) => {
+      const leftIndex = preferred.indexOf(left);
+      const rightIndex = preferred.indexOf(right);
+      return (leftIndex < 0 ? preferred.length : leftIndex) - (rightIndex < 0 ? preferred.length : rightIndex)
+        || left.localeCompare(right);
+    });
+    const frequencySelect = $("public-market-frequency");
+    const prior = frequencySelect.value;
+    frequencySelect.replaceChildren(...frequencies.map((frequency) => {
+      const option = document.createElement("option");
+      option.value = frequency;
+      option.textContent = frequency;
+      return option;
+    }));
+    frequencySelect.disabled = frequencies.length === 0;
+    if (frequencies.includes(prior)) frequencySelect.value = prior;
+    else if (frequencies.length > 0) frequencySelect.value = frequencies[0];
+    if (state.publicBarProviders.length === 0 || frequencies.length === 0) {
+      status.textContent = "没有声明 crypto / Bar / public / 历史数据能力的 Provider。请在服务端配置只读公开行情 Provider 后重试。";
+      return false;
+    }
+    const sources = state.publicBarProviders.map((provider) => `${provider.provider_id}（${provider.frequencies.join(", ")}）`);
+    status.textContent = `发现 ${state.publicBarProviders.length} 个公开行情源：${sources.join("；")}。支持周期：${frequencies.join(", ")}。`;
+    return true;
+  } catch (error) {
+    state.publicBarProviders = [];
+    status.textContent = `读取公开行情源失败：${error.message}`;
+    return false;
+  } finally {
+    refreshButton.disabled = false;
+  }
+}
+
+function buildPublicProviderBacktestRequest(backtestText, frequency, days, nowMs, runId, instrumentOverride = "") {
+  const backtest = parseJsonLossless(backtestText);
+  if (!backtest || typeof backtest !== "object" || Array.isArray(backtest)
+      || typeof backtest.instrument !== "string" || !backtest.instrument.trim()
+      || typeof backtest.settlement_currency !== "string" || !backtest.settlement_currency.trim()
+      || !backtest.strategy || typeof backtest.strategy !== "object" || Array.isArray(backtest.strategy)) {
+    throw new Error("BacktestSpec 需要有效的 instrument、settlement_currency 和 strategy");
+  }
+  const instrument = instrumentOverride.trim() || backtest.instrument.trim();
+  if (typeof instrument !== "string" || !instrument || instrument.length > 256) {
+    throw new Error("交易所标的 ID 长度必须是 1 到 256 个字符");
+  }
+  const boundInstrument = backtest.market_spec?.instrument;
+  if (instrument.includes(":") && !backtest.market_spec) {
+    throw new Error("永续/期货标的需要在 BacktestSpec 中配置 market_spec，不能按现货语义回测");
+  }
+  if (boundInstrument && typeof boundInstrument === "object"
+      && typeof boundInstrument.symbol === "string" && typeof boundInstrument.venue === "string") {
+    const expectedInstrument = `${boundInstrument.symbol}.${boundInstrument.venue}`;
+    if (instrument !== expectedInstrument) {
+      throw new Error(`标的 ${instrument} 与 BacktestSpec.market_spec 绑定的 ${expectedInstrument} 不一致`);
+    }
+  }
+  const intervalMs = PUBLIC_PROVIDER_INTERVALS_MS[frequency];
+  if (!intervalMs) throw new Error(`不支持的 K 线周期：${frequency}`);
+  if (!Number.isSafeInteger(days) || days < 1 || days > 365) throw new Error("回看天数必须是 1 到 365 的整数");
+  const estimatedRows = Math.ceil(days * 86_400_000 / intervalMs);
+  if (estimatedRows > PUBLIC_PROVIDER_MAX_BAR_ROWS) {
+    throw new Error(`预计约 ${estimatedRows} 根 K 线，超过单次 ${PUBLIC_PROVIDER_MAX_BAR_ROWS} 根上限；请缩短区间或改用更大的周期`);
+  }
+  if (!Number.isSafeInteger(nowMs) || nowMs <= 0) throw new Error("当前时间不可用");
+  if (typeof runId !== "string" || !/^[A-Za-z0-9._-]{1,128}$/.test(runId)) throw new Error("运行 ID 非法");
+  const end = Math.floor(nowMs / intervalMs) * intervalMs - intervalMs;
+  // DataQuery uses inclusive timestamp bounds. Subtracting exactly N days would
+  // request N days plus the end bar, which can exceed the displayed row estimate.
+  const start = end - (estimatedRows - 1) * intervalMs;
+  if (start <= 0 || end <= start) throw new Error("行情时间区间无效");
+  const providerBacktestText = replaceResearchRunId(
+    replaceResearchStringField(backtestText, "instrument", instrument),
+    runId,
+  );
+  const marketProduct = backtest.market_spec?.product;
+  const instrumentRole = marketProduct === "future" || marketProduct === "perpetual" ? "future" : "crypto_spot";
+  const snapshotContext = {
+    schema_version: 1,
+    instrument_role: instrumentRole,
+    captured_at_ms: nowMs,
+    frequency_ms: intervalMs,
+    timestamp_semantics: "bar_open",
+    price_precision: 9,
+    quantity_precision: 9,
+    price_unit: backtest.settlement_currency,
+    quantity_unit: backtest.market_spec?.base_currency || "base_units",
+    calendar_id: "crypto-24x7",
+    calendar_version: "v1",
+    gaps: [],
+    corporate_action_policy: "not_applicable",
+  };
+  const dataRequest = {
+    kind: "Bar",
+    asset_class: "crypto",
+    instrument_set: [instrument],
+    field_set: [],
+    frequency,
+    adjustment: "none",
+    quality_policy: "strict",
+    start,
+    end,
+    as_of: null,
+    required_data_tier: "bar",
+    required_auth_scope: "public",
+    require_realtime: false,
+  };
+  const envelope = {
+    data_request: dataRequest,
+    backtest: null,
+    dataset_id: runId,
+    dataset_version: "console-public-ohlcv-v1",
+    interval_ms: intervalMs,
+    timezone: "UTC",
+    snapshot_context: snapshotContext,
+  };
+  // Preserve exact *_raw integer literals in the user's BacktestSpec; JSON.parse/stringify
+  // would round valid i128 values before the Rust API sees them.
+  const prefix = JSON.stringify({
+    data_request: envelope.data_request,
+    dataset_id: envelope.dataset_id,
+    dataset_version: envelope.dataset_version,
+    interval_ms: envelope.interval_ms,
+    timezone: envelope.timezone,
+    snapshot_context: envelope.snapshot_context,
+  });
+  const tail = `,"backtest":${providerBacktestText}}`;
+  const requestText = `${prefix.slice(0, -1)}${tail}`;
+  return { requestText, backtestText: providerBacktestText, runId, instrument, start, end, estimatedRows };
+}
+
+async function runPublicMarketQuickstart() {
+  const button = $("public-market-quickstart-run");
+  const output = $("public-market-quickstart-status");
+  if (!state.connected) {
+    output.textContent = "请先连接 API。";
+    return false;
+  }
+  if (!state.viaBff) {
+    output.textContent = "真实公共行情首跑需要登录同源 Console；静态页面不会直接访问交易所。请在已配置 CCXT 的环境运行 qx-cli quickstart --profile ccxt。";
+    return false;
+  }
+  button.disabled = true;
+  clearResearchReport();
+  try {
+    output.textContent = "正在确认公开行情源配置；不会发送交易请求…";
+    if (state.publicBarProviders.length === 0 && !await refreshPublicMarketProviders()) {
+      output.textContent = $("public-market-providers-status").textContent;
+      return false;
+    }
+    const frequency = $("public-market-frequency").value;
+    const instrumentOverride = $("public-market-instrument").value.trim();
+    const daysText = $("public-market-days").value.trim();
+    if (!/^\d+$/.test(daysText)) throw new Error("回看天数必须是整数");
+    const days = Number(daysText);
+    const nowMs = Date.now();
+    const runId = createResearchRunId();
+    const prepared = buildPublicProviderBacktestRequest(
+      $("research-spec").value.trim(), frequency, days, nowMs, runId, instrumentOverride,
+    );
+    const providerRequest = JSON.parse(prepared.requestText);
+    const preflight = await postJson(API_PATHS.appProviderPreflight, providerRequest.data_request);
+    if (!preflight.ok || preflight.body?.matched !== true || !Array.isArray(preflight.body?.candidates)
+        || preflight.body.candidates.length === 0) {
+      output.textContent = JSON.stringify({
+        stage: "provider_preflight",
+        message: "没有公开行情源匹配当前标的、周期与时间范围；没有发起行情请求。",
+        preflight,
+      }, null, 2);
+      return false;
+    }
+    $("research-spec").value = prepared.backtestText;
+    const candidateIds = preflight.body.candidates.map((candidate) => candidate.provider_id).filter(Boolean);
+    output.textContent = `预检通过（${candidateIds.join(", ")}），正在读取 ${prepared.instrument} ${frequency} 公共 K 线并运行回测；最多等待 5 分钟，不会提交订单…`;
+    const providerBacktest = await postJsonText(
+      API_PATHS.appProviderBacktest,
+      prepared.requestText,
+      PUBLIC_PROVIDER_QUICKSTART_TIMEOUT_MS,
+    );
+    const outcome = providerBacktest.body?.outcome;
+    if (!providerBacktest.ok || !outcome || typeof outcome !== "object") {
+      output.textContent = JSON.stringify({ stage: "provider_backtest", providerBacktest }, null, 2);
+      return false;
+    }
+    output.textContent = "行情已冻结，正在复核回测报告与产物…";
+    const verification = await postJson(API_PATHS.appVerify, outcome);
+    if (!verification.ok || verification.body?.verified !== true) {
+      output.textContent = JSON.stringify({ stage: "artifact_verification", providerBacktest, verification }, null, 2);
+      return false;
+    }
+    renderResearchReport(outcome, verification.body);
+    const manifest = providerBacktest.body.manifest;
+    const quality = manifest?.quality_report;
+    output.textContent = JSON.stringify({
+      status: "verified",
+      run_id: prepared.runId,
+      provider_candidates: candidateIds,
+      data: {
+        instrument: providerRequest.data_request.instrument_set[0],
+        frequency,
+        start_ms: prepared.start,
+        end_ms: prepared.end,
+        rows: quality?.row_count ?? null,
+        missing_intervals: quality?.missing_intervals ?? null,
+        fingerprint: manifest?.dataset?.fingerprint ?? null,
+        network_accessed: true,
+        credentials_read: false,
+        orders_sent: false,
+      },
+      verification: verification.body,
+      next: "报告已显示在下方研究面板；本轮 Provider 行情快照和 manifest 由服务端保存在 artifact root。",
+    }, null, 2);
+    return true;
+  } catch (error) {
+    output.textContent = `公共行情首跑未完成：${error.message}。请核对行情源/周期/历史范围；超时后不要假设服务端未完成。`;
+    return false;
   } finally {
     button.disabled = false;
   }
@@ -1330,19 +1602,92 @@ function createResearchRunId() {
   return `console-${Date.now().toString(36)}-${suffix}`;
 }
 
-// Replace only the run_id string so large integer literals such as *_raw and
-// seed remain byte-for-byte intact instead of passing through JS Number.
-function replaceResearchRunId(source, runId) {
-  const spec = JSON.parse(source);
-  if (!spec || typeof spec !== "object" || Array.isArray(spec) || typeof spec.run_id !== "string") {
-    throw new Error("BacktestSpec 缺少字符串 run_id 字段");
+function jsonStringEnd(source, start) {
+  if (source[start] !== '"') throw new Error("JSON 字符串位置无效");
+  for (let index = start + 1; index < source.length; index += 1) {
+    if (source[index] === "\\") {
+      index += 1;
+    } else if (source[index] === '"') {
+      return index + 1;
+    }
   }
-  const match = /"run_id"\s*:\s*"[^"]*"/.exec(source);
-  if (!match) throw new Error("无法安全定位 BacktestSpec.run_id");
-  const updated = source.slice(0, match.index)
-    + match[0].replace(/"[^"]*"$/, JSON.stringify(runId))
-    + source.slice(match.index + match[0].length);
-  return updated;
+  throw new Error("JSON 字符串未闭合");
+}
+
+function jsonValueEnd(source, start) {
+  if (source[start] === '"') return jsonStringEnd(source, start);
+  if (source[start] === "{" || source[start] === "[") {
+    const expected = [];
+    let inString = false;
+    for (let index = start; index < source.length; index += 1) {
+      const character = source[index];
+      if (inString) {
+        if (character === "\\") index += 1;
+        else if (character === '"') inString = false;
+      } else if (character === '"') {
+        inString = true;
+      } else if (character === "{") {
+        expected.push("}");
+      } else if (character === "[") {
+        expected.push("]");
+      } else if (character === "}" || character === "]") {
+        if (expected.pop() !== character) throw new Error("JSON 嵌套结构无效");
+        if (expected.length === 0) return index + 1;
+      }
+    }
+    throw new Error("JSON 嵌套值未闭合");
+  }
+  let end = start;
+  while (end < source.length && source[end] !== "," && source[end] !== "}" && source[end] !== "]") end += 1;
+  while (end > start && /\s/.test(source[end - 1])) end -= 1;
+  if (end === start) throw new Error("JSON 值为空");
+  return end;
+}
+
+// Replace one root string field without round-tripping large *_raw integers
+// through JavaScript Number or accidentally matching a nested field of the same name.
+function replaceResearchStringField(source, field, value) {
+  if (typeof value !== "string") throw new Error(`BacktestSpec.${field} 新值必须是字符串`);
+  const spec = parseJsonLossless(source);
+  if (!spec || typeof spec !== "object" || Array.isArray(spec) || typeof spec[field] !== "string") {
+    throw new Error(`BacktestSpec 缺少字符串 ${field} 字段`);
+  }
+  let index = 0;
+  const whitespace = () => { while (/\s/.test(source[index] || "")) index += 1; };
+  whitespace();
+  if (source[index] !== "{") throw new Error("BacktestSpec 必须是 JSON 对象");
+  index += 1;
+  let match = null;
+  let matchCount = 0;
+  while (index < source.length) {
+    whitespace();
+    if (source[index] === "}") break;
+    const keyStart = index;
+    const keyEnd = jsonStringEnd(source, keyStart);
+    const key = JSON.parse(source.slice(keyStart, keyEnd));
+    index = keyEnd;
+    whitespace();
+    if (source[index] !== ":") throw new Error("BacktestSpec JSON 字段缺少冒号");
+    index += 1;
+    whitespace();
+    const valueStart = index;
+    const valueEnd = jsonValueEnd(source, valueStart);
+    if (key === field) {
+      if (source[valueStart] !== '"') throw new Error(`BacktestSpec.${field} 必须是 JSON 字符串`);
+      match = { start: valueStart, end: valueEnd };
+      matchCount += 1;
+    }
+    index = valueEnd;
+    whitespace();
+    if (source[index] === ",") index += 1;
+    else if (source[index] !== "}") throw new Error("BacktestSpec JSON 字段分隔符无效");
+  }
+  if (matchCount !== 1 || !match) throw new Error(`无法唯一定位 BacktestSpec.${field}`);
+  return source.slice(0, match.start) + JSON.stringify(value) + source.slice(match.end);
+}
+
+function replaceResearchRunId(source, runId) {
+  return replaceResearchStringField(source, "run_id", runId);
 }
 
 function createNewResearchRunId() {
@@ -4399,6 +4744,8 @@ window.addEventListener("DOMContentLoaded", () => {
   $("strategy-operation-refresh").addEventListener("click", () => { void refreshStrategyDeploymentOperation(); });
   $("research-validate").addEventListener("click", () => runResearch(true));
   $("research-run").addEventListener("click", () => runResearch(false));
+  $("public-market-providers-refresh").addEventListener("click", () => { void refreshPublicMarketProviders(); });
+  $("public-market-quickstart-run").addEventListener("click", () => { void runPublicMarketQuickstart(); });
   $("research-new-run-id").addEventListener("click", () => {
     try {
       const runId = createNewResearchRunId();

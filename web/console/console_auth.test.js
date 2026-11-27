@@ -27,6 +27,7 @@ function loadAuthFunctions(cookie) {
   const context = {
     document: { cookie },
     state: { base: "http://127.0.0.1:18082" },
+    FETCH_TIMEOUT_MS: 15000,
     CSRF_COOKIE_NAME: cookieName[1],
     CSRF_HEADER_NAME: headerName[1],
     fetchWithTimeout: async (url, init) => {
@@ -188,6 +189,140 @@ test("one-click Console quickstart stops when safe sample installation or verifi
   assert.equal(await failedResearch.run(), false);
   assert.equal(failedResearch.calls.research.length, 1);
   assert.match(failedResearch.nodes["console-quickstart-status"].textContent, /首跑未完成/);
+});
+
+test("public provider quickstart accepts only declared read-only crypto Bar sources", () => {
+  const source = sourceBetween("function publicBarProviders(capabilities) {", "async function refreshPublicMarketProviders()");
+  const context = {};
+  vm.runInNewContext(`${source}\nglobalThis.filter = publicBarProviders;`, context);
+  const providers = context.filter([
+    { provider_id: "okx-public", data_kinds: ["Bar"], data_tiers: ["bar"], asset_classes: ["crypto"], frequencies: ["1h"], auth_scope: "public", realtime: false },
+    { provider_id: "private-ccxt", data_kinds: ["Bar"], data_tiers: ["bar"], asset_classes: ["crypto"], frequencies: ["1h"], auth_scope: "account:read", realtime: false },
+    { provider_id: "realtime-only", data_kinds: ["Bar"], data_tiers: ["bar"], asset_classes: ["crypto"], frequencies: ["1h"], auth_scope: "public", realtime: true },
+    { provider_id: "equity-bars", data_kinds: ["Bar"], data_tiers: ["bar"], asset_classes: ["equity"], frequencies: ["1d"], auth_scope: "public", realtime: false },
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(providers)).map((provider) => provider.provider_id), ["okx-public"]);
+});
+
+test("public ProviderBacktest request preserves exact raw literals and bounds history", () => {
+  const helper = sourceBetween("function buildPublicProviderBacktestRequest(", "async function runPublicMarketQuickstart()");
+  const replaceRunId = sourceBetween("function jsonStringEnd(", "function createNewResearchRunId(");
+  const context = {
+    parseJsonLossless: JSON.parse,
+    PUBLIC_PROVIDER_INTERVALS_MS: { "1h": 3600000, "1m": 60000 },
+    PUBLIC_PROVIDER_MAX_BAR_ROWS: 100000,
+  };
+  vm.runInNewContext(`${replaceRunId}\n${helper}\nglobalThis.build = buildPublicProviderBacktestRequest; globalThis.replaceField = replaceResearchStringField;`, context);
+  const original = '{"run_id":"old","instrument":"BTCUSDT.BINANCE","bars_path":"sample.json","settlement_currency":"USDT","initial_cash_raw":10000000000000000,"seed":1,"output_dir":"server-managed","strategy":{"kind":"ema_cross","strategy_id":"s1"},"market_spec":{"instrument":{"symbol":"BTC/USDT:USDT","venue":"OKX"},"product":"perpetual","base_currency":"BTC"}}';
+  const prepared = context.build(original, "1h", 30, 1700000000000, "console-test-run", "BTC/USDT:USDT.OKX");
+  const request = JSON.parse(prepared.requestText);
+  assert.equal(request.backtest.run_id, "console-test-run");
+  assert.equal(request.backtest.instrument, "BTC/USDT:USDT.OKX");
+  assert.equal(request.data_request.required_auth_scope, "public");
+  assert.equal(request.data_request.required_data_tier, "bar");
+  assert.equal(request.data_request.frequency, "1h");
+  assert.equal(request.snapshot_context.instrument_role, "future");
+  assert.equal(request.snapshot_context.timestamp_semantics, "bar_open");
+  assert.equal(
+    (request.data_request.end - request.data_request.start) / request.interval_ms + 1,
+    prepared.estimatedRows,
+  );
+  assert.match(prepared.requestText, /"initial_cash_raw":10000000000000000/);
+  assert.throws(
+    () => context.build(original, "1m", 365, 1700000000000, "console-test-run", "BTC/USDT:USDT.OKX"),
+    /超过单次/,
+  );
+  assert.throws(
+    () => context.build(original, "2m", 1, 1700000000000, "console-test-run", "BTC/USDT:USDT.OKX"),
+    /不支持的 K 线周期/,
+  );
+  assert.throws(() => context.build(original, "1h", 30, 1700000000000, "console-test-run", "BTC/USDT.OKX"), /与 BacktestSpec.market_spec/);
+  const spotOnly = '{"run_id":"old","instrument":"BTCUSDT.BINANCE","bars_path":"sample.json","settlement_currency":"USDT","strategy":{}}';
+  assert.throws(
+    () => context.build(spotOnly, "1h", 30, 1700000000000, "console-test-run", "BTC/USDT:USDT.OKX"),
+    /需要在 BacktestSpec 中配置 market_spec/,
+  );
+  const reordered = '{"strategy":{"instrument":"nested","parameters":{"instrument":"deep"}},"instrument":"old.symbol","run_id":"old.run"}';
+  assert.equal(
+    context.replaceField(reordered, "instrument", "new.symbol"),
+    '{"strategy":{"instrument":"nested","parameters":{"instrument":"deep"}},"instrument":"new.symbol","run_id":"old.run"}',
+  );
+});
+
+test("public market quickstart fails before network access when provider preflight finds no source", async () => {
+  const nodes = {
+    "public-market-quickstart-run": { disabled: false },
+    "public-market-quickstart-status": { textContent: "" },
+    "public-market-providers-status": { textContent: "" },
+    "public-market-instrument": { value: "BTC/USDT.OKX" },
+    "public-market-frequency": { value: "1h" },
+    "public-market-days": { value: "30" },
+    "research-spec": { value: '{"run_id":"old","instrument":"BTCUSDT.BINANCE","settlement_currency":"USDT","strategy":{}}' },
+  };
+  const calls = [];
+  const context = {
+    state: { connected: true, viaBff: true, publicBarProviders: [{}] },
+    API_PATHS: { appProviderPreflight: "/app/capabilities/providers/preflight", appProviderBacktest: "/app/provider-backtest", appVerify: "/app/verify" },
+    $(id) { return nodes[id]; },
+    clearResearchReport() {},
+    createResearchRunId: () => "console-test-run",
+    buildPublicProviderBacktestRequest: () => ({ requestText: '{"data_request":{"kind":"Bar","instrument_set":["BTC/USDT.OKX"]},"backtest":{}}', backtestText: "replacement", runId: "console-test-run", start: 1, end: 2, estimatedRows: 1 }),
+    postJson: async (path, body) => { calls.push({ kind: "json", path, body }); return { ok: true, status: 200, body: { matched: false, candidates: [] } }; },
+    postJsonText: async (path, body) => { calls.push({ kind: "text", path, body }); throw new Error("must not fetch without a match"); },
+  };
+  const run = sourceBetween("async function runPublicMarketQuickstart() {", "function newRequestId()");
+  vm.runInNewContext(`${run}\nglobalThis.run = runPublicMarketQuickstart;`, context);
+  assert.equal(await context.run(), false);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].path, "/app/capabilities/providers/preflight");
+  assert.equal(nodes["research-spec"].value.includes("replacement"), false);
+  assert.match(nodes["public-market-quickstart-status"].textContent, /没有发起行情请求/);
+  assert.equal(nodes["public-market-quickstart-run"].disabled, false);
+});
+
+test("public market quickstart verifies Provider artifacts and never routes through an order endpoint", async () => {
+  const nodes = {
+    "public-market-quickstart-run": { disabled: false },
+    "public-market-quickstart-status": { textContent: "" },
+    "public-market-providers-status": { textContent: "" },
+    "public-market-instrument": { value: "BTC/USDT.OKX" },
+    "public-market-frequency": { value: "1h" },
+    "public-market-days": { value: "30" },
+    "research-spec": { value: '{"run_id":"old","instrument":"BTCUSDT.BINANCE","settlement_currency":"USDT","strategy":{}}' },
+  };
+  const calls = [];
+  let rendered = 0;
+  const outcome = { run_id: "console-test-run", artifacts: [] };
+  const context = {
+    state: { connected: true, viaBff: true, publicBarProviders: [{}] },
+    API_PATHS: { appProviderPreflight: "/app/capabilities/providers/preflight", appProviderBacktest: "/app/provider-backtest", appVerify: "/app/verify" },
+    PUBLIC_PROVIDER_QUICKSTART_TIMEOUT_MS: 300000,
+    $(id) { return nodes[id]; },
+    clearResearchReport() {},
+    createResearchRunId: () => "console-test-run",
+    buildPublicProviderBacktestRequest: () => ({ requestText: '{"data_request":{"kind":"Bar","instrument_set":["BTC/USDT.OKX"]},"backtest":{}}', backtestText: "replacement", runId: "console-test-run", instrument: "BTC/USDT.OKX", start: 1, end: 2, estimatedRows: 1 }),
+    postJson: async (path, body) => {
+      calls.push({ kind: "json", path, body });
+      return path === "/app/capabilities/providers/preflight"
+        ? { ok: true, status: 200, body: { matched: true, candidates: [{ provider_id: "okx-public" }] } }
+        : { ok: true, status: 200, body: { verified: true } };
+    },
+    postJsonText: async (path, body, timeoutMs) => {
+      calls.push({ kind: "text", path, body, timeoutMs });
+      return { ok: true, status: 200, body: { outcome, manifest: { quality_report: { row_count: 720, missing_intervals: 0 }, dataset: { fingerprint: "abc" } } } };
+    },
+    renderResearchReport() { rendered += 1; },
+  };
+  const run = sourceBetween("async function runPublicMarketQuickstart() {", "function newRequestId()");
+  vm.runInNewContext(`${run}\nglobalThis.run = runPublicMarketQuickstart;`, context);
+  assert.equal(await context.run(), true);
+  assert.deepEqual(calls.map((call) => call.path), ["/app/capabilities/providers/preflight", "/app/provider-backtest", "/app/verify"]);
+  assert.equal(calls[1].timeoutMs, 300000);
+  assert.deepEqual(calls[2].body, outcome);
+  assert.equal(rendered, 1);
+  assert.equal(nodes["research-spec"].value, "replacement");
+  assert.match(nodes["public-market-quickstart-status"].textContent, /"orders_sent": false/);
+  assert.equal(nodes["public-market-quickstart-run"].disabled, false);
 });
 
 function loadResearchRunner({ validation, backtest, verification, spec }) {
