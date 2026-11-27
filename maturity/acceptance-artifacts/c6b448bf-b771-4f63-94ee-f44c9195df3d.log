@@ -1,0 +1,262 @@
+$ python tools/publish_rust_sdk.py qx-sdk --allow-dirty --offline-package-check --json
+exit_code=0
+
+[stdout]
+{
+  "package": "qx-sdk",
+  "version": "0.5.0",
+  "publish_order": [
+    {
+      "name": "qx-core",
+      "version": "0.5.0",
+      "action": "publish",
+      "status": "name_exists",
+      "registry_checksum": null
+    },
+    {
+      "name": "qx-control",
+      "version": "0.5.0",
+      "action": "publish",
+      "status": "name_exists",
+      "registry_checksum": null
+    },
+    {
+      "name": "qx-guanxing",
+      "version": "0.5.0",
+      "action": "publish",
+      "status": "name_exists",
+      "registry_checksum": null
+    },
+    {
+      "name": "qx-datastruct",
+      "version": "0.5.0",
+      "action": "publish",
+      "status": "name_exists",
+      "registry_checksum": null
+    },
+    {
+      "name": "qx-data",
+      "version": "0.5.0",
+      "action": "publish",
+      "status": "name_exists",
+      "registry_checksum": null
+    },
+    {
+      "name": "qx-provider",
+      "version": "0.5.0",
+      "action": "publish",
+      "status": "name_exists",
+      "registry_checksum": null
+    },
+    {
+      "name": "qx-risk",
+      "version": "0.5.0",
+      "action": "publish",
+      "status": "name_exists",
+      "registry_checksum": null
+    },
+    {
+      "name": "qx-spec",
+      "version": "0.5.0",
+      "action": "publish",
+      "status": "name_exists",
+      "registry_checksum": null
+    },
+    {
+      "name": "qx-strategy",
+      "version": "0.5.0",
+      "action": "publish",
+      "status": "name_exists",
+      "registry_checksum": null
+    },
+    {
+      "name": "qx-zhenlu",
+      "version": "0.5.0",
+      "action": "publish",
+      "status": "name_exists",
+      "registry_checksum": null
+    },
+    {
+      "name": "qx-xingban",
+      "version": "0.5.0",
+      "action": "publish",
+      "status": "name_exists",
+      "registry_checksum": null
+    },
+    {
+      "name": "qx-app",
+      "version": "0.5.0",
+      "action": "publish",
+      "status": "name_exists",
+      "registry_checksum": null
+    },
+    {
+      "name": "qx-execution",
+      "version": "0.5.0",
+      "action": "publish",
+      "status": "name_exists",
+      "registry_checksum": null
+    },
+    {
+      "name": "qx-sdk",
+      "version": "0.5.0",
+      "action": "publish",
+      "status": "name_exists",
+      "registry_checksum": null
+    }
+  ],
+  "upload_enabled": false
+}
+
+[stderr]
+Building and verifying the complete local package closure.
+[1/14] package and verify qx-core 0.5.0
+   Packaging qx-core v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\crates\qx-core)
+    Packaged 47 files, 799.1KiB (160.4KiB compressed)
+     Locking 74 packages to latest compatible versions
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.26
+   Compiling serde_core v1.0.229
+   Compiling zmij v1.0.23
+   Compiling serde_json v1.0.151
+   Compiling serde v1.0.229
+   Compiling itoa v1.0.18
+   Compiling memchr v2.8.3
+   Compiling syn v3.0.6
+   Compiling serde_derive v1.0.229
+   Compiling qx-core v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-core-0.5.0)
+    Finished `dev` profile [unoptimized] target(s) in 8.71s
+[2/14] package and verify qx-control 0.5.0
+   Packaging qx-control v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\crates\qx-control)
+    Packaged 5 files, 84.9KiB (19.5KiB compressed)
+   Compiling qx-control v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-control-0.5.0)
+    Finished `dev` profile [unoptimized] target(s) in 0.88s
+[3/14] package and verify qx-guanxing 0.5.0
+   Packaging qx-guanxing v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\crates\qx-guanxing)
+    Packaged 5 files, 30.0KiB (8.0KiB compressed)
+   Compiling qx-guanxing v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-guanxing-0.5.0)
+    Finished `dev` profile [unoptimized] target(s) in 0.66s
+[4/14] package and verify qx-datastruct 0.5.0
+   Packaging qx-datastruct v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\crates\qx-datastruct)
+    Packaged 7 files, 47.0KiB (12.2KiB compressed)
+   Compiling qx-datastruct v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-datastruct-0.5.0)
+    Finished `dev` profile [unoptimized] target(s) in 0.53s
+[5/14] package and verify qx-data 0.5.0
+   Packaging qx-data v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\crates\qx-data)
+    Packaged 23 files, 137.7KiB (31.7KiB compressed)
+     Locking 14 packages to latest compatible versions
+      Adding getrandom v0.2.17
+      Adding ring v0.17.14
+      Adding untrusted v0.9.0
+      Adding wasi v0.11.1+wasi-snapshot-preview1
+      Adding windows-sys v0.52.0
+      Adding windows-targets v0.52.6
+      Adding windows_aarch64_gnullvm v0.52.6
+      Adding windows_aarch64_msvc v0.52.6
+      Adding windows_i686_gnu v0.52.6
+      Adding windows_i686_gnullvm v0.52.6
+      Adding windows_i686_msvc v0.52.6
+      Adding windows_x86_64_gnu v0.52.6
+      Adding windows_x86_64_gnullvm v0.52.6
+      Adding windows_x86_64_msvc v0.52.6
+   Compiling find-msvc-tools v0.1.13
+   Compiling shlex v2.0.1
+   Compiling cfg-if v1.0.5
+   Compiling untrusted v0.9.0
+   Compiling getrandom v0.2.17
+   Compiling cc v1.4.7
+   Compiling ring v0.17.14
+   Compiling qx-data v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-data-0.5.0)
+    Finished `dev` profile [unoptimized] target(s) in 5.18s
+[6/14] package and verify qx-provider 0.5.0
+   Packaging qx-provider v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\crates\qx-provider)
+    Packaged 10 files, 78.5KiB (16.6KiB compressed)
+   Compiling qx-provider v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-provider-0.5.0)
+    Finished `dev` profile [unoptimized] target(s) in 0.78s
+[7/14] package and verify qx-risk 0.5.0
+   Packaging qx-risk v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\crates\qx-risk)
+    Packaged 7 files, 83.5KiB (17.9KiB compressed)
+   Compiling qx-risk v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-risk-0.5.0)
+    Finished `dev` profile [unoptimized] target(s) in 0.37s
+[8/14] package and verify qx-spec 0.5.0
+   Packaging qx-spec v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\crates\qx-spec)
+    Packaged 21 files, 169.6KiB (38.3KiB compressed)
+   Compiling qx-spec v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-spec-0.5.0)
+    Finished `dev` profile [unoptimized] target(s) in 2.03s
+[9/14] package and verify qx-strategy 0.5.0
+   Packaging qx-strategy v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\crates\qx-strategy)
+    Packaged 48 files, 565.5KiB (110.9KiB compressed)
+     Locking 2 packages to latest compatible versions
+      Adding libloading v0.8.9 (available: v0.9.0)
+      Adding memmap2 v0.9.11
+   Compiling windows-link v0.2.1
+   Compiling memmap2 v0.9.11
+   Compiling libloading v0.8.9
+   Compiling qx-strategy v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-strategy-0.5.0)
+    Finished `dev` profile [unoptimized] target(s) in 2.99s
+[10/14] package and verify qx-zhenlu 0.5.0
+   Packaging qx-zhenlu v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\crates\qx-zhenlu)
+    Packaged 19 files, 292.7KiB (61.1KiB compressed)
+   Compiling qx-zhenlu v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-zhenlu-0.5.0)
+    Finished `dev` profile [unoptimized] target(s) in 1.64s
+[11/14] package and verify qx-xingban 0.5.0
+   Packaging qx-xingban v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\crates\qx-xingban)
+    Packaged 96 files, 1.4MiB (263.1KiB compressed)
+   Compiling qx-xingban v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-xingban-0.5.0)
+    Finished `dev` profile [unoptimized] target(s) in 3.90s
+[12/14] package and verify qx-app 0.5.0
+   Packaging qx-app v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\crates\qx-app)
+    Packaged 250 files, 3.3MiB (653.3KiB compressed)
+   Compiling qx-app v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-app-0.5.0)
+    Finished `dev` profile [unoptimized] target(s) in 17.61s
+[13/14] package and verify qx-execution 0.5.0
+   Packaging qx-execution v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\crates\qx-execution)
+    Packaged 15 files, 283.1KiB (57.3KiB compressed)
+   Compiling qx-execution v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-execution-0.5.0)
+    Finished `dev` profile [unoptimized] target(s) in 0.84s
+[14/14] package and verify qx-sdk 0.5.0
+   Packaging qx-sdk v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\crates\qx-sdk)
+    Packaged 23 files, 212.4KiB (45.4KiB compressed)
+   Compiling qx-sdk v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-sdk-0.5.0)
+    Finished `dev` profile [unoptimized] target(s) in 0.43s
+[consumer] run independent Rust quickstart using packaged dependencies
+     Locking 47 packages to latest compatible versions
+   Compiling qx-app v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-app-0.5.0)
+   Compiling qx-core v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-core-0.5.0)
+   Compiling qx-guanxing v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-guanxing-0.5.0)
+   Compiling qx-risk v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-risk-0.5.0)
+   Compiling qx-control v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-control-0.5.0)
+   Compiling qx-strategy v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-strategy-0.5.0)
+   Compiling qx-datastruct v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-datastruct-0.5.0)
+   Compiling qx-zhenlu v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-zhenlu-0.5.0)
+   Compiling qx-data v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-data-0.5.0)
+   Compiling qx-execution v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-execution-0.5.0)
+   Compiling qx-provider v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-provider-0.5.0)
+   Compiling qx-spec v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-spec-0.5.0)
+   Compiling qx-xingban v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-xingban-0.5.0)
+   Compiling qx-sdk v0.5.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\qx-sdk-0.5.0)
+   Compiling qx-package-consumer v0.1.0 (D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\consumer)
+    Finished `dev` profile [unoptimized] target(s) in 26.71s
+     Running `D:\aex_work\qianxing-release-0.5.0-audit\target\qx-package-check-lwyjho_a\cargo-target\debug\qx-package-consumer.exe`
+Illustrative data only; not historical market data.
+Bars: 70; fills: 1; result hash: 7205bbd3b27b6c99
+Verified: true; output: runs\sample-22924-1795759378210357700
+Summary: runs\sample-22924-1795759378210357700\rust-quickstart.summary.json
+Equity: runs\sample-22924-1795759378210357700\rust-quickstart.equity.csv
+Fills: runs\sample-22924-1795759378210357700\rust-quickstart.fills.csv
+Verified 14 local packages; no registry publication or install was performed.
+Checking crates.io version 1/14: qx-core
+Checking crates.io version 2/14: qx-control
+Checking crates.io version 3/14: qx-guanxing
+Checking crates.io version 4/14: qx-datastruct
+Checking crates.io version 5/14: qx-data
+Checking crates.io version 6/14: qx-provider
+Checking crates.io version 7/14: qx-risk
+Checking crates.io version 8/14: qx-spec
+Checking crates.io version 9/14: qx-strategy
+Checking crates.io version 10/14: qx-zhenlu
+Checking crates.io version 11/14: qx-xingban
+Checking crates.io version 12/14: qx-app
+Checking crates.io version 13/14: qx-execution
+Checking crates.io version 14/14: qx-sdk

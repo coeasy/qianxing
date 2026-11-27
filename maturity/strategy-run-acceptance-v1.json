@@ -22130,6 +22130,42 @@
         }
       ],
       "notes": "Windows offline validation of the exact clean release-candidate source: package and compile all 14 qx-sdk closure crates from normalized local archives, then build and run an independent Rust quickstart using those archives only. No crates.io install or publication."
+    },
+    {
+      "run_id": "c6b448bf-b771-4f63-94ee-f44c9195df3d",
+      "acceptance_id": "R01-AC01",
+      "recorded_at_utc": "2026-11-27T06:03:27.883853Z",
+      "source_revision": "1d99739d96f6528b84267788de26b35ed165ef02",
+      "source_tree_sha256": "92b8854e3d386f3c4a0020c1efd07490e49203169a4c2bb2f66d9d7fc5a814e2",
+      "source_manifest": "maturity/acceptance-artifacts/c6b448bf-b771-4f63-94ee-f44c9195df3d.source-tree.json",
+      "environment": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64",
+        "python_version": "3.13.13",
+        "python_executable": "D:\\dev\\miniforge3\\python.exe"
+      },
+      "command": [
+        "python",
+        "tools/publish_rust_sdk.py",
+        "qx-sdk",
+        "--allow-dirty",
+        "--offline-package-check",
+        "--json"
+      ],
+      "inputs": [],
+      "outcome": "passed",
+      "artifacts": [
+        {
+          "path": "maturity/acceptance-artifacts/c6b448bf-b771-4f63-94ee-f44c9195df3d.log",
+          "sha256": "93a9f9a55e0c735591a3f2f017d753eb2d59dafdcbf16f6fb787044b2034afa5"
+        },
+        {
+          "path": "maturity/acceptance-artifacts/c6b448bf-b771-4f63-94ee-f44c9195df3d.source-tree.json",
+          "sha256": "46e8972550de248373e09b6fde62e3905bb55f03c62ef1866e1370be2a9ab662"
+        }
+      ],
+      "notes": "Read-only release preflight on the clean 0.5.0 candidate: the exact 14-crate qx-sdk closure packaged and built from local archives, the independent archive consumer quickstart verified, then crates.io metadata was queried for each crate in dependency order. All crate names already exist, all 0.5.0 versions were absent (status name_exists); no registry version was published, no upload token or --publish flag was used, and name ownership/upload permission is not inferred."
     }
   ],
   "schema": "schemas/strategy-run-acceptance-v1.json"

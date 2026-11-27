@@ -106,3 +106,8 @@ Windows workspace 验收之外，已用本地 Podman 启动 Linux Rust 1.98.1 �
 - 在干净候选提交 `979c8346d25b89bbfe3fa2253f454cdb6dbddae4` 上，R01-AC01 [Rust 归档闭包验收日志](../maturity/acceptance-artifacts/d4fb3567-805b-4a53-88d7-44d3b7d0e9aa.log)与[源码清单](../maturity/acceptance-artifacts/d4fb3567-805b-4a53-88d7-44d3b7d0e9aa.source-tree.json)记录了 14 个 crates 归档包的离线打包和独立编译，以及仅使用这些归档依赖的 Rust quickstart（70 根示例 Bar、1 笔成交、`Verified: true`）。该检查没有从 crates.io 安装或发布。
 - 05:53 UTC 核验 GitHub `v0.5.0` tag 仍不存在；官方 [PyPI qianxing 0.5.0 查询](https://pypi.org/pypi/qianxing/0.5.0/json)与 [crates.io qx-sdk 0.5.0 查询](https://crates.io/api/v1/crates/qx-sdk/0.5.0)均返回 HTTP 404。没有创建 tag 或发布包；这些状态不是版本预留。创建 0.5.0 发布仍需明确授权，且正式包必须在最终 tag 上重跑构建、字节一致性与 crates.io 注册表消费者验收。
 - PR 工作流的 Binance testnet 凭据步骤被跳过，因此当前证据只支持回测、Paper、公共行情和已执行的本地/托管合同检查，不证明私有测试网或实盘下单。
+
+## Rust crates.io 只读预检（2026-11-27 06:03 UTC）
+
+- 在候选源码提交 `1d99739d96f6528b84267788de26b35ed165ef02` 上，运行 `python tools/publish_rust_sdk.py qx-sdk --allow-dirty --offline-package-check --json`。14 个闭包 crate 均从本地归档打包/构建，独立消费者运行 70 根示例 Bar、1 笔成交并输出 `Verified: true`；随后按拓扑顺序检查 crates.io，14 个 crate 名称均已存在，但对应 `0.5.0` 版本均不存在，发布计划将它们列为 `publish`。
+- R01-AC01 [只读发布预检日志](../maturity/acceptance-artifacts/c6b448bf-b771-4f63-94ee-f44c9195df3d.log)与[源码清单](../maturity/acceptance-artifacts/c6b448bf-b771-4f63-94ee-f44c9195df3d.source-tree.json)记录了本次结果。未启用 `--publish`、未使用上传 token、未从注册表安装，也未上传包；公开元数据不能证明当前 token 对 14 个 crate 都有上传权限，仍需发布工作流在授权的精确 tag 上检查。
