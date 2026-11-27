@@ -70,3 +70,11 @@ Windows workspace 验收之外，已用本地 Podman 启动 Linux Rust 1.98.1 �
 - 候选源代码快照 `f2a657c5` 上的本地 Podman/Linux 实验通过 25 项服务与恢复检查：PostgreSQL/NATS 被忽略契约 13 项、NATS 有界等待 8 项、R12 worker 跨进程 Unknown 恢复 1 项、R13 cursor/blob/runtime-cache 3 项。R12/R13 运行输入文件与当前候选之间无差异；验收记录仍如实绑定到其实际运行的 `f2a657c5`。首次 R12 因测试夹具目录只读失败，调整容器挂载后复跑通过，首次失败和最终通过均保留在台账。
 - 候选源码快照 `5eed760e` 上再次运行 Rust 发布包检查：14 个 `qx-sdk` 闭包 crate 均成功打包和独立编译，并从归档包构建/运行 Rust quickstart，70 根示例 Bar、1 笔成交、`Verified: true`。结果记入 [R01-AC01 日志](../maturity/acceptance-artifacts/274ddb07-6228-4159-a08d-71f12f8a9d8a.log)与[源码清单](../maturity/acceptance-artifacts/274ddb07-6228-4159-a08d-71f12f8a9d8a.source-tree.json)；这仍是本地离线归档消费者，不是 crates.io registry install 或发布。
 - 当前验收账本校验通过：27 个场景、395 条 artifact-bound 运行记录。该状态只覆盖本机候选验证与开放 PR 各自 head 的托管检查，不等同于最终集成提交或精确 `v0.5.0` tag 的 hosted CI。`main` 合并、最终 tag 构建、PyPI/GitHub wheel 字节一致性、crates.io 0.5.0 registry consumer 仍是正式发布门禁。
+
+## 最新候选补充验收（2026-11-27 04:14 UTC）
+
+- 当前本机候选分支 `codex/release-0.5.0-prep` HEAD 为 `dbae3a0a`；本轮实际编译和安装的代码身份是候选集成提交 `2d5c5df9d83cc86b24ad100912d50d44c4d44ac7`。后续提交仅增加 Linux 验收台账和本说明，不改运行时代码。该候选分支仍只在本机；远端 `main` 仍为 `643f1293d006915c931adb9fd1fd61f91a73d422`。
+- Debian 13 x86_64 Box 上的全新 Python 3.13 虚拟环境安装了 `qianxing==0.5.0` Linux abi3 wheel（SHA-256 `013a87abbe8341fda12c8908f548d811bff262c13f907731e14e991af75c6370`）及 CCXT 4.5.89。直接匿名请求 OKX Swap、Bitget Swap 和 Binance Spot 公开行情，各运行 180 天/15 分钟回测：均有 17,280 根 Bar、缺口 0、HTML 和三张 SVG、EvidenceBundle 六个工件核验通过及输入身份复算通过。OKX 1,007 fills/0 拒单，hash `b86e83b72a23b722`；Bitget 1,013/0，hash `7fc53ea312b86101`；Binance Spot 978 fills/30 拒单，30 笔均为最小名义金额限制且通过项目的现货容忍规则，hash `e22d1886eea39f4a`。未加载密钥、未调用私有 API、未提交订单；`result_recomputed=false`，因此没有声称独立复算策略结果。原始行情与报告留在 Box。完整验收及源码清单见 [R01-AC01 记录](../maturity/acceptance-artifacts/622eabcb-7d42-4b48-ab80-312758a42d53.log) 和[源码清单](../maturity/acceptance-artifacts/622eabcb-7d42-4b48-ab80-312758a42d53.source-tree.json)。
+- 当前开放的 #37–39、#42–47、#49–53 共 14 个 PR 均有成功的最新 CI/公共行情工作流，评审线程为 0；#37→#38→#39 有依赖顺序。#41 和 #48 已合并。尚未合并的 14 个 PR 仍需项目所有者授权后才能进入 main；#53 的公开 Rust API 破坏性变更限定在 0.5.0 版本边界内。
+- 2026-11-27 04:14 UTC 对 Git tag `v0.5.0`、PyPI `qianxing==0.5.0`、crates.io `qx-sdk 0.5.0` 的官方查询均返回 404；因此没有创建或发布 0.5.0。合并授权完成后还需在最终 main/tag 上重跑托管发布门禁与三平台字节一致性核验。
+- 新增 Box 验收后，策略重构台账为 27 个场景、397 条 artifact-bound 运行记录；R01–R23 校验和 `git diff --check` 均通过。这些本机结果不取代最终 tag 的 CI、注册表消费者或任何私有交易所验收。
