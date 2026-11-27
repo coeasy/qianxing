@@ -79,7 +79,6 @@
         "production_approved"
       ],
       "limitations": [
-        "backtest exposes only two builtins after V9 cleanup (single instrument and multi-leg) （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）",
         "declared_unused_knobs_do_not_fail_the_run：a knob outside the kind's list is reported and ignored rather than rejected, because these keys are also legacy config items; the cost is that \"configured but inert\" is only visible in the stdout note and the summary block (V12 #102 §14.5) （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）",
         "queue_position_bps_is_not_a_cli_flag_because_builtin_strategies_only_emit_market_orders （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）",
         "bar_chain_virtual_trading_config_remains_unreachable_without_mark_price_input （状态：未收口；收口门：本条缺口对应代码/测试判据通过；未排期原因：本轮优先级未排入）",
