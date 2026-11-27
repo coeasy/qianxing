@@ -18146,6 +18146,7 @@ def pipeline_market_fact_index_check() -> None:
     service = case_source("crates/qx-service/src/ccxt_market_host.rs")
     remember = _rust_fn_body(index, "remember")
     quote_remember = _rust_fn_body(quote_index, "remember")
+    quote_remember_in = _rust_fn_body(quote_index, "remember_in")
     apply_index_event = _rust_fn_body(pipeline, "apply_index_event")
     append = _rust_fn_body(pipeline, "append_at_engine")
     quote_reader = _rust_fn_body(pipeline, "latest_quote_with_depth")
@@ -18169,7 +18170,9 @@ def pipeline_market_fact_index_check() -> None:
         and "latest_received" in quote_index
         and "PAPER_EXECUTION_MARKET_PREFIX" in quote_index
         and quote_remember is not None
-        and "latest_received" in quote_remember,
+        and "Self::remember_in(by_instrument, event)" in quote_remember
+        and quote_remember_in is not None
+        and "latest_received" in quote_remember_in,
         "报价值与 freshness 由 quote index 维护，盘口位置索引按标的更新",
         "行情索引缺少按标的报价/盘口投影或 Paper freshness 语义",
     )
@@ -18183,10 +18186,10 @@ def pipeline_market_fact_index_check() -> None:
         and "self.quote_index.remember(event)" in apply_index_event
         and "self.quote_index.remember(&event)" in append
         and quote_reader is not None
-        and "self.quote_index.latest_quote(instrument)" in quote_reader
+        and "self.quote_index.latest_quote(self.log.events(), instrument)" in quote_reader
         and "events().iter()" not in quote_reader
         and freshness_reader is not None
-        and "self.quote_index.latest_received_quote(instrument)" in freshness_reader
+        and "latest_received_quote(self.log.events(), instrument)" in freshness_reader
         and "events().iter()" not in freshness_reader
         and book_reader is not None
         and "self.market_facts" in book_reader
