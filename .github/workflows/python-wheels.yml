@@ -111,6 +111,8 @@ jobs:
       actions: read
       contents: read
     uses: ./.github/workflows/ci.yml
+    with:
+      release_sha: ${{ needs.version-consistency.outputs.release_sha }}
 
   public-market-data-acceptance:
     name: Backtest/Paper public-data acceptance (OKX + Bitget)
@@ -123,6 +125,7 @@ jobs:
       # release profile so the reusable workflow runs real OKX + Bitget data
       # without adding geo-restricted Binance hosted acceptance.
       public_profile: release
+      release_sha: ${{ needs.version-consistency.outputs.release_sha }}
 
   binary:
     name: binary (${{ matrix.os }})
@@ -139,7 +142,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_tag || github.ref }}
+          ref: ${{ needs.version-consistency.outputs.release_sha }}
       - uses: dtolnay/rust-toolchain@1.98.1
       - name: Build qx-cli (release, locked)
         run: cargo build --release --locked -p qx-cli
@@ -193,7 +196,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_tag || github.ref }}
+          ref: ${{ needs.version-consistency.outputs.release_sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
@@ -215,11 +218,22 @@ jobs:
         shell: bash
         run: test -n "$(find dist -maxdepth 1 -name '*.whl' -print -quit)"
       - name: Clean-install, verify offline quickstart report, and exercise Python API
+        env:
+          QX_EXPECTED_RELEASE_SHA: ${{ needs.version-consistency.outputs.release_sha }}
         shell: bash
         run: |
           set -euo pipefail
           python -m pip install --no-deps dist/*.whl
           cd "${RUNNER_TEMP}"
+          python - <<'PY'
+          import os
+          import qianxing
+
+          renderer = qianxing.doctor()["report_renderer"]
+          expected = os.environ["QX_EXPECTED_RELEASE_SHA"]
+          if renderer["origin"] != "bundled" or f"(build {expected[:7]}," not in renderer["identity"]:
+              raise SystemExit(f"Expected bundled renderer from {expected}, got {renderer['identity']}")
+          PY
           python "${GITHUB_WORKSPACE}/tools/python_wheel_smoke.py" "${GITHUB_WORKSPACE}"
       - name: Verify wheel is byte-reproducible on this runner
         shell: bash
@@ -284,7 +298,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_tag || github.ref }}
+          ref: ${{ needs.version-consistency.outputs.release_sha }}
       - name: Install C++ JSON dependency
         run: sudo apt-get update && sudo apt-get install -y nlohmann-json3-dev
       - name: Configure and build
@@ -331,7 +345,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_tag || github.ref }}
+          ref: ${{ needs.version-consistency.outputs.release_sha }}
       - name: Package the versioned Web console
         shell: bash
         run: |
@@ -357,7 +371,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_tag || github.ref }}
+          ref: ${{ needs.version-consistency.outputs.release_sha }}
       - uses: dtolnay/rust-toolchain@1.98.1
       - name: Emit SPDX 2.3 dependency SBOM from locked Cargo metadata
         run: |
@@ -385,9 +399,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_tag || github.ref }}
+          ref: ${{ needs.version-consistency.outputs.release_sha }}
       - uses: actions/download-artifact@v4
         with:
+          # Reusable CI builds its own same-named wheels for installation tests.
+          pattern: '!python-wheel-*'
           path: dist
           merge-multiple: true
       - name: Assemble hash manifest and identity file
@@ -447,6 +463,27 @@ jobs:
               --notes "可复现发布件：binary / wheel / C++ SDK / Web 控制台 + SHA256SUMS + sbom.json + release-identity.json（build provenance 见 Release 附件证明）。" \
               "${assets[@]}"
           fi
+
+      - name: Download the wheel artifacts selected for PyPI
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: ${{ runner.temp }}/pypi-wheels
+          merge-multiple: true
+      - name: Compare draft GitHub Release wheels with the PyPI payload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          wheels=("$RUNNER_TEMP"/pypi-wheels/*.whl)
+          if (( ${#wheels[@]} != 3 )); then
+            echo "Expected three platform wheels for PyPI, found ${#wheels[@]}." >&2
+            exit 1
+          fi
+          gh release download "$QX_RELEASE_TAG" --pattern '*.whl' --dir "$RUNNER_TEMP/draft-wheels"
+          diff -qr "$RUNNER_TEMP/pypi-wheels" "$RUNNER_TEMP/draft-wheels"
 
   publish-github-release:
     name: Publish GitHub Release after PyPI

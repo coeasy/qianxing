@@ -26,6 +26,8 @@ qianxing quickstart ./qianxing-okx --profile ccxt --exchange okx --days 30 --tim
 
 v0.4.2 的 Python wheel → 真实公共行情 → 回测 → HTML 报告链路已通过 [CI #850（30/30）](https://github.com/coeasy/qianxing/actions/runs/45466193593) 和 [OKX/Bitget 公共行情验收 #140](https://github.com/coeasy/qianxing/actions/runs/45466194122)：两家均获取 180 天 15 分钟 K 线（各 17,280 根、零缺失间隔），生成 HTML/SVG 报告；无拒单、无账户凭据、无订单提交。完整参数、Python 策略与分步数据工作流见[首跑指南](docs/first-run.md)。
 
+**发布后构件复核发现，GitHub Release 与 PyPI 上三平台同名 wheel 的 SHA-256 均不同；Windows wheel 内 CLI 分别标识 tag 提交 `6e9e862` 与发布派发提交 `49ae18e`。** PyPI provenance 证明发布身份，不证明跨渠道字节一致。PR [#43](https://github.com/coeasy/qianxing/pull/43) 增加来源身份和 wheel 字节对齐门禁；已发布的 v0.4.2 附件不能原位替换。完整证据见[发布记录](maturity/evidence/release-v0.4.2-publication-2026-11-25.json)。
+
 Rust 工程可在 Cargo.toml 中添加 `qx-sdk = "0.4.2"`，或在独立示例目录运行 `cargo run --locked --release`，使用教学行情校验数据、回测并复核产物。[crates.io 安装包](https://crates.io/crates/qx-sdk/0.4.2) · [可运行示例](examples/rust-sdk-quickstart/README.md)
 
 Rust 集成方可以从 [`qx-sdk` 包级快速接入指南](crates/qx-sdk/README.md)开始：单一依赖、数据输入合同、预检、回测和产物复核。

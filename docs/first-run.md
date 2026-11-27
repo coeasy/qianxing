@@ -6,6 +6,8 @@
 
 v0.4.2 回测 / Paper 正式版已发布。Python 使用 [PyPI 的 qianxing 0.4.2](https://pypi.org/project/qianxing/0.4.2/)，Rust 工程使用 [crates.io 的 qx-sdk 0.4.2](https://crates.io/crates/qx-sdk/0.4.2)，CLI 与 Web Console 从 [GitHub Release v0.4.2](https://github.com/coeasy/qianxing/releases/tag/v0.4.2) 下载。本文中的 `quickstart --profile paper` 是 tag 后加入的一键首跑入口，尚未进入 v0.4.2 CLI 或 wheel；v0.4.2 仍可使用该版本已有的 Paper 命令和控制流程。
 
+发布后复核还发现 GitHub Release 与 PyPI 三平台同名 wheel 的 SHA-256 均不一致；Python 首跑请从 PyPI 安装，不要把 GitHub 附件 wheel 当作相同构件。差异及 CLI 构建提交见[发布证据](../maturity/evidence/release-v0.4.2-publication-2026-11-25.json)。
+
 > 标注口径：**【已实现】**= 命令在当前工作树里可执行，且行为由常驻用例或门禁钉住；
 > **进阶**= 能力存在，但不属于首跑承诺，本页只在末尾点名，不给步骤。本页不重复登记未实现的设计意图，
 > 那类条目一律留在方案文档里标【设计意图，未排期】。

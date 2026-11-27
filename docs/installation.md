@@ -4,6 +4,8 @@
 
 v0.4.2 回测 / Paper 正式版已发布。Python 使用 [PyPI 的 qianxing 0.4.2](https://pypi.org/project/qianxing/0.4.2/)，Rust 工程使用 [crates.io 的 qx-sdk 0.4.2](https://crates.io/crates/qx-sdk/0.4.2)，CLI 与 Web Console 从 [GitHub Release v0.4.2](https://github.com/coeasy/qianxing/releases/tag/v0.4.2) 下载。Python wheel 支持 CPython 3.10 及以上，Rust SDK 声明的最低 Rust 版本为 1.87。
 
+**发布后构件审计发现，GitHub Release 与 PyPI 三平台同名 wheel 的 SHA-256 均不一致。** Windows 包内 CLI 的构建提交分别为 PyPI tag `6e9e862`、GitHub Release 派发提交 `49ae18e`。Python 安装请使用 PyPI wheel；来源身份与跨渠道字节校验由 PR [#43](https://github.com/coeasy/qianxing/pull/43) 增补，v0.4.2 已发布文件不能原位替换。详见[版本构件证据](../maturity/evidence/release-v0.4.2-publication-2026-11-25.json)。
+
 ## 安装
 
 Rust CLI 与 Python wheel 由 tag 发布流水线构建，并随 GitHub Release 提供。Python wheel 还会在全部发布门禁通过后通过 PyPI Trusted Publishing 发布。Rust CLI 提供平台二进制与源码安装路径；Rust SDK 的 14 包 crates.io 闭包现已全部发布，并通过逐包 checksum 与独立 crates.io consumer 验收，详见 [`qx-sdk` 发布说明](qx-sdk-migration.md#查看-rust-发布依赖)。
