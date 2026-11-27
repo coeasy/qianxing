@@ -28,10 +28,12 @@ mod backend_switch;
 mod commit;
 mod event_identity;
 mod fact_context;
+mod order_facts;
 mod quote_index;
 
 use event_identity::RuntimeEventIdentityIndex;
 use fact_context::{enrich_runtime_event_context, runtime_event_metadata};
+use order_facts::RuntimeOrderFactIndex;
 use quote_index::RuntimeQuoteIndex;
 
 pub use qx_control::order_from_submit_command;
@@ -492,6 +494,7 @@ pub struct LiveEventPipeline {
     pending_amendments: BTreeMap<u64, (String, Order)>,
     event_identities: RuntimeEventIdentityIndex,
     quote_index: RuntimeQuoteIndex,
+    order_facts: RuntimeOrderFactIndex,
     // 下面这一格**只增不减的成交幂等台账**共用同一个上界：进程一生 ingest 过的成交数。
     // user stream、reconcile 与 Outbox 补投影三条路径都会把同一笔 fill 重投，`fill_key` 挡
     // 住第二次 `oms.apply_fill`。淘汰任何一条已见键就等于允许同一笔成交被记两次账，这是本
@@ -746,6 +749,7 @@ impl LiveEventPipeline {
             pending_amendments: BTreeMap::new(),
             event_identities: RuntimeEventIdentityIndex::default(),
             quote_index: RuntimeQuoteIndex::default(),
+            order_facts: RuntimeOrderFactIndex::default(),
             seen_fills: BTreeSet::new(),
             store,
             log_name,
@@ -791,7 +795,7 @@ impl LiveEventPipeline {
                 .ok_or_else(|| format!("订单 {order_id} 的手续费基线累计溢出"))?;
             Ok(())
         };
-        for event in self.log.events() {
+        for event in self.fee_events_for_order(order_id)? {
             match &event.kind {
                 EventKind::Filled { fill } if fill.order_id == order_id => {
                     // Exact fee rows have their own scale-bearing recovery baseline. Do not
@@ -839,7 +843,7 @@ impl LiveEventPipeline {
                 .ok_or_else(|| format!("订单 {order_id} 的精确手续费基线累计溢出"))?;
             Ok(())
         };
-        for event in self.log.events() {
+        for event in self.fee_events_for_order(order_id)? {
             match &event.kind {
                 EventKind::Filled { fill } if fill.order_id == order_id => {
                     if !fill.exact_fees.is_empty() {
@@ -883,7 +887,7 @@ impl LiveEventPipeline {
     /// order-fee snapshots do not carry trade IDs and therefore contribute nothing here.
     pub fn fee_trade_ids_for_order(&self, order_id: u64) -> Result<BTreeSet<String>, String> {
         let mut trade_ids = BTreeSet::new();
-        for event in self.log.events() {
+        for event in self.fee_events_for_order(order_id)? {
             match &event.kind {
                 EventKind::Filled { fill } if fill.order_id == order_id => {
                     if !fill.exact_fees.is_empty() {
@@ -924,6 +928,19 @@ impl LiveEventPipeline {
             }
         }
         Ok(trade_ids)
+    }
+
+    fn fee_events_for_order(&self, order_id: u64) -> Result<Vec<&Event>, String> {
+        self.order_facts
+            .fee_event_indices(order_id)
+            .iter()
+            .map(|&event_index| {
+                self.log
+                    .events()
+                    .get(event_index)
+                    .ok_or_else(|| format!("订单 {order_id} 的手续费索引超出 EventLog 范围"))
+            })
+            .collect()
     }
 
     pub fn orders(&self) -> Vec<Order> {
@@ -1140,17 +1157,17 @@ impl LiveEventPipeline {
         &self,
         client_order_id: u64,
     ) -> Option<&ExecutionCapabilityDecisionFact> {
-        self.log
-            .events()
-            .iter()
-            .find_map(|event| match &event.kind {
-                EventKind::ExecutionCapabilityDecision { decision }
-                    if decision.client_order_id == client_order_id =>
-                {
-                    Some(decision)
-                }
-                _ => None,
-            })
+        let event_index = self
+            .order_facts
+            .execution_capability_decision_index(client_order_id)?;
+        match &self.log.events().get(event_index)?.kind {
+            EventKind::ExecutionCapabilityDecision { decision }
+                if decision.client_order_id == client_order_id =>
+            {
+                Some(decision)
+            }
+            _ => None,
+        }
     }
 
     /// Persist the immutable canonical order-risk decision evaluated by a runtime worker.
@@ -1239,6 +1256,7 @@ impl LiveEventPipeline {
     /// 账簿不在这里动：现金与持仓由 `LedgerApplied` 事实单独驱动（见调用点）。
     fn apply_index_event(&mut self, event: &Event, event_index: usize) -> QxResult<()> {
         self.quote_index.remember(event);
+        self.order_facts.remember(event, event_index);
         match &event.kind {
             EventKind::OrderSubmitted { order } => {
                 self.oms.insert_replayed(order.clone()).map_err(|error| {
@@ -1467,6 +1485,8 @@ impl LiveEventPipeline {
         self.log.append_checked(event.clone())?;
         self.event_identities.remember(&event);
         self.quote_index.remember(&event);
+        self.order_facts
+            .remember(&event, self.log.events().len().saturating_sub(1));
         self.last_engine_ts = self.last_engine_ts.max(effective_ts);
         Ok(event)
     }
@@ -1788,6 +1808,7 @@ impl LiveEventPipeline {
             pending_amendments: BTreeMap::new(),
             event_identities: RuntimeEventIdentityIndex::default(),
             quote_index: RuntimeQuoteIndex::default(),
+            order_facts: RuntimeOrderFactIndex::default(),
             seen_fills: BTreeSet::new(),
             store: self.store.clone(),
             log_name: self.log_name.clone(),
@@ -2270,6 +2291,7 @@ mod tests {
         let seq = pipeline
             .record_execution_capability_decision(decision.clone(), 100)
             .unwrap();
+        assert_eq!(pipeline.execution_capability_decision(7), Some(&decision));
         let event = pipeline
             .log()
             .events()
@@ -4312,6 +4334,10 @@ mod tests {
 
         reader.refresh().unwrap();
         assert_eq!(reader.orders()[0].status, OrderStatus::Filled);
+        assert_eq!(
+            reader.fee_baseline_for_order(7).unwrap().get("USDT"),
+            Some(&1_000_000_000)
+        );
         assert_eq!(reader.metrics.tail_appends.load(Ordering::Relaxed), 1);
         assert_eq!(reader.metrics.rebuilds.load(Ordering::Relaxed), 0);
 

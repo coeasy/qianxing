@@ -159,6 +159,7 @@ capabilities:
       - crates/qx-risk/src/rules.rs single notional formula
       - crates/qx-execution/src/lib.rs CanonicalRiskPort
       - crates/qx-runtime/src/pipeline.rs record_order_risk_decision; crates/qx-service/src/paper_execution_host.rs persists each Paper decision before execution side effects (research-report projection remains open)
+      - crates/qx-runtime/src/pipeline/order_facts.rs indexes fee, risk-decision, and execution-capability facts by client order; append, shared-log tail refresh, and restart replay maintain the same lookup projection
       - crates/qx-cli/src/venue_runtime/paper_worker/paper_check.rs reads Paper account EventLogs without recovery writes and returns counts plus the most recent 100 risk decisions with exact raw values as strings; file-backed Paper account log bytes are observed with a configurable warning threshold, while database size and background alerting remain open
       - backtest/paper/live share one RuleSet (crates/qx-cli/src/runtime_wiring.rs strategy_risk_gate)
     limitations:

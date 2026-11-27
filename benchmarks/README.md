@@ -1,6 +1,6 @@
 # Qianxing Benchmarks
 
-性能基线与复现入口。CI 对端到端独立进程负载默认采用 7 次重复；p50 展示趋势，只有候选最快样本相对基线最慢样本仍超过登记阈值才阻断。尾延迟只记录，Criterion 使用自己的 95% 置信区间。PR 运行保留原 Criterion 样本设置，只运行 12 个核心热路径基准；主分支与发布路径仍运行完整的 171 项台账。**本目录不是免责声明**：`run_baseline.py` 是真会跑的驱动器，读数落
+性能基线与复现入口。CI 对端到端独立进程负载默认采用 7 次重复；p50 展示趋势，只有候选最快样本相对基线最慢样本仍超过登记阈值才阻断。尾延迟只记录，Criterion 使用自己的 95% 置信区间。PR 默认运行 21 个运行时行情/余额查询、对齐组合时间线和 Paper 生命周期样本。PR 修改 qx-core 实现、其 Criterion harness 或共享 Rust 构建输入时，会在单个 Criterion 进程中追加 qx-core 全套 53 个样本，总计 74 项；未修改的 qx-core 微基准仍纳入主分支完整趋势，不参与无关 PR 的阻断比较。主分支与发布路径仍运行完整的 183 项台账。**本目录不是免责声明**：`run_baseline.py` 是真会跑的驱动器，读数落
 `benchmarks/results/baseline.json`。
 
 ## PreparedEvaluation 持久化批次与崩溃恢复

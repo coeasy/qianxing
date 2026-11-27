@@ -16015,8 +16015,10 @@ def performance_baseline_check() -> None:
         and 'row.get("mean_ns", row.get("median_ns"))' in compare_source
         and 'row.get("mean_ci95_ns")' in compare_source
         and "new_interval[0] > threshold_bound" in compare_source
-        and 'key[0] == "steady_state_pipeline_ingest"' in compare_source,
-        "Criterion 使用 95% 置信区间，端到端和稳态 pipeline 仅在重复样本确认越过 targets.yaml 阈值时阻断",
+        and 'key[0] == "steady_state_pipeline_ingest"' not in compare_source
+        and "MIN_CRITERION_BLOCKING_MS = 0.001" in compare_source
+        and "single-run point estimate" in compare_source,
+        "Criterion 使用 95% 区间并跳过亚微秒噪声，单次 Rust 微基准不阻断；端到端和稳态 pipeline 依据重复样本阻断",
         "比较器缺少台账阈值、阻断退出或可靠重复样本回归判据",
     )
     targets_source = TARGETS_FILE.read_text(encoding="utf-8")
@@ -16036,6 +16038,8 @@ def performance_baseline_check() -> None:
         and "test_registered_paper_lifecycle_v2_regression_over_ten_percent_fails" in compare_tests_source
         and "test_short_criterion_estimate_without_confidence_intervals_is_diagnostic" in compare_tests_source
         and "test_criterion_point_spike_with_overlapping_confidence_intervals_is_non_blocking" in compare_tests_source
+        and "test_sub_microsecond_criterion_spike_is_diagnostic" in compare_tests_source
+        and "test_single_run_rust_micro_estimate_is_diagnostic" in compare_tests_source
         and "test_rust_micro_pipeline_ingest_blocks_only_beyond_window_repeat_envelope" in compare_tests_source
         and "test_rust_micro_pipeline_ingest_legacy_baseline_without_windows_is_inconclusive" in compare_tests_source
         and "test_end_to_end_point_spike_with_overlapping_repeat_envelope_is_inconclusive" in compare_tests_source
@@ -16046,6 +16050,29 @@ def performance_baseline_check() -> None:
     workflow = ROOT / ".github/workflows/ci.yml"
     workflow_source = workflow.read_text(encoding="utf-8") if workflow.is_file() else ""
     performance_job = workflow_source.split("  performance-trend:", 1)[-1].split("\n  python-wheel-build:", 1)[0]
+    criterion_scope_selector = ROOT / "benchmarks/select_criterion_profile.py"
+    criterion_scope_source = criterion_scope_selector.read_text(encoding="utf-8") if criterion_scope_selector.is_file() else ""
+    check(
+        "name: Select PR Criterion scope" in performance_job
+        and '"$BASE_SHA" "$GITHUB_SHA"' in performance_job
+        and "benchmarks/select_criterion_profile.py" in performance_job
+        and "steps.criterion-scope.outputs.profile" in performance_job
+        and '"pr-core"' in bench_driver_source
+        and "PR_CORE_CRITERION_FILTERS" in bench_driver_source,
+        "PR Criterion 范围由变更 crate 选择；单 crate 精确测量，共享 core 扩展完整 core，多 crate 保留代表性覆盖",
+        "PR 性能基准范围选择器或 crate 专属 profile 不完整",
+    )
+    check(
+        "criterion_profile_for_changed_files" in criterion_scope_source
+        and "git" in criterion_scope_source
+        and "diff" in criterion_scope_source
+        and all(f'"{profile}"' in bench_driver_source for profile in ("pr-runtime", "pr-xingban", "pr-zhenlu"))
+        and "test_single_package_change_only_runs_its_own_benchmarks" in (ROOT / "benchmarks/tests/test_run_rust_bench.py").read_text(encoding="utf-8")
+        and "test_shared_inputs_or_core_changes_include_the_shared_dependency_suite" in (ROOT / "benchmarks/tests/test_run_rust_bench.py").read_text(encoding="utf-8")
+        and "test_multiple_or_unbenchmarked_package_changes_use_the_representative_profile" in (ROOT / "benchmarks/tests/test_run_rust_bench.py").read_text(encoding="utf-8"),
+        "Criterion 选择器有单 crate、共享 core 与多 crate 的行为覆盖",
+        "Criterion 选择器缺少按变更范围选择 profile 的行为覆盖",
+    )
     check(
         "performance-trend:" in workflow_source
         and "name: Blocking registered performance regressions" in workflow_source
@@ -18003,6 +18030,97 @@ def pipeline_cursor_refresh_check() -> None:
         ),
         "LiveEventPipeline 查重用追加/重放维护的身份索引，且保留最早命中语义",
         "查重索引未覆盖本地追加、尾部刷新、启动重放或最早命中行为",
+    )
+
+
+def pipeline_order_fact_index_check() -> None:
+    """Keep order-scoped recovery facts indexed on append, tail refresh, and replay."""
+    index = case_source("crates/qx-runtime/src/pipeline/order_facts.rs")
+    pipeline = case_source(PIPELINE_FILE)
+    commit = case_source("crates/qx-runtime/src/pipeline/commit.rs")
+    remember = _rust_fn_body(index, "remember")
+    apply_index_event = _rust_fn_body(pipeline, "apply_index_event")
+    rebuild = _rust_fn_body(pipeline, "rebuild_runtime_indexes")
+    append = _rust_fn_body(pipeline, "append_at_engine")
+    tail = _rust_fn_body(pipeline, "apply_tail")
+    fee_lookup = _rust_fn_body(pipeline, "fee_events_for_order")
+    fee_readers = [
+        _rust_fn_body(pipeline, name)
+        for name in (
+            "fee_baseline_for_order",
+            "exact_fee_baseline_for_order",
+            "fee_trade_ids_for_order",
+        )
+    ]
+    risk_commit = _rust_fn_body(commit, "record_order_risk_decision_commit")
+    capability_commit = _rust_fn_body(commit, "record_execution_capability_decision_commit")
+    capability_reader = _rust_fn_body(pipeline, "execution_capability_decision")
+
+    check(
+        "struct RuntimeOrderFactIndex" in index
+        and remember is not None
+        and all(
+            token in index
+            for token in (
+                "fee_events_by_order",
+                "order_risk_decisions",
+                "execution_capability_decisions",
+                "EventKind::Filled",
+                "EventKind::FeeAdjustment",
+                "EventKind::OrderRiskDecision",
+                "EventKind::ExecutionCapabilityDecision",
+                ".or_insert(event_index)",
+            )
+        )
+        and "push(event_index)" in remember
+        and "order_decision_indexes_keep_the_first_durable_fact" in index
+        and "fee_event_index_is_scoped_by_order_and_preserves_log_order" in index,
+        "订单事实索引覆盖手续费与不可变决策，并保留事件顺序和最早决策",
+        "order_facts.rs 缺少订单作用域索引、首次决策语义或回归用例",
+    )
+    check(
+        "order_facts: RuntimeOrderFactIndex" in pipeline
+        and apply_index_event is not None
+        and "self.order_facts.remember(event, event_index)" in apply_index_event
+        and rebuild is not None
+        and "self.apply_index_event(event, event_index)?" in rebuild
+        and append is not None
+        and "self.order_facts" in append
+        and ".remember(&event," in append
+        and tail is not None
+        and "self.apply_index_event(event, tail_start + offset)?" in tail,
+        "本地追加、共享日志尾刷和重启重放维护同一订单事实索引",
+        "订单事实索引没有覆盖追加、增量刷新和完整重放三条路径",
+    )
+    check(
+        fee_lookup is not None
+        and "fee_event_indices(order_id)" in fee_lookup
+        and ".get(event_index)" in fee_lookup
+        and "events().iter()" not in fee_lookup
+        and all(body is not None and "fee_events_for_order(order_id)?" in body for body in fee_readers)
+        and all("log.events().iter()" not in body for body in fee_readers if body is not None),
+        "手续费基线和成交 ID 恢复只遍历该订单的索引事件",
+        "手续费恢复仍扫描全量 EventLog，或索引位置读取没有 fail-closed 边界",
+    )
+    check(
+        risk_commit is not None
+        and capability_commit is not None
+        and "order_risk_decision_index(decision.client_order_id)" in risk_commit
+        and "execution_capability_decision_index(decision.client_order_id)" in capability_commit
+        and risk_commit.count(".get(event_index)") == 1
+        and capability_commit.count(".get(event_index)") == 1
+        and "log.events().iter()" not in risk_commit
+        and "log.events().iter()" not in capability_commit,
+        "风控与执行能力决策幂等查重使用订单索引并校验原始 EventLog 事实",
+        "决策查重仍全日志扫描，或没有按索引位置核对已持久化事实",
+    )
+    check(
+        capability_reader is not None
+        and "execution_capability_decision_index(client_order_id)" in capability_reader
+        and ".get(event_index)" in capability_reader
+        and "events().iter()" not in capability_reader,
+        "执行能力决策公开读取通过订单索引定位 durable EventLog 事实",
+        "执行能力决策读 API 仍扫描全日志或没有核对索引位置",
     )
 
 
@@ -34321,6 +34439,7 @@ def main() -> int:
     dev_dependency_cycle_check()
     event_log_append_batch_check()
     pipeline_cursor_refresh_check()
+    pipeline_order_fact_index_check()
     valuation_single_source_check()
     orderbook_strategy_margin_check()
     paper_account_admission_serialization_check()

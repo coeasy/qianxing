@@ -157,6 +157,11 @@ def load_thresholds(path: Path) -> dict[str, float]:
     return thresholds
 
 
+# Cross-run confidence intervals for sub-microsecond operations are dominated by
+# clock and vCPU placement noise. Keep these estimates visible without blocking.
+MIN_CRITERION_BLOCKING_MS = 0.001
+
+
 def benchmark_group(key: tuple[str, str]) -> str:
     name = key[0]
     if name == "end_to_end":
@@ -213,8 +218,12 @@ def main() -> int:
             continue
         shared_metrics = old_rows[key].keys() & new_rows[key].keys()
         for metric in sorted(shared_metrics):
-            if key[0] == "steady_state_pipeline_ingest" and metric == "operations_per_second":
-                # This is the inverse of median_ms, not independent evidence.
+            if (
+                group == "rust_micro"
+                and metric == "operations_per_second"
+                and "median_ms" in shared_metrics
+            ):
+                # This is derived from the same median_ms estimate, not independent evidence.
                 continue
             if metric in {"p95_ms", "min_ms", "max_ms", "raw_ms", "sample_count"} or (
                 metric.endswith("_ci95_ms")
@@ -228,8 +237,13 @@ def main() -> int:
             repeat_comparable = (
                 group in {"end_to_end", "ashare_rules_on"} and metric in {"p50_ms", "median_ms"}
             ) or (
-                key[0] == "steady_state_pipeline_ingest"
-                and metric == "median_ms"
+                group == "rust_micro"
+                and metric in {
+                    "median_ms",
+                    "incremental_refresh_p50_ms",
+                    "append_batch_p50_ms",
+                    "full_replay_median_ms",
+                }
                 and ("raw_ms" in old_rows[key] or "raw_ms" in new_rows[key])
             )
             if repeat_comparable:
@@ -260,6 +274,17 @@ def main() -> int:
                         "more than the registered limit, but repeat bounds are unavailable."
                     )
                 continue
+            if group == "rust_micro" and metric in {
+                "median_ms",
+                "incremental_refresh_p50_ms",
+                "append_batch_p50_ms",
+                "full_replay_median_ms",
+            }:
+                print(
+                    f"[INCONCLUSIVE] {key[0]}[{key[1]}] {metric}: single-run point estimate "
+                    "has no independent repeat envelope and is diagnostic only."
+                )
+                continue
             if group == "criterion" and metric == "point_ms":
                 old_interval = old_rows[key].get("mean_ci95_ms")
                 new_interval = new_rows[key].get("mean_ci95_ms")
@@ -278,6 +303,16 @@ def main() -> int:
                         "point estimate is diagnostic only."
                     )
                     print(note)
+                    continue
+                if (
+                    old_interval[1] < MIN_CRITERION_BLOCKING_MS
+                    and new_interval[1] < MIN_CRITERION_BLOCKING_MS
+                ):
+                    print(
+                        f"[INCONCLUSIVE] {key[0]}: both 95% intervals are below "
+                        f"{MIN_CRITERION_BLOCKING_MS * 1000:.0f} us; batch measurements are "
+                        "needed for a blocking signal."
+                    )
                     continue
                 threshold_bound = old_interval[1] * (1 + threshold)
                 if new_interval[0] > threshold_bound:

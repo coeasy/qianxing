@@ -49,13 +49,16 @@ impl LiveEventPipeline {
                 decision.client_order_id, decision.instrument, order.instrument
             )));
         }
-        if let Some(event) = self.log.events().iter().find(|event| {
-            matches!(
-                &event.kind,
-                EventKind::OrderRiskDecision { decision: existing }
-                    if existing.client_order_id == decision.client_order_id
-            )
-        }) {
+        if let Some(event_index) = self
+            .order_facts
+            .order_risk_decision_index(decision.client_order_id)
+        {
+            let event = self.log.events().get(event_index).ok_or_else(|| {
+                QxError::Invariant(format!(
+                    "client_order_id={} 风控索引超出 EventLog 范围",
+                    decision.client_order_id
+                ))
+            })?;
             return match &event.kind {
                 EventKind::OrderRiskDecision { decision: existing } if existing == &decision => {
                     Ok(event.seq)
@@ -220,13 +223,16 @@ impl LiveEventPipeline {
                 "ExecutionCapabilityDecisionFact schema、身份或摘要字段无效".into(),
             ));
         }
-        if let Some(event) = self.log.events().iter().find(|event| {
-            matches!(
-                &event.kind,
-                EventKind::ExecutionCapabilityDecision { decision: existing }
-                    if existing.client_order_id == decision.client_order_id
-            )
-        }) {
+        if let Some(event_index) = self
+            .order_facts
+            .execution_capability_decision_index(decision.client_order_id)
+        {
+            let event = self.log.events().get(event_index).ok_or_else(|| {
+                QxError::Invariant(format!(
+                    "client_order_id={} 执行能力决策索引超出 EventLog 范围",
+                    decision.client_order_id
+                ))
+            })?;
             return match &event.kind {
                 EventKind::ExecutionCapabilityDecision { decision: existing }
                     if existing == &decision =>

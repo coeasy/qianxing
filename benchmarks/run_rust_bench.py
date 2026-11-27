@@ -7,6 +7,7 @@ import argparse
 import json
 import subprocess
 import sys
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -76,18 +77,55 @@ CRITERION_REQUIRED = {
     "scheduler_active_run_selection/indexed_active_ids",
 }
 PR_CRITERION_FILTERS = {
-    "qx-core": (
-        "qx_core_event_log_validate/cached",
-        "qx_core_ledger_entry_lookup/indexed",
-        "qx_core_event_log_prefix_digest/cached_after_append",
-    ),
     "qx-runtime": (
         "qx_runtime_balance_snapshot_cursor",
         "qx_runtime_latest_quote_lookup",
     ),
+    "qx-xingban": ("portfolio_bar_timeline_aligned_64k_bars",),
     "qx-zhenlu": ("qx_zhenlu_crypto_paper_lifecycle_v2",),
 }
+PR_CORE_CRITERION_FILTERS = {
+    # Run every qx-core group in one Criterion process when the PR changes core
+    # implementation, its benchmark harness, or shared Rust build inputs.
+    "qx-core": ("qx_core_",),
+}
+PACKAGE_CRITERION_PROFILES = {
+    "pr-runtime": "qx-runtime",
+    "pr-xingban": "qx-xingban",
+    "pr-zhenlu": "qx-zhenlu",
+}
+SHARED_RUST_BUILD_INPUTS = {
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    ".cargo/config.toml",
+}
 MARGINAL_KNEE_THRESHOLD_PCT = 20.0
+
+
+def criterion_profile_for_changed_files(changed_files: Iterable[str]) -> str:
+    """Select Criterion suites from the changed benchmarked crate dependency scope."""
+    paths = {str(path).replace("\\", "/").removeprefix("./") for path in changed_files}
+    if any(path in SHARED_RUST_BUILD_INPUTS for path in paths) or any(
+        path.startswith("crates/qx-core/") for path in paths
+    ):
+        return "pr-core"
+
+    changed_crates = {
+        parts[1]
+        for path in paths
+        if len(parts := path.split("/")) >= 3 and parts[0] == "crates"
+    }
+    if len(changed_crates) == 1:
+        package = next(iter(changed_crates))
+        if package not in PACKAGE_CRITERION_PROFILES.values():
+            return "pr"
+        profile = next(
+            profile for profile, selected_package in PACKAGE_CRITERION_PROFILES.items()
+            if selected_package == package
+        )
+        return profile
+    return "pr"
 
 
 def criterion_estimate_path(benchmark: str, criterion_root: Path | None = None) -> Path:
@@ -112,8 +150,14 @@ def criterion_estimate_path(benchmark: str, criterion_root: Path | None = None) 
 
 
 def criterion_plan(cargo: str, profile: str) -> tuple[set[str], list[list[str]]]:
-    if profile not in {"full", "pr"}:
+    if profile not in {"full", "pr", "pr-core", *PACKAGE_CRITERION_PROFILES}:
         raise ValueError(f"unsupported Criterion profile: {profile}")
+    profile_filters = PR_CRITERION_FILTERS
+    if profile == "pr-core":
+        profile_filters = {**PR_CORE_CRITERION_FILTERS, **PR_CRITERION_FILTERS}
+    elif profile in PACKAGE_CRITERION_PROFILES:
+        package = PACKAGE_CRITERION_PROFILES[profile]
+        profile_filters = {package: PR_CRITERION_FILTERS[package]}
     required = (
         CRITERION_REQUIRED
         if profile == "full"
@@ -122,7 +166,7 @@ def criterion_plan(cargo: str, profile: str) -> tuple[set[str], list[list[str]]]
             for benchmark in CRITERION_REQUIRED
             if any(
                 selected in benchmark
-                for filters in PR_CRITERION_FILTERS.values()
+                for filters in profile_filters.values()
                 for selected in filters
             )
         }
@@ -132,7 +176,7 @@ def criterion_plan(cargo: str, profile: str) -> tuple[set[str], list[list[str]]]
         selected_filters = (
             (None,)
             if profile == "full"
-            else PR_CRITERION_FILTERS.get(package, ())
+            else profile_filters.get(package, ())
         )
         for selected in selected_filters:
             command = [cargo, "bench", "-p", package, "--bench", "criterion_performance", "--"]
@@ -246,9 +290,13 @@ def main() -> int:
     )
     parser.add_argument(
         "--profile",
-        choices=("full", "pr"),
+        choices=("full", "pr", "pr-core", *PACKAGE_CRITERION_PROFILES),
         default="full",
-        help="full runs the complete benchmark ledger; pr measures the stable core hot-path subset",
+        help=(
+            "full runs the complete benchmark ledger; pr measures representative hot paths; "
+            "pr-runtime/pr-xingban/pr-zhenlu scope a single changed crate; "
+            "pr-core also includes the full qx-core suite"
+        ),
     )
     args = parser.parse_args()
     required_criterion, criterion_commands = criterion_plan(args.cargo, args.profile)

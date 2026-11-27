@@ -8,7 +8,7 @@
   },
   "source_sha256": {
     "maturity/capability-matrix.yaml": "c6927e2c6a1a4cc4fad188ca4a393fe1a0f85832738fd9fde55e88cd700d3575",
-    "maturity/capabilities.yaml": "37493a6e42fe3a5a636c2fe21a3bb2a575c3d3ead5c0665c761a39a46e0e7e51",
+    "maturity/capabilities.yaml": "4cfe4c5664fb0ad984b7b5d40e4ce87404cff2098bba2b7281f8863db73b9c07",
     "maturity/capability-crosswalk.yaml": "4b153f9b8af193d1bfbaa0c840671b746262fc2dff8a4a320cc95141eef3320f"
   },
   "product_levels": [
@@ -97,7 +97,7 @@
       ],
       "execution_scope_count": 0,
       "account_query_scope_count": 0,
-      "evidence_path_count": 125,
+      "evidence_path_count": 126,
       "limitation_count": 4
     },
     {
@@ -612,6 +612,7 @@
             "crates/qx-risk/src/rules.rs single notional formula",
             "crates/qx-execution/src/lib.rs CanonicalRiskPort",
             "crates/qx-runtime/src/pipeline.rs record_order_risk_decision; crates/qx-service/src/paper_execution_host.rs persists each Paper decision before execution side effects (research-report projection remains open)",
+            "crates/qx-runtime/src/pipeline/order_facts.rs indexes fee, risk-decision, and execution-capability facts by client order; append, shared-log tail refresh, and restart replay maintain the same lookup projection",
             "crates/qx-cli/src/venue_runtime/paper_worker/paper_check.rs reads Paper account EventLogs without recovery writes and returns counts plus the most recent 100 risk decisions with exact raw values as strings; file-backed Paper account log bytes are observed with a configurable warning threshold, while database size and background alerting remain open",
             "backtest/paper/live share one RuleSet (crates/qx-cli/src/runtime_wiring.rs strategy_risk_gate)"
           ],
