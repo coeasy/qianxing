@@ -33,8 +33,11 @@ use crate::admission::{ConnectionBudget, ConnectionGuard, DEFAULT_MAX_CONCURRENT
 use crate::transport::{configure_connection, read_request, sha1, write_http_response};
 use crate::{ApiResponse, ApiService};
 use std::collections::BTreeMap;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -46,6 +49,8 @@ pub const CONSOLE_CSRF_COOKIE: &str = "qx_console_csrf";
 pub const CONSOLE_CSRF_HEADER: &str = "x-qx-csrf";
 /// 引导令牌的查询参数名。
 pub const CONSOLE_TOKEN_QUERY: &str = "token";
+/// Only the authenticated same-origin Console BFF can install its packaged teaching sample.
+pub const CONSOLE_SAMPLE_INSTALL_PATH: &str = "/console/sample-data";
 /// 会话有效期缺省值（秒）。配置可覆盖。
 pub const DEFAULT_CONSOLE_SESSION_TTL_SECONDS: u64 = 3600;
 /// 这一层只发这五份静态资源；不在册的名字一律 404，路径穿越因此不可表达。
@@ -233,6 +238,21 @@ impl ConsoleFront {
                 return (json_response(403, "console_origin_not_allowed"), Vec::new());
             }
         }
+        if route == CONSOLE_SAMPLE_INSTALL_PATH {
+            if parsed.method != "POST" {
+                return (
+                    json_response(405, "console_sample_method_not_allowed"),
+                    Vec::new(),
+                );
+            }
+            if !parsed.body.trim().is_empty() {
+                return (
+                    json_response(400, "console_sample_request_invalid"),
+                    Vec::new(),
+                );
+            }
+            return (self.install_packaged_sample(), Vec::new());
+        }
         let response = self.service.handle_inner(
             &parsed.method,
             parsed.target.as_str(),
@@ -310,6 +330,34 @@ impl ConsoleFront {
         }
     }
 
+    fn install_packaged_sample(&self) -> ApiResponse {
+        let asset_path = self.config.static_dir.join("sample.json");
+        let sample = match fs::read(&asset_path) {
+            Ok(bytes) => bytes,
+            Err(_) => return json_response(503, "console_sample_asset_unavailable"),
+        };
+        match install_console_sample(&self.service.app_paths.data_root, &sample) {
+            Ok((status, sha256)) => {
+                let document = serde_json::json!({
+                    "status": status,
+                    "file": "sample.json",
+                    "bytes": sample.len(),
+                    "sha256": sha256,
+                });
+                ApiResponse::json(
+                    if status == "installed" { 201 } else { 200 },
+                    document.to_string(),
+                )
+            }
+            Err(SampleInstallError::Conflict) => {
+                json_response(409, "console_sample_destination_conflict")
+            }
+            Err(SampleInstallError::Unavailable) => {
+                json_response(503, "console_sample_install_unavailable")
+            }
+        }
+    }
+
     /// 持续接受连接，直到 `stopped()` 为真（与 `ApiService::serve` 同一条收摊口径）。
     pub fn serve(
         &self,
@@ -369,6 +417,92 @@ impl ConsoleFront {
         configure_connection(&stream)?;
         self.serve_stream(stream, now_ms)
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SampleInstallError {
+    Conflict,
+    Unavailable,
+}
+
+static NEXT_SAMPLE_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
+struct SampleTempPath(PathBuf);
+
+impl Drop for SampleTempPath {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+fn existing_console_sample(
+    destination: &std::path::Path,
+    sample: &[u8],
+) -> Result<Option<String>, SampleInstallError> {
+    let metadata = match fs::symlink_metadata(destination) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(SampleInstallError::Unavailable),
+    };
+    if !metadata.file_type().is_file() {
+        return Err(SampleInstallError::Conflict);
+    }
+    match fs::read(destination) {
+        Ok(existing) if existing == sample => Ok(Some("already_present".to_string())),
+        Ok(_) => Err(SampleInstallError::Conflict),
+        Err(_) => Err(SampleInstallError::Unavailable),
+    }
+}
+
+fn install_console_sample(
+    data_root: &std::path::Path,
+    sample: &[u8],
+) -> Result<(String, String), SampleInstallError> {
+    fs::create_dir_all(data_root).map_err(|_| SampleInstallError::Unavailable)?;
+    let canonical_root =
+        fs::canonicalize(data_root).map_err(|_| SampleInstallError::Unavailable)?;
+    let destination = canonical_root.join("sample.json");
+    if let Some(status) = existing_console_sample(&destination, sample)? {
+        return Ok((status, qx_data::sha256_hex_bytes(sample)));
+    }
+
+    for _ in 0..8 {
+        let sequence = NEXT_SAMPLE_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        let temporary = canonical_root.join(format!(
+            ".sample.json.{}.{}.tmp",
+            std::process::id(),
+            sequence
+        ));
+        let mut file = match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return Err(SampleInstallError::Unavailable),
+        };
+        let temporary = SampleTempPath(temporary);
+        if file.write_all(sample).is_err() || file.sync_all().is_err() {
+            return Err(SampleInstallError::Unavailable);
+        }
+        drop(file);
+        match fs::hard_link(&temporary.0, &destination) {
+            Ok(()) => {
+                drop(temporary);
+                return Ok(("installed".to_string(), qx_data::sha256_hex_bytes(sample)));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                drop(temporary);
+                if let Some(status) = existing_console_sample(&destination, sample)? {
+                    return Ok((status, qx_data::sha256_hex_bytes(sample)));
+                }
+                return Err(SampleInstallError::Conflict);
+            }
+            Err(_) => return Err(SampleInstallError::Unavailable),
+        }
+    }
+    Err(SampleInstallError::Unavailable)
 }
 
 fn refuse_connection(stream: &TcpStream, code: &'static str) {
@@ -517,6 +651,43 @@ mod tests {
         )
         .expect("控制台配置");
         ConsoleFront::new(service, config).expect("控制台")
+    }
+
+    fn front_with_data_root(data_root: PathBuf) -> ConsoleFront {
+        let mut service = ApiService::with_policy(
+            ApiState::default(),
+            ApiPolicy::new().grant("console-operator", Permission::Trading),
+        );
+        service.app_paths.data_root = data_root;
+        let config = ConsoleConfig::new(
+            console_dir(),
+            "console-operator".to_string(),
+            TOKEN.to_string(),
+            DEFAULT_CONSOLE_SESSION_TTL_SECONDS,
+        )
+        .expect("控制台配置");
+        ConsoleFront::new(service, config).expect("控制台")
+    }
+
+    struct TempDataRoot(PathBuf);
+
+    impl TempDataRoot {
+        fn new() -> Self {
+            let nonce = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock after unix epoch")
+                .as_nanos();
+            Self(
+                std::env::temp_dir()
+                    .join(format!("qx-console-sample-{}-{nonce}", std::process::id())),
+            )
+        }
+    }
+
+    impl Drop for TempDataRoot {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
     }
 
     #[test]
@@ -777,6 +948,93 @@ mod tests {
             let (response, _) = front.handle(&request("GET", probe, &cookie), 1_000);
             assert_eq!(response.status, 404, "{probe} 不该被这一层发出去");
         }
+    }
+
+    #[test]
+    fn packaged_sample_install_is_authenticated_idempotent_and_never_overwrites() {
+        let temporary = TempDataRoot::new();
+        let front = front_with_data_root(temporary.0.clone());
+        let destination = temporary.0.join("sample.json");
+        let target = CONSOLE_SAMPLE_INSTALL_PATH;
+        let (unauthenticated, _) = front.handle(&request("POST", target, ""), 1_000);
+        assert_eq!(unauthenticated.status, 401);
+        assert!(
+            !destination.exists(),
+            "unauthenticated install must not create data"
+        );
+
+        let (_, cookies) = front.handle(&request("GET", &format!("/?token={TOKEN}"), ""), 1_000);
+        let cookies = set_cookies(&cookies);
+        let cookie = format!(
+            "Cookie: {CONSOLE_SESSION_COOKIE}={}; {CONSOLE_CSRF_COOKIE}={}\r\n",
+            cookies[CONSOLE_SESSION_COOKIE], cookies[CONSOLE_CSRF_COOKIE]
+        );
+        let missing_csrf = front.handle(&request("POST", target, &cookie), 1_000).0;
+        assert_eq!(missing_csrf.status, 403);
+        assert!(!destination.exists(), "CSRF refusal must not create data");
+
+        let headers = format!(
+            "{cookie}Origin: http://127.0.0.1:18082\r\n{CONSOLE_CSRF_HEADER}: {}\r\n",
+            cookies[CONSOLE_CSRF_COOKIE]
+        );
+        let installed = front.handle(&request("POST", target, &headers), 1_000).0;
+        assert_eq!(installed.status, 201, "{}", installed.body);
+        let sample = fs::read(console_dir().join("sample.json")).expect("packaged sample");
+        assert_eq!(fs::read(&destination).expect("installed sample"), sample);
+        let installed_json: serde_json::Value =
+            serde_json::from_str(&installed.body).expect("install response JSON");
+        assert_eq!(installed_json["status"], "installed");
+        assert_eq!(installed_json["file"], "sample.json");
+        assert_eq!(installed_json["bytes"], sample.len());
+        assert_eq!(installed_json["sha256"], qx_data::sha256_hex_bytes(&sample));
+
+        let already_present = front.handle(&request("POST", target, &headers), 1_000).0;
+        assert_eq!(already_present.status, 200);
+        assert!(already_present.body.contains("already_present"));
+        assert_eq!(fs::read(&destination).expect("same sample"), sample);
+
+        let different = b"user-owned dataset; preserve it";
+        fs::write(&destination, different).expect("install conflicting user file");
+        let conflict = front.handle(&request("POST", target, &headers), 1_000).0;
+        assert_eq!(conflict.status, 409);
+        assert_eq!(
+            fs::read(&destination).expect("preserved user file"),
+            different
+        );
+    }
+
+    #[test]
+    fn concurrent_sample_installs_publish_one_exact_file_without_temporary_remnants() {
+        let temporary = TempDataRoot::new();
+        let front = front_with_data_root(temporary.0.clone());
+        let (_, cookies) = front.handle(&request("GET", &format!("/?token={TOKEN}"), ""), 1_000);
+        let cookies = set_cookies(&cookies);
+        let headers = format!(
+            "Cookie: {CONSOLE_SESSION_COOKIE}={}; {CONSOLE_CSRF_COOKIE}={}\r\nOrigin: http://127.0.0.1:18082\r\n{CONSOLE_CSRF_HEADER}: {}\r\n",
+            cookies[CONSOLE_SESSION_COOKIE],
+            cookies[CONSOLE_CSRF_COOKIE],
+            cookies[CONSOLE_CSRF_COOKIE],
+        );
+        let request = request("POST", CONSOLE_SAMPLE_INSTALL_PATH, &headers);
+        let first_front = front.clone();
+        let first_request = request.clone();
+        let first = std::thread::spawn(move || first_front.handle(&first_request, 1_000).0);
+        let second = std::thread::spawn(move || front.handle(&request, 1_000).0);
+        let mut statuses = [
+            first.join().expect("first install request").status,
+            second.join().expect("second install request").status,
+        ];
+        statuses.sort_unstable();
+        assert_eq!(statuses, [200, 201]);
+        let sample = fs::read(console_dir().join("sample.json")).expect("packaged sample");
+        assert_eq!(fs::read(temporary.0.join("sample.json")).unwrap(), sample);
+        assert_eq!(
+            fs::read_dir(&temporary.0)
+                .expect("sample directory")
+                .count(),
+            1,
+            "temporary files must be removed after atomic publication"
+        );
     }
 
     #[test]

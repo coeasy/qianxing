@@ -44,8 +44,9 @@
   <main class="grid">
     <section class="card wide" id="card-first-run">
       <h2>首次回测：准备教学行情</h2>
-      <p class="foot">Bar 研究面板的初始规格读取 <code>sample.json</code>。服务不会自动创建这个文件；先下载并保存到 API 数据根目录，再运行数据校验。默认目录是服务启动工作目录下的 <code>.qianxing/api-data</code>；设置了 <code>QX_API_DATA_ROOT</code> 时改放到该目录。此文件是合成教学数据，不代表交易所行情或策略收益。</p>
-      <p><a href="sample.json" download="sample.json">下载与当前 Web Console 同版本的教学 BarFrame</a>，保存为 API 数据根目录内的 <code>sample.json</code>。</p>
+      <p class="foot">Bar 研究面板的初始规格读取 <code>sample.json</code>。此文件是合成教学数据，不代表交易所行情或策略收益。登录同源 Console 后可一键安装；已有同名不同内容的文件会保留并提示冲突。</p>
+      <p><button id="install-sample" type="button">一键安装教学数据</button> <span id="sample-install-status" class="muted" role="status" aria-live="polite">此操作仅在已登录的同源 Console 中可用。</span></p>
+      <p class="foot"><a href="sample.json" download="sample.json">下载与当前 Web Console 同版本的教学 BarFrame</a>，可手工保存为 API 数据根目录内的 <code>sample.json</code>。</p>
       <details>
         <summary>数据根目录在哪儿？</summary>
         <p>默认是启动 API 服务时所在工作目录下的 <code>.qianxing/api-data</code>；若设置了 <code>QX_API_DATA_ROOT</code>，请保存到该变量指定的目录。样例随此 Console 版本打包，无需访问 GitHub。</p>
