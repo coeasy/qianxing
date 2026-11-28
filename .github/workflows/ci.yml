@@ -308,9 +308,38 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: performance-${{ runner.os }}-${{ runner.arch }}
+      - name: Detect changes to measured Rust sources and workload inputs
+        id: measured_source
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        env:
+          BASE_REVISION: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        shell: bash
+        run: |
+          if [[ -z "$BASE_REVISION" || "$BASE_REVISION" =~ ^0+$ ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "No parent revision is available; run the benchmark gate."
+            exit 0
+          fi
+          git fetch --no-tags --depth=1 origin "$BASE_REVISION"
+          changed=$(python3 benchmarks/measurement_source_changes.py "$BASE_REVISION" "$GITHUB_SHA")
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          if [[ "$changed" == "true" ]]; then
+            echo "Measured Rust source, build manifests, fixtures, or performance policy changed."
+          else
+            echo "No measured Rust source or workload input changed; skip the expensive benchmark workload."
+          fi
+      - name: Select PR Criterion scope
+        id: criterion-scope
+        if: github.event_name == 'pull_request' && steps.measured_source.outputs.changed == 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          python3 benchmarks/select_criterion_profile.py "$BASE_SHA" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+      # PRs measure the changed scope and main pushes use the standard profile.
+      # Reusable release CI retains the full Criterion matrix.
       - name: Build and measure the parent revision on this runner
         id: paired_baseline
-        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        if: (github.event_name == 'pull_request' || github.event_name == 'push') && steps.measured_source.outputs.changed == 'true'
         env:
           BASE_REVISION: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           CARGO_TARGET_DIR: ${{ runner.temp }}/qianxing-performance-baseline-target
@@ -339,7 +368,7 @@ jobs:
             --workspace-root "$base_dir" \
             --target-dir "$CARGO_TARGET_DIR" \
             --out "$GITHUB_WORKSPACE/benchmarks/results/previous/rust-micro.json" \
-            --profile "${{ github.event_name == 'pull_request' && 'pr' || 'full' }}"
+            --profile "${{ github.event_name == 'workflow_call' && 'full' || (github.event_name == 'pull_request' && steps.criterion-scope.outputs.profile || 'pr') }}"
           python3 "$base_dir/benchmarks/run_ashare_profile_backtest.py" \
             --binary "$baseline_binary" \
             --out "$GITHUB_WORKSPACE/benchmarks/results/previous/ashare-rules-on.json" \
@@ -350,10 +379,12 @@ jobs:
             --repeats 7
           echo "available=true" >> "$GITHUB_OUTPUT"
       - name: Build release CLI
+        if: github.event_name == 'workflow_call' || steps.measured_source.outputs.changed == 'true'
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/target
         run: cargo build --release -p qx-cli
       - name: Measure frozen real-data backtest under Linux resource quotas
+        if: github.event_name == 'workflow_call' || steps.measured_source.outputs.changed == 'true'
         shell: bash
         run: |
           mkdir -p benchmarks/results
@@ -390,17 +421,10 @@ jobs:
           assert report["deterministic_across_repeats"] is True, report
           print("Observed 2 CPU quota, 8 GiB memory quota, and stable real-data results.")
           PY
-      - name: Select PR Criterion scope
-        id: criterion-scope
-        if: github.event_name == 'pull_request'
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          git fetch --no-tags origin "$BASE_SHA"
-          python3 benchmarks/select_criterion_profile.py "$BASE_SHA" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
       - name: Measure candidate end-to-end and kernel performance
+        if: github.event_name == 'workflow_call' || steps.measured_source.outputs.changed == 'true'
         env:
-          CRITERION_PROFILE: ${{ github.event_name == 'pull_request' && steps.criterion-scope.outputs.profile || 'full' }}
+          CRITERION_PROFILE: ${{ github.event_name == 'workflow_call' && 'full' || (github.event_name == 'pull_request' && steps.criterion-scope.outputs.profile || 'pr') }}
           CARGO_TARGET_DIR: ${{ github.workspace }}/target
         run: |
           python3 benchmarks/run_baseline.py \
@@ -416,21 +440,8 @@ jobs:
           python3 benchmarks/run_crypto_paper_e2e.py \
             --binary target/release/qx-cli \
             --out benchmarks/results/crypto-paper-e2e.json --repeats 7
-      - name: Detect changes to measured Rust sources and workload inputs
-        id: measured_source
-        if: steps.paired_baseline.outputs.available == 'true'
-        env:
-          BASE_REVISION: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-        shell: bash
-        run: |
-          changed=$(python3 benchmarks/measurement_source_changes.py "$BASE_REVISION" "$GITHUB_SHA")
-          echo "changed=$changed" >> "$GITHUB_OUTPUT"
-          if [[ "$changed" == "true" ]]; then
-            echo "Measured Rust source, build manifests, fixtures, or performance policy changed."
-          else
-            echo "Only benchmark infrastructure or non-measured files changed; paired results will be recorded without regression blocking."
-          fi
       - name: Block registered regressions above ledger thresholds
+        if: github.event_name == 'workflow_call' || steps.measured_source.outputs.changed == 'true'
         run: |
           if [[ "${{ steps.paired_baseline.outputs.available }}" == "true" && "${{ steps.measured_source.outputs.changed }}" == "true" ]]; then
             for pair in \
@@ -454,6 +465,7 @@ jobs:
             echo "No previous compatible performance baseline; recording first sample."
           fi
       - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_call' || steps.measured_source.outputs.changed == 'true'
         with:
           name: performance-baseline
           path: |
