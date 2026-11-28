@@ -24045,6 +24045,20 @@ def console_usability_check() -> None:
         "`--init` 写出的模板与部署模板同形：绑回环、令牌只给环境变量名、无令牌字面量字段、写明 static_dir 与 operator",
         detail,
     )
+    provider_scaffold = ""
+    if "fn public_market_console_scaffold(" in raw_serve and "fn public_market_companion_path(" in raw_serve:
+        provider_scaffold = raw_serve.split("fn public_market_console_scaffold(", 1)[1].split(
+            "fn public_market_companion_path(", 1
+        )[0]
+    check(
+        "public_market_provider: Option<ConsolePublicMarketProvider>" in args
+        and "public_market_scaffold_builds_valid_read_only_configs_for_supported_venues" in raw_serve
+        and "write_new_files_with_rollback" in raw_serve
+        and ".create_new(true)" in raw_serve
+        and '"credential_env":' not in provider_scaffold,
+        "Console --init 的公共行情配置为显式 opt-in：交易所能力覆盖测试、配置不带凭据、双文件 create_new 写入",
+        "公共行情脚手架的 CLI/无凭据/拒绝覆盖行为或针对性用例缺失",
+    )
 
 
 # P0-2(b)：EventLog 的保留/归档策略。本仓对"只增长且无法在本轮修掉"的形态一律
