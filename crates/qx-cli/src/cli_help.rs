@@ -413,11 +413,13 @@ pub(crate) fn builtin_strategy_catalog_document() -> serde_json::Value {
 /// 它的信号读哪几个 `strategy.builtin_*` 参数；JSON 模式复用同一份 kind 数据。
 pub(crate) fn print_builtin_strategies(json: bool) {
     if json {
-        println!(
-            "{}",
-            serde_json::to_string(&builtin_strategy_catalog_document())
-                .expect("静态内置策略目录必须可以序列化")
-        );
+        match serde_json::to_string(&builtin_strategy_catalog_document()) {
+            Ok(serialized) => println!("{serialized}"),
+            Err(error) => {
+                eprintln!("[qx-cli · CLI] 内置策略目录序列化失败: {error}");
+                std::process::exit(2);
+            }
+        }
         return;
     }
     for kind in BuiltinStrategyKind::ALL {
