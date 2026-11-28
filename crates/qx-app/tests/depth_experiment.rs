@@ -395,7 +395,8 @@ fn order_book_strategy_selection_runs_classic_strategies_deterministically() {
             "vwap_reversion"
         ]
     );
-    // These hashes pin the default spot product's long-only signal behavior.
+    // These hashes pin the default spot product's long-only signal behavior. Keltner's
+    // result tracks the gap-aware EMA ± 2 × simple-ATR channel implementation.
     assert_eq!(
         result
             .candidates
@@ -408,7 +409,7 @@ fn order_book_strategy_selection_runs_classic_strategies_deterministically() {
             "a9ef11cc96e65e9a",
             "bffdad3441bfb79e",
             "2078bbb806d61787",
-            "8d2327a895affee6",
+            "bffa8638537a238c",
             "3c949a814bc7e592",
             "bab1cb4dc5f8e9ec",
             "94ecaa830bf27a3c",
