@@ -247,17 +247,13 @@ impl BuiltinStrategy {
             }
             BuiltinStrategyKind::KeltnerTrend => {
                 let middle = required_indicator(ema(closes, self.config.period), "Keltner EMA")?;
-                let average_range = self
-                    .bars
-                    .iter()
-                    .rev()
-                    .take(self.config.period)
-                    .try_fold(0_i128, |sum, bar| {
-                        sum.checked_add(bar.high.checked_sub(bar.low)?)
-                    })
-                    .and_then(|value| value.checked_div(self.config.period as i128))
-                    .ok_or("Keltner 波动计算溢出")?;
-                let width = average_range.checked_mul(2).ok_or("Keltner 通道溢出")?;
+                // Use the same rolling true-range average as ATR, including gaps from the
+                // previous close. The channel is EMA +/- 2 ATR; the signal remains close-only.
+                let average_true_range =
+                    required_indicator(atr(&self.bars, self.config.period), "Keltner ATR")?;
+                let width = average_true_range
+                    .checked_mul(2)
+                    .ok_or("Keltner 通道宽度溢出")?;
                 let current = closes.last().copied().ok_or("Keltner 当前收盘价缺失")?;
                 if current > middle.saturating_add(width) {
                     Some(1)
