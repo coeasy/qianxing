@@ -174,8 +174,8 @@ pub(crate) fn print_cli_help() {
 策略与回测入口（撮合内核统一为 qx-xingban）：
   strategy list [--json]
       列出内置策略，以及各自被哪个回测入口接受、信号读哪几个参数（同 builtin-strategies）；--json 输出 schema_version=1。
-  strategy init <strategy> [runtime.json] [bar-frame.json] [--signal-knob NAME=INTEGER]... [--force]
-      从模板生成可直接回测的内置策略配置；可覆盖该策略实际读取的信号参数，其他参数会拒绝。
+  strategy init <strategy> [runtime.json] [bar-frame.json] [--signal-knob NAME=INTEGER]... [--json] [--force]
+      从模板生成可直接回测的内置策略配置；--json 输出配置/行情路径与下一步命令，信号参数错误会拒绝。
   strategy backtest <runtime.json> <bar-frame.json> [market-spec.json] [--dataset-manifest <manifest-v2.json>]
       使用统一回测引擎运行策略并保存结果产物。strategy.builtin_* 信号参数在这里生效，
       并印进 [Strategy · Signal] 行；同一份配置在 backtest builtin 上必须给出同一套信号。

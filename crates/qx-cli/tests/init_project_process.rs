@@ -119,6 +119,113 @@ fn init_creates_self_contained_project_assets_and_builtin_strategy() {
 }
 
 #[test]
+fn strategy_init_json_returns_absolute_paths_and_an_executable_next_command() {
+    let root = temp_case_dir("strategy-init-json");
+    let runtime = root.join("sma.runtime.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args([
+            "strategy",
+            "init",
+            "sma_cross",
+            runtime.to_string_lossy().as_ref(),
+            "--signal-knob",
+            "fast_window=8",
+            "--signal-knob",
+            "slow_window=34",
+            "--json",
+        ])
+        .output()
+        .expect("启动 qx-cli strategy init --json 失败");
+    assert!(
+        output.status.success(),
+        "初始化应成功：{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    assert!(
+        output.stdout.starts_with(b"{"),
+        "JSON 输出前不应有 CLI 横幅"
+    );
+
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["schema_version"], 1);
+    assert_eq!(result["strategy"], "sma_cross");
+    let runtime_path = runtime.canonicalize().unwrap();
+    assert_eq!(
+        result["runtime_config"],
+        runtime_path.to_string_lossy().as_ref()
+    );
+    assert_eq!(
+        result["bar_frame"],
+        root.join("qianxing.bar-frame.example.json")
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .as_ref()
+    );
+    assert_eq!(
+        result["project_manifest"]["path"],
+        root.join("qianxing.project.json")
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .as_ref()
+    );
+    assert_eq!(
+        result["readme"],
+        root.join("README.qianxing.md")
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .as_ref()
+    );
+    assert_eq!(result["copied_assets"].as_array().unwrap().len(), 1);
+
+    let next = result["next_command"].as_array().unwrap();
+    assert_eq!(next[0], "qx-cli");
+    assert_eq!(next[1], "strategy");
+    assert_eq!(next[2], "backtest");
+    assert_eq!(next[3], result["runtime_config"]);
+    assert_eq!(next[4], result["bar_frame"]);
+    let backtest = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .current_dir(&root)
+        .args(
+            next.iter()
+                .skip(1)
+                .map(|argument| argument.as_str().unwrap()),
+        )
+        .output()
+        .expect("运行 JSON 返回的下一步回测命令失败");
+    assert!(
+        backtest.status.success(),
+        "JSON 返回的下一步命令应可执行：{}",
+        String::from_utf8_lossy(&backtest.stderr)
+    );
+
+    let duplicate = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+        .args([
+            "strategy",
+            "init",
+            "sma_cross",
+            runtime.to_string_lossy().as_ref(),
+            "--json",
+        ])
+        .output()
+        .expect("启动重复 strategy init --json 失败");
+    assert_eq!(duplicate.status.code(), Some(2));
+    assert!(duplicate.stdout.is_empty());
+    let error: serde_json::Value = serde_json::from_slice(&duplicate.stderr).unwrap();
+    assert_eq!(error["schema_version"], 1);
+    assert_eq!(error["error"]["code"], "STRATEGY_INIT_FAILED");
+    assert!(error["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("显式添加 --force"));
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn init_profiles_rewrite_deploy_paths_and_validate_references() {
     for profile in [
         "paper",

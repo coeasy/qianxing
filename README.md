@@ -199,6 +199,8 @@ cargo run -p qx-cli -- strategy list
 cargo run -p qx-cli -- strategy init macd qianxing.strategy.macd.json
 # 直接指定所选策略实际使用的信号参数，无需手改 JSON
 cargo run -p qx-cli -- strategy init sma_cross qianxing.strategy.sma.json --signal-knob fast_window=8 --signal-knob slow_window=34
+# 脚本集成可用 --json 获取生成路径和下一条回测命令的参数数组
+cargo run -p qx-cli -- strategy init rsi ./rsi.runtime.json --json
 cargo run -p qx-cli -- strategy backtest qianxing.strategy.macd.json deploy/qianxing.bar-frame.example.json
 cargo run -p qx-cli -- backtest builtin sma_cross deploy/qianxing.bar-frame.example.json
 cargo run -p qx-cli -- backtest multi-builtin spot_futures_arbitrage deploy/qianxing.bar-frame.pairs-primary.example.json deploy/qianxing.bar-frame.pairs-reference.example.json --quantity 2

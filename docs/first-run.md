@@ -75,9 +75,11 @@ qx-cli strategy backtest ./sma.runtime.json ./qianxing.bar-frame.example.json
 
 重复传入 `--signal-knob NAME=INTEGER` 即可设置多个参数。策略未使用的参数、重复参数或格式错误会在写配置前拒绝；配置随后仍走同一 Rust 回测、风控和报告链。该样例只用于本地研究，不会启用执行或连接交易所。
 
+脚本可追加 `--json` 获得 schema v1 初始化结果：JSON 给出运行时配置、BarFrame、README、复制资产和可选项目清单的绝对路径，以及 `next_command` 参数数组。成功时 stdout 只有 JSON；失败时退出码为 2，stderr 返回带错误码的 JSON。消费端可直接用数组启动下一条 `strategy backtest` 命令，无需解析人类提示文本。
+
 脚本或 SDK 可通过 `qx-cli strategy list --json`（或 `qx-cli builtin-strategies --json`）读取同一份 schema v1 目录；它提供策略名称、说明、实际可用的回测入口、是否需要第二条行情和信号参数列表，stdout 只包含 JSON。
 
-`my-paper --profile paper` 一键首跑仅适用于包含 tag 后变更的当前源码或基于它构建的 CLI；v0.4.2 预编译 CLI 和 `cargo install --tag v0.4.2` 不支持此 quickstart 参数。`--signal-knob`、策略目录 `--json`、Binance Spot 示例与 CLI shell 原生命令说明也需要当前源码或后续版本；v0.4.2 已发布构件不包含这些后续改进。
+`my-paper --profile paper` 一键首跑仅适用于包含 tag 后变更的当前源码或基于它构建的 CLI；v0.4.2 预编译 CLI 和 `cargo install --tag v0.4.2` 不支持此 quickstart 参数。`--signal-knob`、策略目录 `--json`、`strategy init --json`、Binance Spot 示例与 CLI shell 原生命令说明也需要当前源码或后续版本；v0.4.2 已发布构件不包含这些后续改进。
 
 已在仓库内开发时可用 `cargo install --path crates/qx-cli --locked`；该方式需要完整源码和 Rust 工具链。Release 二进制没有
 仓库相对路径依赖，可从任意工作目录运行。

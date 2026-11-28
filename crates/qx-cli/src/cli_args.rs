@@ -506,6 +506,27 @@ mod cli_surface_args_tests {
     }
 
     #[test]
+    fn strategy_init_json_mode_suppresses_the_cli_banner() {
+        let parsed = Cli::try_parse_from([
+            "qx-cli",
+            "strategy",
+            "init",
+            "sma_cross",
+            "strategy.json",
+            "--json",
+        ])
+        .expect("strategy init --json should parse");
+        let command = parsed.command.expect("command should be present");
+        assert!(command.machine_output());
+        assert!(matches!(
+            command,
+            Command::Strategy {
+                action: Some(StrategyCommand::Init { json: true, .. })
+            }
+        ));
+    }
+
+    #[test]
     fn both_builtin_strategy_catalog_routes_accept_json_mode() {
         let top_level = Cli::try_parse_from(["qx-cli", "builtin-strategies", "--json"])
             .expect("builtin-strategies --json should parse");
@@ -633,6 +654,9 @@ pub(crate) enum StrategyCommand {
         /// Override a signal knob consumed by this strategy, as NAME=INTEGER.
         #[arg(long = "signal-knob", value_name = "NAME=INTEGER", action = clap::ArgAction::Append)]
         signal_knobs: Vec<String>,
+        /// Print generated paths and the next command as machine-readable JSON.
+        #[arg(long)]
+        json: bool,
         #[arg(long)]
         force: bool,
     },
@@ -692,7 +716,10 @@ pub(crate) enum StrategyCommand {
 
 impl StrategyCommand {
     fn machine_output(&self) -> bool {
-        matches!(self, Self::List { json: true })
+        matches!(
+            self,
+            Self::List { json: true } | Self::Init { json: true, .. }
+        )
     }
 }
 
