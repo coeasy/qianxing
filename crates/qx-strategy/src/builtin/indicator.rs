@@ -145,8 +145,8 @@ pub(super) fn atr(values: &VecDeque<BarPoint>, period: usize) -> Option<i128> {
         let current = values[index];
         let previous = values[index - 1];
         let high_low = current.high.checked_sub(current.low)?;
-        let high_close = (current.high - previous.close).checked_abs()?;
-        let low_close = (current.low - previous.close).checked_abs()?;
+        let high_close = current.high.checked_sub(previous.close)?.checked_abs()?;
+        let low_close = current.low.checked_sub(previous.close)?.checked_abs()?;
         total = total.checked_add(high_low.max(high_close).max(low_close))?;
     }
     total.checked_div(period as i128)
