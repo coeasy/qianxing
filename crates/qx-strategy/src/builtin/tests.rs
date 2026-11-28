@@ -195,6 +195,57 @@ fn momentum_emits_a_target_order_after_warmup() {
 }
 
 #[test]
+fn vwap_reversion_uses_rolling_hlc3_and_rejects_invalid_volume() {
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let mut config = BuiltinStrategyConfig::new(
+        BuiltinStrategyKind::VwapReversion,
+        "vwap-rolling-hlc3",
+        instrument,
+        Quantity::from_i64(1),
+    )
+    .unwrap();
+    config.period = 2;
+    config.threshold_bps = 500;
+    let mut strategy = BuiltinStrategy::new(config).unwrap();
+    strategy.bars.extend([
+        BarPoint {
+            high: 100,
+            low: 100,
+            close: 100,
+            volume: 1,
+        },
+        BarPoint {
+            high: 130,
+            low: 90,
+            close: 100,
+            volume: 10,
+        },
+        BarPoint {
+            high: 120,
+            low: 80,
+            close: 100,
+            volume: 1,
+        },
+    ]);
+
+    assert_eq!(strategy.signal().unwrap(), Some(1));
+
+    strategy.bars[1].volume = 0;
+    strategy.bars[2].volume = 0;
+    assert!(
+        strategy.signal().is_err(),
+        "zero rolling volume must fail closed"
+    );
+
+    strategy.bars[1].volume = -1;
+    strategy.bars[2].volume = 1;
+    assert!(
+        strategy.signal().is_err(),
+        "negative bar volume must fail closed"
+    );
+}
+
+#[test]
 fn sma_cross_rolling_sums_match_full_window_reference_and_keep_warmup_behavior() {
     let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
     let mut config = BuiltinStrategyConfig::new(
