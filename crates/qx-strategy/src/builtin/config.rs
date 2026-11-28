@@ -153,7 +153,7 @@ impl BuiltinStrategyKind {
                 "ATR 信号不模拟盘口深度或触发单成交。",
             ],
             Self::KeltnerTrend => &[
-                "当前实现使用 EMA 与窗口平均 high-low 区间的两倍构造通道，不是 EMA ± ATR 乘数版本。",
+                "通道按 EMA ± 2 倍 period 窗口简单平均真实波幅构造，真实波幅包含前收跳空；不是 Wilder 平滑 ATR。",
                 "不含独立止损或止盈订单。",
             ],
             Self::VwapReversion => &[
