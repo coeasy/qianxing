@@ -16102,15 +16102,16 @@ def performance_baseline_check() -> None:
         and "steps.criterion-scope.outputs.profile" in performance_job
         and '"pr-core"' in bench_driver_source
         and "PR_CORE_CRITERION_FILTERS" in bench_driver_source,
-        "PR Criterion 范围由变更 crate 选择；单 crate 精确测量，共享 core 扩展完整 core，多 crate 保留代表性覆盖",
+        "PR Criterion 范围由变更 crate 选择；单 crate 精确测量，CLI 不误跑无关微基准，共享 core 扩展完整 core，多 crate 保留代表性覆盖",
         "PR 性能基准范围选择器或 crate 专属 profile 不完整",
     )
     check(
         "criterion_profile_for_changed_files" in criterion_scope_source
         and "git" in criterion_scope_source
         and "diff" in criterion_scope_source
-        and all(f'"{profile}"' in bench_driver_source for profile in ("pr-runtime", "pr-xingban", "pr-zhenlu"))
+        and all(f'"{profile}"' in bench_driver_source for profile in ("pr-runtime", "pr-xingban", "pr-zhenlu", "pr-cli"))
         and "test_single_package_change_only_runs_its_own_benchmarks" in (ROOT / "benchmarks/tests/test_run_rust_bench.py").read_text(encoding="utf-8")
+        and "test_cli_change_does_not_run_unrelated_hot_path_criterion_suites" in (ROOT / "benchmarks/tests/test_run_rust_bench.py").read_text(encoding="utf-8")
         and "test_shared_inputs_or_core_changes_include_the_shared_dependency_suite" in (ROOT / "benchmarks/tests/test_run_rust_bench.py").read_text(encoding="utf-8")
         and "test_multiple_or_unbenchmarked_package_changes_use_the_representative_profile" in (ROOT / "benchmarks/tests/test_run_rust_bench.py").read_text(encoding="utf-8"),
         "Criterion 选择器有单 crate、共享 core 与多 crate 的行为覆盖",

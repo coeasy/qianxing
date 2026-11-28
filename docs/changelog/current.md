@@ -3,6 +3,7 @@
 ### 2026-11-28 后续体验修复
 
 - `qx-cli console --init` 和 `--generate-token` 现在按操作系统输出可直接粘贴的引导令牌赋值：Windows 使用 PowerShell `$env:NAME="..."`，Linux/macOS 使用 `export NAME="..."`。令牌仍只显示在本机终端并仅通过环境变量传递。
+- 性能门禁按变更 crate 选择 Criterion 范围；只改 CLI 时仍比较端到端 CLI 工作负载，但不把无关的撮合/运行时微基准噪声误判为回归。
 
 ### 2026-11-24 后续改进
 
