@@ -4,7 +4,8 @@ use super::*;
 
 pub(super) fn dispatch(action: Option<StrategyCommand>) {
     match action {
-        None | Some(StrategyCommand::List) => print_builtin_strategies(),
+        None => print_builtin_strategies(false),
+        Some(StrategyCommand::List { json }) => print_builtin_strategies(json),
         Some(StrategyCommand::Init {
             name,
             output,

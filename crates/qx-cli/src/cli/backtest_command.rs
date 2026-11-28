@@ -2,8 +2,8 @@
 
 use super::*;
 
-pub(super) fn dispatch_builtin_strategies() {
-    print_builtin_strategies();
+pub(super) fn dispatch_builtin_strategies(json: bool) {
+    print_builtin_strategies(json);
 }
 
 pub(super) fn dispatch_fast_manifest(manifest: PathBuf) {

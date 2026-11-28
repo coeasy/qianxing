@@ -127,7 +127,7 @@ pub(crate) fn run() {
             spec,
             action,
         } => backtest_command::dispatch(runtime, frame, spec, action),
-        Command::BuiltinStrategies => backtest_command::dispatch_builtin_strategies(),
+        Command::BuiltinStrategies { json } => backtest_command::dispatch_builtin_strategies(json),
         Command::FastBacktest { manifest } => backtest_command::dispatch_fast_manifest(manifest),
         Command::DatasetIngest {
             frame,
