@@ -793,6 +793,7 @@ pub(crate) fn run_strategy_init(
     bars_path: Option<&Path>,
     signal_knob_overrides: &[String],
     force: bool,
+    json: bool,
 ) -> Result<(), String> {
     let kind = single_leg_builtin_strategy(strategy_name)?;
     if output.exists() && !force {
@@ -873,14 +874,8 @@ pub(crate) fn run_strategy_init(
     for asset in &copied_assets {
         copy_init_asset(project_root, asset, force)?;
     }
-    if let Some((path, fingerprint)) =
-        write_init_project_manifest(output, project_root, "builtin", &config, force)?
-    {
-        println!(
-            "[ProjectManifest] path={} fingerprint={fingerprint}",
-            path.display()
-        );
-    }
+    let project_manifest =
+        write_init_project_manifest(output, project_root, "builtin", &config, force)?;
     let readme_path = project_root.join("README.qianxing.md");
     if force || !readme_path.exists() {
         let backtest_step = init_guidance::init_backtest_step(project_root, output, &config);
@@ -898,20 +893,67 @@ pub(crate) fn run_strategy_init(
         )
         .map_err(|error| format!("写入初始化说明失败 {}: {error}", readme_path.display()))?;
     }
-    println!(
-        "[Strategy · Init] strategy={} output={} bars={} assets={}",
-        kind.name(),
-        output.display(),
-        bars,
-        copied_assets.len()
-    );
-    // 打印绝对路径：命令行里的裸文件名等于要求使用者先 cd 到配置所在目录，而首屏只给命令不给目录。
-    let program = cli_args::PROGRAM_NAME;
-    println!(
-        "下一步：{program} strategy backtest {} {}",
-        init_guidance::command_path(output),
-        init_guidance::command_path(&project_root.join(&bars))
-    );
+    let bars_path = project_root.join(&bars);
+    if json {
+        let absolute_path = |path: &Path| {
+            std::path::absolute(path)
+                .unwrap_or_else(|_| path.to_path_buf())
+                .to_string_lossy()
+                .into_owned()
+        };
+        let manifest = project_manifest.as_ref().map(|(path, fingerprint)| {
+            serde_json::json!({
+                "path": absolute_path(path),
+                "fingerprint": fingerprint,
+            })
+        });
+        let assets = copied_assets
+            .iter()
+            .map(|asset| absolute_path(&project_root.join(asset)))
+            .collect::<Vec<_>>();
+        let document = serde_json::json!({
+            "schema_version": 1,
+            "strategy": kind.name(),
+            "runtime_config": absolute_path(output),
+            "bar_frame": absolute_path(&bars_path),
+            "copied_assets": assets,
+            "project_manifest": manifest,
+            "readme": absolute_path(&readme_path),
+            "next_command": [
+                cli_args::PROGRAM_NAME,
+                "strategy",
+                "backtest",
+                absolute_path(output),
+                absolute_path(&bars_path),
+            ],
+        });
+        println!(
+            "{}",
+            serde_json::to_string(&document)
+                .map_err(|error| { format!("编码策略初始化结果 JSON 失败: {error}") })?
+        );
+    } else {
+        if let Some((path, fingerprint)) = project_manifest {
+            println!(
+                "[ProjectManifest] path={} fingerprint={fingerprint}",
+                path.display()
+            );
+        }
+        println!(
+            "[Strategy · Init] strategy={} output={} bars={} assets={}",
+            kind.name(),
+            output.display(),
+            bars,
+            copied_assets.len()
+        );
+        // 打印绝对路径：命令行里的裸文件名等于要求使用者先 cd 到配置所在目录，而首屏只给命令不给目录。
+        let program = cli_args::PROGRAM_NAME;
+        println!(
+            "下一步：{program} strategy backtest {} {}",
+            init_guidance::command_path(output),
+            init_guidance::command_path(&bars_path)
+        );
+    }
     Ok(())
 }
 

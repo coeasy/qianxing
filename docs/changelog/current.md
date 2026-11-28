@@ -4,6 +4,7 @@
 
 - `qx-cli strategy init` 新增可重复的 `--signal-knob NAME=INTEGER`，可在生成配置时覆盖所选内置策略实际读取的信号参数；无关、重复或非法的参数在写入前拒绝。
 - `qx-cli strategy list --json` 与 `qx-cli builtin-strategies --json` 现在输出同一份 schema v1 策略目录，包含可用回测入口、第二行情需求和实际读取的信号参数，便于脚本与 SDK 稳定集成。
+- `qx-cli strategy init --json` 返回生成配置、行情、README、项目清单和复制资产的绝对路径，以及下一条回测命令的参数数组；失败时返回机器可读错误，不影响默认的人类终端输出。
 - `qx-cli console --init` 和 `--generate-token` 现在按操作系统输出可直接粘贴的引导令牌赋值：Windows 使用 PowerShell `$env:NAME="..."`，Linux/macOS 使用 `export NAME="..."`。令牌仍只显示在本机终端并仅通过环境变量传递。
 - 性能门禁按变更 crate 选择 Criterion 范围；只改 CLI 时仍比较端到端 CLI 工作负载，但不把无关的撮合/运行时微基准噪声误判为回归。
 

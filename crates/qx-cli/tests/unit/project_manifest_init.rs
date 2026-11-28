@@ -30,7 +30,8 @@ fn init_writes_valid_project_manifest_with_real_dataset_and_strategy_refs() {
 fn strategy_init_writes_the_same_project_identity_layer() {
     let root = temp_cli_case_dir("project-manifest-strategy-init");
     let runtime = root.join("strategy.json");
-    run_strategy_init("sma_cross", &runtime, None, &[], false).expect("strategy init 应当成功");
+    run_strategy_init("sma_cross", &runtime, None, &[], false, false)
+        .expect("strategy init 应当成功");
 
     let payload = std::fs::read_to_string(root.join("qianxing.project.json"))
         .expect("strategy init 也必须接 ProjectManifest");
@@ -52,7 +53,7 @@ fn strategy_init_applies_only_signal_knobs_consumed_by_the_selected_strategy() {
     let root = temp_cli_case_dir("project-manifest-strategy-init-knobs");
     let runtime = root.join("strategy.json");
     let knobs = vec!["period=12".to_string(), "threshold_bps=250".to_string()];
-    run_strategy_init("mean_reversion", &runtime, None, &knobs, false)
+    run_strategy_init("mean_reversion", &runtime, None, &knobs, false, false)
         .expect("mean-reversion signal knobs should be written into the runtime config");
 
     let document: serde_json::Value =
@@ -70,7 +71,7 @@ fn strategy_init_rejects_knobs_that_the_selected_strategy_does_not_read() {
     let root = temp_cli_case_dir("project-manifest-strategy-init-unused-knob");
     let runtime = root.join("strategy.json");
     let knobs = vec!["period=9".to_string()];
-    let error = run_strategy_init("macd", &runtime, None, &knobs, false)
+    let error = run_strategy_init("macd", &runtime, None, &knobs, false, false)
         .expect_err("MACD uses fixed windows and must reject generic signal knobs");
     assert!(error.contains("策略 macd 不读取信号参数 period"), "{error}");
     assert!(
@@ -104,7 +105,7 @@ fn strategy_init_rejects_malformed_duplicate_and_invalid_knob_values_before_writ
     for (case, knobs, expected_error) in invalid_overrides {
         let root = temp_cli_case_dir(&format!("project-manifest-strategy-init-{case}"));
         let runtime = root.join("strategy.json");
-        let error = run_strategy_init("sma_cross", &runtime, None, &knobs, false)
+        let error = run_strategy_init("sma_cross", &runtime, None, &knobs, false, false)
             .expect_err("invalid signal knob overrides must fail");
         assert!(error.contains(expected_error), "{error}");
         assert!(
