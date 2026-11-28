@@ -8,9 +8,9 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-qx-core = { version = "0.4.2", path = "../qx-core" }
-qx-data = { version = "0.4.2", path = "../qx-data" }
-qx-datastruct = { version = "0.4.2", path = "../qx-datastruct" }
-qx-guanxing = { version = "0.4.2", path = "../qx-guanxing" }
+qx-core = { version = "0.4.3", path = "../qx-core" }
+qx-data = { version = "0.4.3", path = "../qx-data" }
+qx-datastruct = { version = "0.4.3", path = "../qx-datastruct" }
+qx-guanxing = { version = "0.4.3", path = "../qx-guanxing" }
 serde = { workspace = true }
 serde_json = { workspace = true }

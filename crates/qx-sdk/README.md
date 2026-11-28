@@ -8,25 +8,25 @@ The SDK runs locally in your Rust process. It does not fetch market data or subm
 
 ```toml
 [dependencies]
-qx-sdk = "0.4.2"
+qx-sdk = "0.4.3"
 ```
 
-Install Rust 1.87 or later to use the [published 0.4.2 SDK](https://crates.io/crates/qx-sdk/0.4.2).
+Install Rust 1.87 or later to use the [0.4.3 SDK release](https://crates.io/crates/qx-sdk/0.4.3) after it is published. Until then, use `qx-sdk = "0.4.2"`.
 
 Create a consumer project and fetch the matching teaching fixture:
 
 ```bash
 cargo new qx-quickstart
 cd qx-quickstart
-cargo add qx-sdk@0.4.2
-curl -L https://raw.githubusercontent.com/coeasy/qianxing/v0.4.2/deploy/qianxing.bar-frame.example.json -o bars.json
+cargo add qx-sdk@0.4.3
+curl -L https://raw.githubusercontent.com/coeasy/qianxing/v0.4.3/deploy/qianxing.bar-frame.example.json -o bars.json
 ```
 
-On Windows PowerShell, use `Invoke-WebRequest -Uri https://raw.githubusercontent.com/coeasy/qianxing/v0.4.2/deploy/qianxing.bar-frame.example.json -OutFile bars.json` for the last command. Put the Rust snippet below in `src/main.rs`, then run `cargo run`.
+On Windows PowerShell, use `Invoke-WebRequest -Uri https://raw.githubusercontent.com/coeasy/qianxing/v0.4.3/deploy/qianxing.bar-frame.example.json -OutFile bars.json` for the last command after the release is published. Put the Rust snippet below in `src/main.rs`, then run `cargo run`.
 
 ## Run your first backtest
 
-The input is a BarFrame JSON file whose instrument matches `BacktestDatasetInput.instrument`. A checked-in 70-bar fixture is available at [`deploy/qianxing.bar-frame.example.json`](https://github.com/coeasy/qianxing/blob/v0.4.2/deploy/qianxing.bar-frame.example.json). Download it as `bars.json`, then run this from a fresh project directory:
+The input is a BarFrame JSON file whose instrument matches `BacktestDatasetInput.instrument`. A checked-in 70-bar fixture is available at [`deploy/qianxing.bar-frame.example.json`](https://github.com/coeasy/qianxing/blob/v0.4.3/deploy/qianxing.bar-frame.example.json). Download it as `bars.json`, then run this from a fresh project directory after the release is published:
 
 ```rust,no_run
 use qx_sdk::{
