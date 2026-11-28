@@ -14,6 +14,7 @@ import json
 import asyncio
 import csv
 import os
+import re
 import shutil
 import tempfile
 import sys
@@ -447,7 +448,16 @@ class AppUseCaseTests(unittest.TestCase):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         from qianxing import app
 
-        self.assertEqual(app._sdk_package_version(), "0.4.2")
+        project_text = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+        project_section = re.search(r"(?ms)^\[project\]\s*(.*?)(?=^\[|\Z)", project_text)
+        self.assertIsNotNone(project_section)
+        project_version = re.search(
+            r'^\s*version\s*=\s*"([^\"]+)"', project_section.group(1), re.MULTILINE
+        )
+        self.assertIsNotNone(project_version)
+        self.assertEqual(app._sdk_package_version(), project_version.group(1))
 
     def test_paper_and_live_clients_submit_the_shared_rust_control_contract(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
