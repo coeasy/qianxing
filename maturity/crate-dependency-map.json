@@ -9,7 +9,7 @@
   "packages": [
     {
       "name": "contract-tests",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/contract-tests/Cargo.toml",
       "owner": "release-contract-tests",
       "role": "test-only",
@@ -129,7 +129,7 @@
     },
     {
       "name": "qx-adapter",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-adapter/Cargo.toml",
       "owner": "venue-provider-adapters",
       "role": "internal",
@@ -293,7 +293,7 @@
     },
     {
       "name": "qx-api",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-api/Cargo.toml",
       "owner": "http-query-control",
       "role": "internal",
@@ -506,7 +506,7 @@
     },
     {
       "name": "qx-app",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-app/Cargo.toml",
       "owner": "application-use-cases",
       "role": "sdk-dependency",
@@ -672,7 +672,7 @@
     },
     {
       "name": "qx-cli",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-cli/Cargo.toml",
       "owner": "product-cli",
       "role": "cli",
@@ -976,7 +976,7 @@
     },
     {
       "name": "qx-control",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-control/Cargo.toml",
       "owner": "control-plane",
       "role": "sdk-dependency",
@@ -1072,7 +1072,7 @@
     },
     {
       "name": "qx-core",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-core/Cargo.toml",
       "owner": "domain-kernel",
       "role": "sdk-dependency",
@@ -1252,7 +1252,7 @@
     },
     {
       "name": "qx-data",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-data/Cargo.toml",
       "owner": "data-platform",
       "role": "sdk-dependency",
@@ -1371,7 +1371,7 @@
     },
     {
       "name": "qx-datastruct",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-datastruct/Cargo.toml",
       "owner": "market-data-structures",
       "role": "sdk-dependency",
@@ -1466,7 +1466,7 @@
     },
     {
       "name": "qx-execution",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-execution/Cargo.toml",
       "owner": "execution-ports",
       "role": "sdk-dependency",
@@ -1578,7 +1578,7 @@
     },
     {
       "name": "qx-factor",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-factor/Cargo.toml",
       "owner": "factor-research",
       "role": "internal",
@@ -1648,7 +1648,7 @@
     },
     {
       "name": "qx-genglu",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-genglu/Cargo.toml",
       "owner": "reconciliation",
       "role": "internal",
@@ -1686,7 +1686,7 @@
     },
     {
       "name": "qx-guanxing",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-guanxing/Cargo.toml",
       "owner": "market-data-semantics",
       "role": "sdk-dependency",
@@ -1802,7 +1802,7 @@
     },
     {
       "name": "qx-orchestrator",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-orchestrator/Cargo.toml",
       "owner": "process-orchestration",
       "role": "internal",
@@ -1897,7 +1897,7 @@
     },
     {
       "name": "qx-plugin",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-plugin/Cargo.toml",
       "owner": "extension-manifests",
       "role": "internal",
@@ -1962,7 +1962,7 @@
     },
     {
       "name": "qx-process-io",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-process-io/Cargo.toml",
       "owner": "process-io",
       "role": "internal",
@@ -1990,7 +1990,7 @@
     },
     {
       "name": "qx-protocol",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-protocol/Cargo.toml",
       "owner": "account-protocol",
       "role": "internal",
@@ -2061,7 +2061,7 @@
     },
     {
       "name": "qx-provider",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-provider/Cargo.toml",
       "owner": "data-providers",
       "role": "sdk-dependency",
@@ -2174,7 +2174,7 @@
     },
     {
       "name": "qx-python",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-python/Cargo.toml",
       "owner": "python-native-extension",
       "role": "python-extension",
@@ -2325,7 +2325,7 @@
     },
     {
       "name": "qx-risk",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-risk/Cargo.toml",
       "owner": "risk-policy",
       "role": "sdk-dependency",
@@ -2400,7 +2400,7 @@
     },
     {
       "name": "qx-runtime",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-runtime/Cargo.toml",
       "owner": "runtime-topology",
       "role": "internal",
@@ -2585,7 +2585,7 @@
     },
     {
       "name": "qx-scheduler",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-scheduler/Cargo.toml",
       "owner": "scheduling",
       "role": "internal",
@@ -2665,7 +2665,7 @@
     },
     {
       "name": "qx-sdk",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-sdk/Cargo.toml",
       "owner": "public-sdk-api",
       "role": "sdk-facade",
@@ -2748,7 +2748,7 @@
     },
     {
       "name": "qx-sdk-http",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-sdk-http/Cargo.toml",
       "owner": "rust-sdk-http-transport",
       "role": "internal",
@@ -2790,7 +2790,7 @@
     },
     {
       "name": "qx-service",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-service/Cargo.toml",
       "owner": "worker-service-assembly",
       "role": "internal",
@@ -3017,7 +3017,7 @@
     },
     {
       "name": "qx-spec",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-spec/Cargo.toml",
       "owner": "strategy-spec",
       "role": "sdk-dependency",
@@ -3112,7 +3112,7 @@
     },
     {
       "name": "qx-storage",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-storage/Cargo.toml",
       "owner": "persistence",
       "role": "internal",
@@ -3302,7 +3302,7 @@
     },
     {
       "name": "qx-strategy",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-strategy/Cargo.toml",
       "owner": "strategy-api",
       "role": "sdk-dependency",
@@ -3425,7 +3425,7 @@
     },
     {
       "name": "qx-xingban",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-xingban/Cargo.toml",
       "owner": "backtest-engine",
       "role": "sdk-dependency",
@@ -3555,7 +3555,7 @@
     },
     {
       "name": "qx-zhenlu",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "manifest": "crates/qx-zhenlu/Cargo.toml",
       "owner": "execution-routing",
       "role": "sdk-dependency",
