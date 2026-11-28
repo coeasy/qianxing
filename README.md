@@ -82,7 +82,7 @@ Rust 集成方可以从 [`qx-sdk` 包级快速接入指南](crates/qx-sdk/README
 | 交付面 | 本轮数量 | 核对者 |
 |---|---|---|
 | CLI 入口名（`qx-cli help` 印出的顶层与二级） | 46，其中 18 条二级入口 | 门禁 `cli_help_surface_check`：help ≡ clap 命令表 ≡ `cli.rs` 派发分支；18 条二级入口逐条实跑 `--help`（`crates/qx-cli/tests/command_surface.rs`） |
-| 内置策略 | 17（13 条单腿 + 4 条双腿/多腿） | `qx-cli builtin-strategies` 现印，表体来自 `BuiltinStrategyKind` |
+| 内置策略 | 17（13 条单腿 + 4 条双腿/多腿） | `qx-cli builtin-strategies` 面向终端列出；`--json` 输出版本化目录，表体来自 `BuiltinStrategyKind` |
 | HTTP 路由 | 18（17 条 `GET` 读面 + 1 条 `POST` 写面） | 门禁 `api_surface_doc_check` 与 `crates/qx-cli/tests/unit/api_endpoint_table_routes.rs`：`deploy/README.md` 的端点表 ≡ `handle_inner` 的路由集合 |
 | WebSocket 事件流 | 1（任意路径 + `Upgrade: websocket`） | `admit_websocket` 的准入判定，口径见 `deploy/README.md` 的 WS 段 |
 | `deploy/` 顶层示例配置模板 | 53 | `crates/qx-cli/tests/unit/deploy_template_coverage.rs`：登记表与磁盘清单逐名相等，新增不登记即红 |
@@ -194,6 +194,7 @@ qx-cli quickstart my-qx --strategy macd --html
 # 本地完成 Scheduler → Strategy → Paper Execution → Ledger；使用合成报价，不联网或实盘下单
 qx-cli quickstart my-paper --profile paper
 cargo run -p qx-cli -- builtin-strategies
+cargo run -p qx-cli -- strategy list --json # schema_version=1，供脚本/SDK 发现策略和回测入口
 cargo run -p qx-cli -- strategy list
 cargo run -p qx-cli -- strategy init macd qianxing.strategy.macd.json
 # 直接指定所选策略实际使用的信号参数，无需手改 JSON

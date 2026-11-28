@@ -412,3 +412,54 @@ fn venue_and_optional_backend_commands_fail_closed_before_external_io() {
         );
     }
 }
+
+#[test]
+fn builtin_strategy_catalog_json_is_versioned_and_shared_by_both_routes() {
+    let routes: [&[&str]; 2] = [
+        &["builtin-strategies", "--json"],
+        &["strategy", "list", "--json"],
+    ];
+    for route in routes {
+        let output = Command::new(env!("CARGO_BIN_EXE_qx-cli"))
+            .args(route)
+            .output()
+            .expect("启动 qx-cli 失败");
+        assert_eq!(output.status.code(), Some(0), "{route:?}");
+        assert!(output.stderr.is_empty(), "{route:?}: {:?}", output.stderr);
+        assert!(
+            output.stdout.starts_with(b"{"),
+            "JSON route printed a banner"
+        );
+
+        let catalog: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("catalog output must be valid JSON");
+        assert_eq!(catalog["schema_version"], 1);
+        let strategies = catalog["strategies"]
+            .as_array()
+            .expect("strategies is an array");
+        assert_eq!(strategies.len(), 17);
+
+        let find = |name: &str| {
+            strategies
+                .iter()
+                .find(|strategy| strategy["name"] == name)
+                .unwrap_or_else(|| panic!("catalog is missing {name}"))
+        };
+        assert_eq!(
+            find("sma_cross")["signal_knobs"],
+            serde_json::json!(["fast_window", "slow_window"])
+        );
+        assert_eq!(
+            find("sma_cross")["backtest_entries"],
+            serde_json::json!(["builtin", "ccxt-builtin", "book"])
+        );
+        assert_eq!(find("macd")["signal_knobs"], serde_json::json!([]));
+        assert_eq!(
+            find("pairs_arbitrage")["backtest_entries"],
+            serde_json::json!(["multi-builtin"])
+        );
+        assert!(find("pairs_arbitrage")["requires_reference_leg"]
+            .as_bool()
+            .expect("requires_reference_leg is a boolean"));
+    }
+}

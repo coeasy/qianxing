@@ -21173,11 +21173,11 @@ def cli_backtest_command_module_check() -> None:
     check(
         "mod backtest_command;" in facade
         and "} => backtest_command::dispatch(runtime, frame, spec, action)," in facade
-        and "Command::BuiltinStrategies => backtest_command::dispatch_builtin_strategies()" in facade
+        and "Command::BuiltinStrategies { json } => backtest_command::dispatch_builtin_strategies(json)" in facade
         and "backtest_command::dispatch_fast_manifest(manifest)" in facade
         and "} => match action" not in facade
-        and "pub(super) fn dispatch_builtin_strategies()" in module
-        and "print_builtin_strategies();" in module
+        and "pub(super) fn dispatch_builtin_strategies(json: bool)" in module
+        and "print_builtin_strategies(json);" in module
         and "pub(super) fn dispatch_fast_manifest(manifest: PathBuf)" in module
         and "run_fast_backtest_manifest(&manifest)" in module
         and all(f"BacktestCommand::{variant}" in module for variant in variants)

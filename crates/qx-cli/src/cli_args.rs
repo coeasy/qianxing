@@ -194,7 +194,11 @@ pub(crate) enum Command {
     #[command(name = "app")]
     App(AppArgs),
     #[command(name = "builtin-strategies")]
-    BuiltinStrategies,
+    BuiltinStrategies {
+        /// Print the versioned machine-readable strategy catalog.
+        #[arg(long)]
+        json: bool,
+    },
     #[command(name = "fast-backtest")]
     FastBacktest { manifest: PathBuf },
     #[command(name = "dataset-ingest")]
@@ -420,12 +424,16 @@ impl Command {
             | Self::RuntimeCheck { json, .. }
             | Self::PaperCheck { json, .. } => *json,
             Self::DataValidate(args) => args.json,
+            Self::BuiltinStrategies { json } => *json,
             Self::Report(args) => args.json,
             Self::Plan(args) => args.json,
             Self::Ecosystem(args) | Self::All(args) | Self::Verify(args) => args.json,
             Self::Guide(args) => args.json,
             Self::Config { action } => action.as_ref().is_some_and(ConfigCommand::machine_output),
             Self::Run { action } => action.as_ref().is_some_and(RunCommand::machine_output),
+            Self::Strategy { action } => {
+                action.as_ref().is_some_and(StrategyCommand::machine_output)
+            }
             // version 与 app 只有机读正文，和 --json 一样抑制横幅（U1）。
             Self::Version | Self::App(_) | Self::StorageAdoptPostgres(_) | Self::Evidence(_) => {
                 true
@@ -470,7 +478,7 @@ mod plan_args_tests {
 }
 
 #[cfg(test)]
-mod strategy_init_args_tests {
+mod cli_surface_args_tests {
     use super::{Cli, Command, StrategyCommand};
     use clap::Parser;
 
@@ -494,6 +502,35 @@ mod strategy_init_args_tests {
             Some(Command::Strategy {
                 action: Some(StrategyCommand::Init { signal_knobs, .. })
             }) if signal_knobs == ["fast_window=8", "slow_window=34"]
+        ));
+    }
+
+    #[test]
+    fn both_builtin_strategy_catalog_routes_accept_json_mode() {
+        let top_level = Cli::try_parse_from(["qx-cli", "builtin-strategies", "--json"])
+            .expect("builtin-strategies --json should parse");
+        assert!(top_level
+            .command
+            .as_ref()
+            .expect("command should be present")
+            .machine_output());
+        assert!(matches!(
+            top_level.command,
+            Some(Command::BuiltinStrategies { json: true })
+        ));
+
+        let nested = Cli::try_parse_from(["qx-cli", "strategy", "list", "--json"])
+            .expect("strategy list --json should parse");
+        assert!(nested
+            .command
+            .as_ref()
+            .expect("command should be present")
+            .machine_output());
+        assert!(matches!(
+            nested.command,
+            Some(Command::Strategy {
+                action: Some(StrategyCommand::List { json: true })
+            })
         ));
     }
 }
@@ -583,7 +620,11 @@ impl RunCommand {
 #[derive(Subcommand)]
 pub(crate) enum StrategyCommand {
     #[command(name = "list")]
-    List,
+    List {
+        /// Print the versioned machine-readable strategy catalog.
+        #[arg(long)]
+        json: bool,
+    },
     #[command(name = "init")]
     Init {
         name: String,
@@ -647,6 +688,12 @@ pub(crate) enum StrategyCommand {
         #[arg(long)]
         html: bool,
     },
+}
+
+impl StrategyCommand {
+    fn machine_output(&self) -> bool {
+        matches!(self, Self::List { json: true })
+    }
 }
 
 #[derive(Subcommand)]

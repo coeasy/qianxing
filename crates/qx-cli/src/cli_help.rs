@@ -172,8 +172,8 @@ pub(crate) fn print_cli_help() {
       显式认领与仓库已知迁移完全匹配的无台账 PostgreSQL schema；默认从 QX_POSTGRES_DSN 读取连接串。
 
 策略与回测入口（撮合内核统一为 qx-xingban）：
-  strategy list
-      列出内置策略，以及各自被哪个回测入口接受、信号读哪几个参数（同 builtin-strategies）。
+  strategy list [--json]
+      列出内置策略，以及各自被哪个回测入口接受、信号读哪几个参数（同 builtin-strategies）；--json 输出 schema_version=1。
   strategy init <strategy> [runtime.json] [bar-frame.json] [--signal-knob NAME=INTEGER]... [--force]
       从模板生成可直接回测的内置策略配置；可覆盖该策略实际读取的信号参数，其他参数会拒绝。
   strategy backtest <runtime.json> <bar-frame.json> [market-spec.json] [--dataset-manifest <manifest-v2.json>]
@@ -232,10 +232,11 @@ pub(crate) fn print_cli_help() {
       --latency-snapshots/--market-impact-bps 是深度撮合模型参数，缺省全 0 即逐档吃单；
       两者都会写进执行描述符与产物摘要，换参数就是换结果口径。内核的队列前置参数只作用于
       限价单，而内置策略一律发市价单，因此没有做成旗标。
-  builtin-strategies
+  builtin-strategies [--json]
       列出 17 个内置策略及各自被哪个回测入口接受：13 个单标的策略可走 builtin / ccxt-builtin /
       book，4 个套利 kind 只被 multi-builtin 接受（book 会明确拒绝它们）。第四列写明该 kind 的
-      信号真正读哪几个参数，清单外的 strategy.builtin_* 键不会改结果（none 表示四项都不读）。
+      信号真正读哪几个参数，清单外的 strategy.builtin_* 键不会改结果（none 表示四项都不读）。--json
+      输出 versioned JSON，提供名称、说明、回测入口、是否需要第二条行情和有效信号参数列表。
   fast-backtest <manifest.json>
       并行执行多个独立回测任务，适合多标的、多币种和多参数批量验证；每个 job 可选填 dataset_manifest，
       与 strategy backtest 一样复核数据身份、源文件摘要和质量报告。
@@ -386,9 +387,39 @@ pub(crate) fn backtest_entry_of(kind: BuiltinStrategyKind) -> &'static str {
     }
 }
 
+/// `builtin-strategies --json` 与 `strategy list --json` 共用的 schema v1 机器目录。
+pub(crate) fn builtin_strategy_catalog_document() -> serde_json::Value {
+    let strategies = BuiltinStrategyKind::ALL
+        .into_iter()
+        .map(|kind| {
+            let backtest_entries = if kind.needs_reference_leg() {
+                vec!["multi-builtin"]
+            } else {
+                vec!["builtin", "ccxt-builtin", "book"]
+            };
+            serde_json::json!({
+                "name": kind.name(),
+                "description": kind.description(),
+                "backtest_entries": backtest_entries,
+                "requires_reference_leg": kind.needs_reference_leg(),
+                "signal_knobs": kind.signal_knobs().iter().map(|knob| knob.field()).collect::<Vec<_>>(),
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({"schema_version": 1, "strategies": strategies})
+}
+
 /// `builtin-strategies` 与 `strategy list` 的四列输出：名称、说明、真正接受它的回测入口、
-/// 它的信号读哪几个 `strategy.builtin_*` 参数。
-pub(crate) fn print_builtin_strategies() {
+/// 它的信号读哪几个 `strategy.builtin_*` 参数；JSON 模式复用同一份 kind 数据。
+pub(crate) fn print_builtin_strategies(json: bool) {
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string(&builtin_strategy_catalog_document())
+                .expect("静态内置策略目录必须可以序列化")
+        );
+        return;
+    }
     for kind in BuiltinStrategyKind::ALL {
         println!(
             "{}\t{}\t[{}]\tknobs={}",
