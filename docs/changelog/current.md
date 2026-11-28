@@ -1,5 +1,10 @@
 # 0.4.1 正式发布与当前实现变更（2026-11-22）
 
+### 2026-11-28 后续体验修复
+
+- `qx-cli console --init` 和 `--generate-token` 现在按操作系统输出可直接粘贴的引导令牌赋值：Windows 使用 PowerShell `$env:NAME="..."`，Linux/macOS 使用 `export NAME="..."`。令牌仍只显示在本机终端并仅通过环境变量传递。
+- 性能门禁按变更 crate 选择 Criterion 范围；只改 CLI 时仍比较端到端 CLI 工作负载，但不把无关的撮合/运行时微基准噪声误判为回归。
+
 ### 2026-11-24 后续改进
 
 - PostgreSQL EventLog 增加 schema v5 位置索引与 head 摘要，`LiveEventPipeline` 可以校验前缀、rolling digest 与 `next_seq` 后只读新增尾部；规范 JSON、EventLog 索引与 Outbox 仍在同一写事务内提交。v4 旧日志的无索引读取保持纯只读并回退到规范日志，下一次成功写入时再事务性补齐索引；SQLite 增加空 v5 迁移以保持跨后端版本序列一致。本地 feature 编译、严格 Clippy、迁移与架构检查已通过；托管 PostgreSQL 服务合同、Paper 部署生命周期、supervisor checkpoint 重启与崩溃恢复验收均通过。

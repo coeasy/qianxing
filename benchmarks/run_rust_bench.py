@@ -83,6 +83,10 @@ PR_CRITERION_FILTERS = {
     ),
     "qx-xingban": ("portfolio_bar_timeline_aligned_64k_bars",),
     "qx-zhenlu": ("qx_zhenlu_crypto_paper_lifecycle_v2",),
+    # qx-cli has end-to-end backtest and report measurements, but no Criterion
+    # microbenchmark group whose code it owns. Keep its changes out of the
+    # unrelated representative hot-path suites.
+    "qx-cli": (),
 }
 PR_CORE_CRITERION_FILTERS = {
     # Run every qx-core group in one Criterion process when the PR changes core
@@ -93,6 +97,7 @@ PACKAGE_CRITERION_PROFILES = {
     "pr-runtime": "qx-runtime",
     "pr-xingban": "qx-xingban",
     "pr-zhenlu": "qx-zhenlu",
+    "pr-cli": "qx-cli",
 }
 SHARED_RUST_BUILD_INPUTS = {
     "Cargo.toml",
@@ -310,7 +315,8 @@ def main() -> int:
         default="full",
         help=(
             "full runs the complete benchmark ledger; pr measures representative hot paths; "
-            "pr-runtime/pr-xingban/pr-zhenlu scope a single changed crate; "
+            "pr-runtime/pr-xingban/pr-zhenlu scope a single changed hot-path crate; "
+            "pr-cli skips unrelated Criterion groups while retaining CLI workload measurements; "
             "pr-core also includes the full qx-core suite"
         ),
     )

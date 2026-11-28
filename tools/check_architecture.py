@@ -16102,15 +16102,16 @@ def performance_baseline_check() -> None:
         and "steps.criterion-scope.outputs.profile" in performance_job
         and '"pr-core"' in bench_driver_source
         and "PR_CORE_CRITERION_FILTERS" in bench_driver_source,
-        "PR Criterion 范围由变更 crate 选择；单 crate 精确测量，共享 core 扩展完整 core，多 crate 保留代表性覆盖",
+        "PR Criterion 范围由变更 crate 选择；单 crate 精确测量，CLI 不误跑无关微基准，共享 core 扩展完整 core，多 crate 保留代表性覆盖",
         "PR 性能基准范围选择器或 crate 专属 profile 不完整",
     )
     check(
         "criterion_profile_for_changed_files" in criterion_scope_source
         and "git" in criterion_scope_source
         and "diff" in criterion_scope_source
-        and all(f'"{profile}"' in bench_driver_source for profile in ("pr-runtime", "pr-xingban", "pr-zhenlu"))
+        and all(f'"{profile}"' in bench_driver_source for profile in ("pr-runtime", "pr-xingban", "pr-zhenlu", "pr-cli"))
         and "test_single_package_change_only_runs_its_own_benchmarks" in (ROOT / "benchmarks/tests/test_run_rust_bench.py").read_text(encoding="utf-8")
+        and "test_cli_change_does_not_run_unrelated_hot_path_criterion_suites" in (ROOT / "benchmarks/tests/test_run_rust_bench.py").read_text(encoding="utf-8")
         and "test_shared_inputs_or_core_changes_include_the_shared_dependency_suite" in (ROOT / "benchmarks/tests/test_run_rust_bench.py").read_text(encoding="utf-8")
         and "test_multiple_or_unbenchmarked_package_changes_use_the_representative_profile" in (ROOT / "benchmarks/tests/test_run_rust_bench.py").read_text(encoding="utf-8"),
         "Criterion 选择器有单 crate、共享 core 与多 crate 的行为覆盖",
@@ -24001,12 +24002,20 @@ def console_usability_check() -> None:
         and "std::env::var(&console.bootstrap_token_env)" in serve
         and CONSOLE_TOKEN_FALLBACK_MARKER in serve,
         "引导令牌兜底：环境变量仍是首选来源，缺失时临时生成一枚并当场打印它是临时的",
-        "令牌兜底被删（忘了 export 就启不来），或环境变量优先级被绕过",
+        "令牌兜底被删（未设置引导环境变量就启不来），或环境变量优先级被绕过",
     )
     check(
         "#[cfg(test)]" in raw_serve and CONSOLE_TOKEN_TEST in raw_serve,
         "生成的令牌有行为用例在盘（长度下限 + 十六进制 + 两次不同）",
         "令牌生成只剩散文，没有会跑红的用例",
+    )
+    check(
+        "bootstrap_token_assignment_uses_current_shell_syntax" in raw_serve
+        and 'format!("$env:{env_name}=' in raw_serve
+        and 'format!("export {env_name}=' in raw_serve
+        and "format_bootstrap_token_assignment(\"QX_CONSOLE_BOOTSTRAP_TOKEN\", &token)" in raw_serve,
+        "引导令牌指令按目标 shell 输出 PowerShell 或 POSIX 赋值语法且有平台行为用例",
+        "令牌输出仅适用于 POSIX shell，或缺少跨平台语法回归",
     )
     check(
         "pub(crate) generate_token: bool" in args and "args.generate_token" in serve,
