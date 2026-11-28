@@ -1,7 +1,7 @@
 use super::*;
 // `ema` 住在兄弟模块 `indicator` 里（`pub(super)`），`use super::*` 不会带过兄弟模块的项，
 // 得单独引 —— 这条 import 丢了会让整个测试目标编不出来（只在 `cargo test` 暴露）。
-use super::indicator::ema;
+use super::indicator::{atr, ema};
 use qx_core::InstrumentId;
 
 mod sizing_tests;
@@ -89,6 +89,62 @@ fn ema_keeps_unit_dc_gain_and_lags_on_the_trend_side() {
         ema(&falling, 5).unwrap() < ema(&falling, 20).unwrap(),
         "下跌段的快线必须在慢线之下"
     );
+}
+
+#[test]
+fn atr_returns_none_instead_of_overflowing_on_extreme_price_deltas() {
+    let bars = std::collections::VecDeque::from([
+        BarPoint {
+            high: i128::MIN,
+            low: i128::MIN,
+            close: i128::MIN,
+            volume: 1,
+        },
+        BarPoint {
+            high: i128::MAX,
+            low: 0,
+            close: i128::MAX,
+            volume: 1,
+        },
+    ]);
+
+    assert_eq!(atr(&bars, 1), None);
+}
+
+#[test]
+fn keltner_channel_uses_gap_aware_atr_not_only_intrabar_range() {
+    let instrument = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+    let mut config = BuiltinStrategyConfig::new(
+        BuiltinStrategyKind::KeltnerTrend,
+        "keltner-gap-aware",
+        instrument,
+        Quantity::from_i64(1),
+    )
+    .unwrap();
+    config.period = 2;
+    let mut strategy = BuiltinStrategy::new(config).unwrap();
+    strategy.bars.extend([
+        BarPoint {
+            high: 100,
+            low: 100,
+            close: 100,
+            volume: 1,
+        },
+        BarPoint {
+            high: 100,
+            low: 100,
+            close: 100,
+            volume: 1,
+        },
+        BarPoint {
+            high: 1_000,
+            low: 1_000,
+            close: 1_000,
+            volume: 1,
+        },
+    ]);
+
+    assert_eq!(strategy.signal().unwrap(), None);
 }
 
 /// 历史窗口上限必须容得下每个策略自己的信号门槛：MACD 需要 35 根 Bar，
