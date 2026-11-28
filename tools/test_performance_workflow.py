@@ -19,10 +19,45 @@ class PerformanceWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(workflow.count(expected), 2)
 
+        detection = workflow.index(
+            "- name: Detect changes to measured Rust sources and workload inputs"
+        )
         selection = workflow.index("- name: Select PR Criterion scope")
         baseline = workflow.index("- name: Build and measure the parent revision on this runner")
+        self.assertLess(detection, selection)
         self.assertLess(selection, baseline)
-        self.assertIn("if: github.event_name == 'pull_request'", workflow[selection:baseline])
+        detection_step = workflow[detection:selection]
+        self.assertIn("benchmarks/measurement_source_changes.py", detection_step)
+        self.assertIn("git fetch --no-tags --depth=1 origin", detection_step)
+
+    def test_non_measured_changes_skip_benchmarks_but_release_calls_keep_them(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        performance = workflow[
+            workflow.index("  performance-trend:") : workflow.index("  python-wheel-build:")
+        ]
+        baseline = performance[
+            performance.index("- name: Build and measure the parent revision on this runner") :
+        ]
+        self.assertIn(
+            "if: (github.event_name == 'pull_request' || github.event_name == 'push') && "
+            "steps.measured_source.outputs.changed == 'true'",
+            baseline,
+        )
+        for step in (
+            "- name: Build release CLI",
+            "- name: Measure frozen real-data backtest under Linux resource quotas",
+            "- name: Measure candidate end-to-end and kernel performance",
+            "- name: Block registered regressions above ledger thresholds",
+            "- uses: actions/upload-artifact@v4",
+        ):
+            start = performance.index(step)
+            next_step = performance.find("\n      - ", start + len(step))
+            block = performance[start : next_step if next_step >= 0 else None]
+            self.assertIn(
+                "if: github.event_name == 'workflow_call' || steps.measured_source.outputs.changed == 'true'",
+                block,
+                step,
+            )
 
     def test_parent_and_candidate_benchmarks_use_separate_cargo_targets(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
@@ -37,7 +72,7 @@ class PerformanceWorkflowTests(unittest.TestCase):
             candidate_build_end,
         )
         candidate_benchmark_end = workflow.index(
-            "- name: Detect changes to measured Rust sources and workload inputs",
+            "- name: Block registered regressions above ledger thresholds",
             candidate_benchmark_start,
         )
         baseline_step = workflow[baseline_start:candidate_start]
