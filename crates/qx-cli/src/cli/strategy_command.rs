@@ -9,11 +9,14 @@ pub(super) fn dispatch(action: Option<StrategyCommand>) {
             name,
             output,
             bars,
+            signal_knobs,
             force,
         }) => {
             let output =
                 output.unwrap_or_else(|| PathBuf::from(format!("qianxing.strategy.{name}.json")));
-            if let Err(error) = run_strategy_init(&name, &output, bars.as_deref(), force) {
+            if let Err(error) =
+                run_strategy_init(&name, &output, bars.as_deref(), &signal_knobs, force)
+            {
                 eprintln!("[qx-cli · CLI] 策略初始化失败: {error}");
                 std::process::exit(2);
             }
