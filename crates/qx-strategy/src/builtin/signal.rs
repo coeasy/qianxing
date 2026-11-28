@@ -268,26 +268,37 @@ impl BuiltinStrategy {
                 }
             }
             BuiltinStrategyKind::VwapReversion => {
-                let (weighted, volume) = self.bars.iter().rev().take(self.config.period).try_fold(
-                    (0_i128, 0_i128),
-                    |(weighted, volume), bar| {
-                        Ok::<_, String>((
-                            weighted
-                                .checked_add(
-                                    bar.close
-                                        .checked_mul(bar.volume)
-                                        .ok_or("VWAP 加权价格溢出")?,
-                                )
-                                .ok_or("VWAP 加权和溢出")?,
-                            volume.checked_add(bar.volume).ok_or("VWAP 成交量溢出")?,
-                        ))
-                    },
-                )?;
-                let vwap = if volume == 0 {
-                    return Err("VWAP 成交量不能为零".into());
-                } else {
-                    weighted.checked_div(volume).ok_or("VWAP 计算溢出")?
-                };
+                // Use HLC3 (high + low + close) so the input is a volume-weighted typical
+                // price. Keep the factor of three in the denominator to avoid per-Bar rounding.
+                let (weighted_hlc3, volume) =
+                    self.bars.iter().rev().take(self.config.period).try_fold(
+                        (0_i128, 0_i128),
+                        |(weighted_hlc3, volume), bar| {
+                            if bar.volume < 0 {
+                                return Err("VWAP 成交量不能为负".into());
+                            }
+                            let hlc = bar
+                                .high
+                                .checked_add(bar.low)
+                                .and_then(|value| value.checked_add(bar.close))
+                                .ok_or("VWAP HLC3 价格和溢出")?;
+                            Ok::<_, String>((
+                                weighted_hlc3
+                                    .checked_add(
+                                        hlc.checked_mul(bar.volume).ok_or("VWAP 加权价格溢出")?,
+                                    )
+                                    .ok_or("VWAP 加权和溢出")?,
+                                volume.checked_add(bar.volume).ok_or("VWAP 成交量溢出")?,
+                            ))
+                        },
+                    )?;
+                let denominator = volume
+                    .checked_mul(3)
+                    .filter(|value| *value > 0)
+                    .ok_or("VWAP 成交量总和必须为正")?;
+                let vwap = weighted_hlc3
+                    .checked_div(denominator)
+                    .ok_or("VWAP 计算溢出")?;
                 let current = closes.last().copied().ok_or("VWAP 当前收盘价缺失")?;
                 let deviation = current
                     .checked_sub(vwap)

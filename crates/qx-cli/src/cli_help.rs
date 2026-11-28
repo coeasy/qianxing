@@ -403,6 +403,12 @@ pub(crate) fn builtin_strategy_catalog_document() -> serde_json::Value {
                 "backtest_entries": backtest_entries,
                 "requires_reference_leg": kind.needs_reference_leg(),
                 "signal_knobs": kind.signal_knobs().iter().map(|knob| knob.field()).collect::<Vec<_>>(),
+                "research_guidance": {
+                    "family": kind.research_family(),
+                    "data_scope": if kind.needs_reference_leg() { "aligned_two_instrument_ohlcv" } else { "single_instrument_ohlcv" },
+                    "signal_contract": "target_signal_only; sizing, costs, risk and fills are configured separately",
+                    "known_limitations": kind.research_limitations(),
+                },
             })
         })
         .collect::<Vec<_>>();

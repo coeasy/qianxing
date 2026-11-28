@@ -89,6 +89,96 @@ impl BuiltinStrategyKind {
         }
     }
 
+    /// Stable research metadata for the CLI catalog and generated project guidance.
+    ///
+    /// These notes describe the implemented signal, not a profitability claim or venue approval.
+    pub const fn research_family(self) -> &'static str {
+        match self {
+            Self::SmaCross
+            | Self::EmaCross
+            | Self::Macd
+            | Self::AtrTrend
+            | Self::KeltnerTrend
+            | Self::VolatilityBreakout
+            | Self::DonchianBreakout => "trend_or_breakout",
+            Self::Momentum => "momentum",
+            Self::Rsi | Self::Bollinger | Self::MeanReversion | Self::VwapReversion => {
+                "mean_reversion"
+            }
+            Self::Grid => "grid_signal",
+            Self::PairsArbitrage
+            | Self::BasisArbitrage
+            | Self::CrossVenueArbitrage
+            | Self::SpotFuturesArbitrage => "relative_value",
+        }
+    }
+
+    /// Implementation-specific limitations surfaced to users before they choose a template.
+    pub const fn research_limitations(self) -> &'static [&'static str] {
+        match self {
+            Self::SmaCross | Self::EmaCross => &[
+                "交叉信号天然滞后；震荡区间可能频繁反向。",
+                "手续费、滑点和仓位规则由运行配置决定，不由信号公式估算。",
+            ],
+            Self::Macd => &[
+                "窗口固定为 12/26/9；内置 builtin_* 信号参数不会改变 MACD。",
+                "交叉信号天然滞后；震荡区间可能频繁反向。",
+            ],
+            Self::Rsi => &[
+                "30/70 超买超卖门槛固定；单边趋势中极值状态可能持续。",
+                "反转信号不保证行情会回归。",
+            ],
+            Self::Bollinger => &[
+                "使用窗口简单均值与 2 倍标准差；突破行情中价格可能持续沿带运行。",
+                "不含独立止损或止盈订单。",
+            ],
+            Self::DonchianBreakout => &[
+                "按当前收盘价与此前窗口高低比较；缺口和滑点由撮合及成本配置承担。",
+                "不含独立止损或止盈订单。",
+            ],
+            Self::Momentum => &[
+                "仅按窗口收盘价变化与阈值发信号；不按波动率或风险预算归一化。",
+                "手续费和滑点由运行配置决定。",
+            ],
+            Self::MeanReversion => &[
+                "按窗口简单均值偏离阈值发信号；趋势行情可能持续偏离均值。",
+                "反转信号不保证行情会回归。",
+            ],
+            Self::Grid => &[
+                "以保留历史窗口的首根 Bar 收盘价为固定锚点。",
+                "这是目标信号，不是带库存管理和真实挂单维护的网格订单管理器。",
+            ],
+            Self::AtrTrend => &[
+                "按前一收盘价与 ATR 的区间关系发信号；止损/止盈订单需独立配置。",
+                "ATR 信号不模拟盘口深度或触发单成交。",
+            ],
+            Self::KeltnerTrend => &[
+                "当前实现使用 EMA 与窗口平均 high-low 区间的两倍构造通道，不是 EMA ± ATR 乘数版本。",
+                "不含独立止损或止盈订单。",
+            ],
+            Self::VwapReversion => &[
+                "使用 period 窗口内 HLC3 的成交量加权均价，是滚动 VWAP 而非交易时段累计 VWAP。",
+                "结果依赖 Bar 成交量质量；反转信号不保证均值回归。",
+            ],
+            Self::VolatilityBreakout => &[
+                "当前 Bar 振幅需超过此前平均区间的两倍，且收盘价触及高点或低点才发信号。",
+                "不模拟盘口深度、跳空成交或保护单触发。",
+            ],
+            Self::PairsArbitrage => &[
+                "按两条腿的窗口收益差与阈值发信号；不会自动估计对冲比率或协整关系。",
+                "两条 BarFrame 必须对齐；腿间手续费、借贷成本和同步误差需另行纳入回测。",
+            ],
+            Self::BasisArbitrage | Self::SpotFuturesArbitrage => &[
+                "按两条腿当前收盘价的基差与阈值发信号；资金费率、借贷成本和腿间时差不由信号公式推导。",
+                "两条 BarFrame 必须对齐；费用与执行风险需单独评估。",
+            ],
+            Self::CrossVenueArbitrage => &[
+                "按两条腿的窗口收益差与阈值发信号；不建模转账、延迟、盘口深度或跨所库存约束。",
+                "两条 BarFrame 必须对齐；两侧手续费和滑点需分别配置。",
+            ],
+        }
+    }
+
     /// Requirements declared by the built-in algorithm itself, separate from
     /// optional requirements selected by runtime configuration.
     pub fn required_capabilities(self) -> &'static [crate::capabilities::StrategyCapability] {
