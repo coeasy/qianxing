@@ -87,6 +87,9 @@ PR_CRITERION_FILTERS = {
     # microbenchmark group whose code it owns. Keep its changes out of the
     # unrelated representative hot-path suites.
     "qx-cli": (),
+    # Strategy changes are covered by paired CLI workloads, not unrelated
+    # runtime, portfolio-timeline, or Paper microbenchmarks.
+    "qx-strategy": (),
 }
 PR_CORE_CRITERION_FILTERS = {
     # Run every qx-core group in one Criterion process when the PR changes core
@@ -98,6 +101,7 @@ PACKAGE_CRITERION_PROFILES = {
     "pr-xingban": "qx-xingban",
     "pr-zhenlu": "qx-zhenlu",
     "pr-cli": "qx-cli",
+    "pr-strategy": "qx-strategy",
 }
 SHARED_RUST_BUILD_INPUTS = {
     "Cargo.toml",
@@ -121,6 +125,11 @@ def criterion_profile_for_changed_files(changed_files: Iterable[str]) -> str:
         for path in paths
         if len(parts := path.split("/")) >= 3 and parts[0] == "crates"
     }
+    # These packages have no Criterion groups of their own. If a PR only
+    # changes these packages (including a CLI + strategy integration change),
+    # retain paired application workloads without timing unrelated hot paths.
+    if changed_crates and changed_crates <= {"qx-cli", "qx-strategy"}:
+        return "pr-strategy" if "qx-strategy" in changed_crates else "pr-cli"
     if len(changed_crates) == 1:
         package = next(iter(changed_crates))
         if package not in PACKAGE_CRITERION_PROFILES.values():
@@ -316,7 +325,7 @@ def main() -> int:
         help=(
             "full runs the complete benchmark ledger; pr measures representative hot paths; "
             "pr-runtime/pr-xingban/pr-zhenlu scope a single changed hot-path crate; "
-            "pr-cli skips unrelated Criterion groups while retaining CLI workload measurements; "
+            "pr-cli/pr-strategy skip unrelated Criterion groups while retaining paired workload measurements; "
             "pr-core also includes the full qx-core suite"
         ),
     )

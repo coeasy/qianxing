@@ -236,10 +236,17 @@ fn builtin_strategy_assumptions(name: &str, runtime: &RuntimeConfig) -> Option<S
             "未显式设置 allow_short；按产品默认值决定（现货/杠杆禁空，衍生品允许双向）".to_string()
         }
     };
+    let guidance = kind.research_limitations().join("；");
+    let data_scope = if kind.needs_reference_leg() {
+        "需要两条时间对齐的 OHLCV BarFrame；跨腿经济关系与同步质量需自行核验。"
+    } else {
+        "需要单标的 OHLCV BarFrame；标的和市场规格必须与数据一致。"
+    };
 
     Some(format!(
-        "- 策略：**{}**（`{}`）。\n- 预热：至少 **{warmup} 根 Bar** 后才可能产生首个信号；不足时不会提前交易。\n- {parameters}\n- {data}\n- {sizing}\n- 撮合模型：`{fill_model}`。OHLCV 回测不会重建盘口队列或深度。\n- {costs}\n- {risk}\n- 空头规则：{short_policy}。\n- 回测结果受数据区间、参数、成本规则、撮合模型和风控配置影响；比较策略时先固定这些输入，并以 RunManifest、RunRecord 与成交明细为准。",
+        "- 策略：**{}**（`{}`，类别 `{}`）。\n- 数据要求：{data_scope}\n- 预热：至少 **{warmup} 根 Bar** 后才可能产生首个信号；不足时不会提前交易。\n- {parameters}\n- {data}\n- {sizing}\n- 撮合模型：`{fill_model}`。OHLCV 回测不会重建盘口队列或深度。\n- {costs}\n- {risk}\n- 空头规则：{short_policy}。\n- 策略限制：{guidance}\n- 策略只产生目标信号；费用、仓位、风险和成交由运行配置与执行模型分别决定。回测结果受数据区间、参数、成本规则、撮合模型和风控配置影响；比较策略时先固定这些输入，并以 RunManifest、RunRecord 与成交明细为准。",
         kind.description(),
         kind.name(),
+        kind.research_family(),
     ))
 }

@@ -71,6 +71,18 @@ class CriterionPlanTests(unittest.TestCase):
         self.assertEqual(required, set())
         self.assertEqual(commands, [])
 
+    def test_strategy_change_does_not_run_unrelated_hot_path_criterion_suites(self) -> None:
+        selected = criterion_profile_for_changed_files(
+            [
+                "crates/qx-cli/src/cli_help.rs",
+                "crates/qx-strategy/src/builtin/signal.rs",
+            ]
+        )
+        self.assertEqual(selected, "pr-strategy")
+        required, commands = criterion_plan("cargo", selected)
+        self.assertEqual(required, set())
+        self.assertEqual(commands, [])
+
     def test_shared_inputs_or_core_changes_include_the_shared_dependency_suite(self) -> None:
         for changed in (
             ["Cargo.lock", "crates/qx-runtime/src/pipeline.rs"],
