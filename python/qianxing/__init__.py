@@ -440,4 +440,4 @@ __all__ = [
 try:
     __version__ = version("qianxing")
 except PackageNotFoundError:
-    __version__ = "0.4.2"
+    __version__ = "0.4.3"
