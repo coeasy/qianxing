@@ -65,8 +65,17 @@ qx-cli quickstart my-ashare --profile ashare     # A 股样例 → 静态检查 
 qx-cli quickstart my-okx --profile ccxt --days 30 --timeframe 1h --html  # 真实公开行情 → 回测 → HTML/SVG 与证据包
 ```
 
-`my-paper --profile paper` 一键首跑仅适用于包含 tag 后变更的当前源码或基于它构建的 CLI；v0.4.2 预编译 CLI 和 `cargo install --tag v0.4.2` 不支持此 quickstart 参数。
-Binance Spot 示例需要包含本分支改动的后续 CLI；已发布的 v0.4.1 和现存 v0.4.2 tag 尚不含 `--market-type` 参数。
+要从一个内置策略模板开始并直接设置它读取的信号参数，可用 `strategy init`；参数名以 `builtin-strategies` 输出为准：
+
+```bash
+qx-cli strategy init sma_cross ./sma.runtime.json --signal-knob fast_window=8 --signal-knob slow_window=34
+qx-cli doctor ./sma.runtime.json
+qx-cli strategy backtest ./sma.runtime.json ./qianxing.bar-frame.example.json
+```
+
+重复传入 `--signal-knob NAME=INTEGER` 即可设置多个参数。策略未使用的参数、重复参数或格式错误会在写配置前拒绝；配置随后仍走同一 Rust 回测、风控和报告链。该样例只用于本地研究，不会启用执行或连接交易所。
+
+`my-paper --profile paper` 一键首跑仅适用于包含 tag 后变更的当前源码或基于它构建的 CLI；v0.4.2 预编译 CLI 和 `cargo install --tag v0.4.2` 不支持此 quickstart 参数。`--signal-knob`、Binance Spot 示例与 CLI shell 原生命令说明也需要当前源码或后续版本；v0.4.2 已发布构件不包含这些后续改进。
 
 已在仓库内开发时可用 `cargo install --path crates/qx-cli --locked`；该方式需要完整源码和 Rust 工具链。Release 二进制没有
 仓库相对路径依赖，可从任意工作目录运行。

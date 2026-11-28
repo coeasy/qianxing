@@ -468,6 +468,35 @@ mod plan_args_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod strategy_init_args_tests {
+    use super::{Cli, Command, StrategyCommand};
+    use clap::Parser;
+
+    #[test]
+    fn strategy_init_accepts_multiple_signal_knob_overrides() {
+        let parsed = Cli::try_parse_from([
+            "qx-cli",
+            "strategy",
+            "init",
+            "sma_cross",
+            "strategy.json",
+            "--signal-knob",
+            "fast_window=8",
+            "--signal-knob",
+            "slow_window=34",
+        ])
+        .expect("repeated --signal-knob values should parse");
+
+        assert!(matches!(
+            parsed.command,
+            Some(Command::Strategy {
+                action: Some(StrategyCommand::Init { signal_knobs, .. })
+            }) if signal_knobs == ["fast_window=8", "slow_window=34"]
+        ));
+    }
+}
 #[derive(Subcommand)]
 pub(crate) enum ConfigCommand {
     #[command(name = "explain")]
@@ -560,6 +589,9 @@ pub(crate) enum StrategyCommand {
         name: String,
         output: Option<PathBuf>,
         bars: Option<PathBuf>,
+        /// Override a signal knob consumed by this strategy, as NAME=INTEGER.
+        #[arg(long = "signal-knob", value_name = "NAME=INTEGER", action = clap::ArgAction::Append)]
+        signal_knobs: Vec<String>,
         #[arg(long)]
         force: bool,
     },

@@ -791,6 +791,7 @@ pub(crate) fn run_strategy_init(
     strategy_name: &str,
     output: &Path,
     bars_path: Option<&Path>,
+    signal_knob_overrides: &[String],
     force: bool,
 ) -> Result<(), String> {
     let kind = single_leg_builtin_strategy(strategy_name)?;
@@ -821,6 +822,7 @@ pub(crate) fn run_strategy_init(
         "builtin_strategy".into(),
         serde_json::Value::String(kind.name().into()),
     );
+    apply_builtin_signal_knob_overrides(strategy, kind, signal_knob_overrides)?;
     let bars = bars_path
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_else(|| "deploy/qianxing.bar-frame.example.json".into());
@@ -910,6 +912,63 @@ pub(crate) fn run_strategy_init(
         init_guidance::command_path(output),
         init_guidance::command_path(&project_root.join(&bars))
     );
+    Ok(())
+}
+
+fn apply_builtin_signal_knob_overrides(
+    strategy: &mut serde_json::Map<String, serde_json::Value>,
+    kind: BuiltinStrategyKind,
+    overrides: &[String],
+) -> Result<(), String> {
+    let mut seen = BTreeSet::new();
+    for override_value in overrides {
+        let (name, value) = override_value.split_once('=').ok_or_else(|| {
+            format!(
+                "信号参数格式应为 NAME=INTEGER（可用参数：{}）",
+                kind.signal_knob_list()
+            )
+        })?;
+        if value.contains('=') || name.is_empty() || value.is_empty() {
+            return Err(format!(
+                "信号参数格式应为 NAME=INTEGER（可用参数：{}）",
+                kind.signal_knob_list()
+            ));
+        }
+        let knob = BuiltinSignalKnob::ALL
+            .into_iter()
+            .find(|knob| knob.field() == name)
+            .ok_or_else(|| {
+                format!(
+                    "未知信号参数 {name}；策略 {} 可用参数：{}",
+                    kind.name(),
+                    kind.signal_knob_list()
+                )
+            })?;
+        if !kind.uses_signal_knob(knob) {
+            return Err(format!(
+                "策略 {} 不读取信号参数 {name}；可用参数：{}",
+                kind.name(),
+                kind.signal_knob_list()
+            ));
+        }
+        if !seen.insert(knob.config_key()) {
+            return Err(format!("信号参数 {name} 被重复指定"));
+        }
+        let raw_value = value
+            .parse::<i64>()
+            .map_err(|_| format!("信号参数 {name} 必须是 64 位整数: {value}"))?;
+        let json_value = match knob {
+            BuiltinSignalKnob::FastWindow
+            | BuiltinSignalKnob::SlowWindow
+            | BuiltinSignalKnob::Period => {
+                let unsigned = u64::try_from(raw_value)
+                    .map_err(|_| format!("信号参数 {name} 不能为负: {raw_value}"))?;
+                serde_json::Value::from(unsigned)
+            }
+            BuiltinSignalKnob::ThresholdBps => serde_json::Value::from(raw_value),
+        };
+        strategy.insert(knob.config_key().to_string(), json_value);
+    }
     Ok(())
 }
 
