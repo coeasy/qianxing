@@ -308,6 +308,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: performance-${{ runner.os }}-${{ runner.arch }}
+      - name: Select PR Criterion scope
+        id: criterion-scope
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --no-tags origin "$BASE_SHA"
+          python3 benchmarks/select_criterion_profile.py "$BASE_SHA" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+      # PRs measure the changed scope and main pushes use the standard profile.
+      # Reusable release CI retains the full Criterion matrix.
       - name: Build and measure the parent revision on this runner
         id: paired_baseline
         if: github.event_name == 'pull_request' || github.event_name == 'push'
@@ -339,7 +349,7 @@ jobs:
             --workspace-root "$base_dir" \
             --target-dir "$CARGO_TARGET_DIR" \
             --out "$GITHUB_WORKSPACE/benchmarks/results/previous/rust-micro.json" \
-            --profile "${{ github.event_name == 'pull_request' && 'pr' || 'full' }}"
+            --profile "${{ github.event_name == 'workflow_call' && 'full' || (github.event_name == 'pull_request' && steps.criterion-scope.outputs.profile || 'pr') }}"
           python3 "$base_dir/benchmarks/run_ashare_profile_backtest.py" \
             --binary "$baseline_binary" \
             --out "$GITHUB_WORKSPACE/benchmarks/results/previous/ashare-rules-on.json" \
@@ -390,17 +400,9 @@ jobs:
           assert report["deterministic_across_repeats"] is True, report
           print("Observed 2 CPU quota, 8 GiB memory quota, and stable real-data results.")
           PY
-      - name: Select PR Criterion scope
-        id: criterion-scope
-        if: github.event_name == 'pull_request'
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          git fetch --no-tags origin "$BASE_SHA"
-          python3 benchmarks/select_criterion_profile.py "$BASE_SHA" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
       - name: Measure candidate end-to-end and kernel performance
         env:
-          CRITERION_PROFILE: ${{ github.event_name == 'pull_request' && steps.criterion-scope.outputs.profile || 'full' }}
+          CRITERION_PROFILE: ${{ github.event_name == 'workflow_call' && 'full' || (github.event_name == 'pull_request' && steps.criterion-scope.outputs.profile || 'pr') }}
           CARGO_TARGET_DIR: ${{ github.workspace }}/target
         run: |
           python3 benchmarks/run_baseline.py \

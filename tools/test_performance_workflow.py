@@ -11,6 +11,19 @@ WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 
 
 class PerformanceWorkflowTests(unittest.TestCase):
+    def test_paired_benchmarks_use_the_same_profile_and_full_scope_is_release_only(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        expected = (
+            "${{ github.event_name == 'workflow_call' && 'full' || "
+            "(github.event_name == 'pull_request' && steps.criterion-scope.outputs.profile || 'pr') }}"
+        )
+        self.assertEqual(workflow.count(expected), 2)
+
+        selection = workflow.index("- name: Select PR Criterion scope")
+        baseline = workflow.index("- name: Build and measure the parent revision on this runner")
+        self.assertLess(selection, baseline)
+        self.assertIn("if: github.event_name == 'pull_request'", workflow[selection:baseline])
+
     def test_parent_and_candidate_benchmarks_use_separate_cargo_targets(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
         baseline_start = workflow.index("- name: Build and measure the parent revision on this runner")
