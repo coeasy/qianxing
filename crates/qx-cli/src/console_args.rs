@@ -10,8 +10,25 @@
 //! 两个旗标都**不启动服务**，只服务易用性：`--init` 写出一份就绪模板（拒绝覆盖已有文件），
 //! `--generate-token` 打印一枚新令牌与可粘贴的 `export` 行。
 
-use clap::Args;
+use clap::{Args, ValueEnum};
 use std::path::PathBuf;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum ConsolePublicMarketProvider {
+    Okx,
+    Binance,
+    Bitget,
+}
+
+impl ConsolePublicMarketProvider {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Okx => "okx",
+            Self::Binance => "binance",
+            Self::Bitget => "bitget",
+        }
+    }
+}
 
 #[derive(Args)]
 pub(crate) struct ConsoleArgs {
@@ -24,4 +41,10 @@ pub(crate) struct ConsoleArgs {
     /// 只打印一枚新生成的引导令牌与可粘贴的 export 行后退出（不启动服务）。
     #[arg(long = "generate-token")]
     pub(crate) generate_token: bool,
+    /// 在 --init 生成可直接读取公共 CCXT 行情的配置（不使用凭据，不会下单）。
+    #[arg(long, value_enum, requires = "init", conflicts_with = "generate_token")]
+    pub(crate) public_market_provider: Option<ConsolePublicMarketProvider>,
+    /// 公共行情产品类型；省略时使用 swap。spot 当前仅支持 Binance。
+    #[arg(long, value_enum, requires = "public_market_provider")]
+    pub(crate) market_type: Option<crate::cli_args::QuickstartMarketType>,
 }

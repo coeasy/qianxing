@@ -279,12 +279,14 @@ pub(crate) fn print_cli_help() {
       它受理的 SubmitOrder 会写进与执行 worker 同一条队列，因此这里也当场拒绝
       strategy.ashare_rules_path：订单形状在入队前就定死了，A 股段改变不了它（V12 R1）。
   console [runtime.json] [--init <path>] [--generate-token]
+          [--public-market-provider <okx|binance|bitget>] [--market-type <spot|swap>]
       在回环地址上启动同源 BFF 控制台：一个源同时发静态控制台资源并代理 API，
       浏览器侧因此不需要 CORS 名单。引导令牌优先从配置点名的环境变量读（不进命令行），
       缺失时临时生成一次性令牌并打印入口 URL；用它换一份 HttpOnly 会话 cookie；
       非 GET 请求还必须带 X-QX-CSRF 且 Origin 与 Host 同源。
       身份由这一层按配置注入，页面不能自声明；没有 api.console 段的配置一律拒绝启动。
       --init <path> 写出一份就绪模板（拒绝覆盖已有文件）；--generate-token 只打印一枚令牌。
+      显式添加 --public-market-provider 会同时生成公共行情 Provider 与无凭据 CCXT 配置；默认 swap，spot 当前仅支持 Binance。
   supervise [runtime.json] [--allow-unmanaged-roles]
       按配置拉起并监督 worker 子进程。
   scheduler-worker <runtime.json> <worker-id> [--once]
