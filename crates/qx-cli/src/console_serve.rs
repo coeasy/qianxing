@@ -140,20 +140,33 @@ fn generate_bootstrap_token() -> String {
     token
 }
 
-/// `--generate-token`：只打印一枚令牌与可直接粘贴的 `export` 行（不启动服务）。
+/// `--generate-token`：只打印一枚令牌与当前 shell 可粘贴的环境变量赋值（不启动服务）。
 ///
 /// 不写成"给命令替换用"的裸输出：启动横幅走的是 stdout，`$(qx-cli console --generate-token)`
-/// 会把横幅一起吞进去。这里给一行现成可复制的 `export`，人在 shell 里粘一次即可。
+/// 会把横幅一起吞进去。这里给一行适配当前 shell 的赋值语句，人在 shell 里粘一次即可。
 fn print_generated_token() {
     let token = generate_bootstrap_token();
     println!("[控制台 · Console] 新引导令牌（≥16 字符；复制下面这一行到你的 shell）：");
-    println!("export QX_CONSOLE_BOOTSTRAP_TOKEN=\"{token}\"");
+    println!(
+        "{}",
+        format_bootstrap_token_assignment("QX_CONSOLE_BOOTSTRAP_TOKEN", &token)
+    );
+}
+
+#[cfg(windows)]
+fn format_bootstrap_token_assignment(env_name: &str, value: &str) -> String {
+    format!("$env:{env_name}=\"{value}\"")
+}
+
+#[cfg(not(windows))]
+fn format_bootstrap_token_assignment(env_name: &str, value: &str) -> String {
+    format!("export {env_name}=\"{value}\"")
 }
 
 /// `--init`：写出一份就绪的运行时模板到指定路径后退出（不启动服务）。
 ///
 /// **拒绝覆盖**已存在的文件：控制台模板指向数据目录与端口，静默改写会让使用者对一份没人点过名的
-/// 配置签字。写好后把下一步（`export` + 启动命令）印成人可以直接复制的一行。
+/// 配置签字。写好后把下一步（当前 shell 的环境变量赋值 + 启动命令）印成人可以直接复制的一行。
 fn scaffold_console_runtime(
     target: &Path,
     provider: Option<ConsolePublicMarketProvider>,
@@ -190,10 +203,13 @@ fn scaffold_console_runtime(
     }
     println!("[控制台 · Console] 下一步（引导令牌只走环境变量，不进命令行 / 配置文件）：");
     println!(
-        "  export {env_name}=\"<至少16字符的秘密>\"   # 或用 `qx-cli console --generate-token` 生成一行"
+        "  {}   # 或用 `qx-cli console --generate-token` 生成一行",
+        format_bootstrap_token_assignment(env_name, "<至少16字符的秘密>")
     );
     println!("  qx-cli console {}", target.display());
-    println!("[控制台 · Console] 若跳过 export，启动时会自动临时生成一次性令牌并打印入口 URL。");
+    println!(
+        "[控制台 · Console] 若不设置引导环境变量，启动时会自动临时生成一次性令牌并打印入口 URL。"
+    );
     Ok(())
 }
 
@@ -395,6 +411,15 @@ mod tests {
             "生成的令牌含非十六进制字符: {first:?}"
         );
         assert_ne!(first, second, "同一进程内两次生成不得相同");
+    }
+
+    #[test]
+    fn bootstrap_token_assignment_uses_current_shell_syntax() {
+        let assignment = format_bootstrap_token_assignment("QX_CONSOLE_BOOTSTRAP_TOKEN", "abc123");
+        #[cfg(windows)]
+        assert_eq!(assignment, "$env:QX_CONSOLE_BOOTSTRAP_TOKEN=\"abc123\"");
+        #[cfg(not(windows))]
+        assert_eq!(assignment, "export QX_CONSOLE_BOOTSTRAP_TOKEN=\"abc123\"");
     }
 
     #[test]

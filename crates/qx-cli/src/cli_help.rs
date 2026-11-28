@@ -285,7 +285,7 @@ pub(crate) fn print_cli_help() {
       缺失时临时生成一次性令牌并打印入口 URL；用它换一份 HttpOnly 会话 cookie；
       非 GET 请求还必须带 X-QX-CSRF 且 Origin 与 Host 同源。
       身份由这一层按配置注入，页面不能自声明；没有 api.console 段的配置一律拒绝启动。
-      --init <path> 写出一份就绪模板（拒绝覆盖已有文件）；--generate-token 只打印一枚令牌。
+      --init <path> 写出一份就绪模板（拒绝覆盖已有文件）；--generate-token 打印令牌和当前 shell 的环境变量赋值。
       显式添加 --public-market-provider 会同时生成公共行情 Provider 与无凭据 CCXT 配置；默认 swap，spot 当前仅支持 Binance。
   supervise [runtime.json] [--allow-unmanaged-roles]
       按配置拉起并监督 worker 子进程。

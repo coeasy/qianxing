@@ -1,4 +1,4 @@
-//! `console` 命令的参数契约：`console [runtime.json] [--init <path>] [--generate-token]`。
+//! `console` 命令的参数契约：运行时配置、`--init`、`--generate-token` 与显式公共行情初始化选项。
 //!
 //! 与其他命令参数结构分开组织，让「这个命令读哪些参数」一处可见。
 //!
@@ -7,8 +7,8 @@
 //! （`bootstrap_token_env` 点名那个变量），不接受命令行传入——命令行会进进程列表与
 //! shell 历史，那不是放秘密的地方。
 //!
-//! 两个旗标都**不启动服务**，只服务易用性：`--init` 写出一份就绪模板（拒绝覆盖已有文件），
-//! `--generate-token` 打印一枚新令牌与可粘贴的 `export` 行。
+//! 初始化相关选项都**不启动服务**，只服务易用性：`--init` 写出一份就绪模板（拒绝覆盖已有文件），
+//! `--generate-token` 打印一枚新令牌与适配当前 shell 的可粘贴环境变量赋值。
 
 use clap::{Args, ValueEnum};
 use std::path::PathBuf;

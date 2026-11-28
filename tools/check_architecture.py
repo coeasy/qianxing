@@ -24001,12 +24001,20 @@ def console_usability_check() -> None:
         and "std::env::var(&console.bootstrap_token_env)" in serve
         and CONSOLE_TOKEN_FALLBACK_MARKER in serve,
         "引导令牌兜底：环境变量仍是首选来源，缺失时临时生成一枚并当场打印它是临时的",
-        "令牌兜底被删（忘了 export 就启不来），或环境变量优先级被绕过",
+        "令牌兜底被删（未设置引导环境变量就启不来），或环境变量优先级被绕过",
     )
     check(
         "#[cfg(test)]" in raw_serve and CONSOLE_TOKEN_TEST in raw_serve,
         "生成的令牌有行为用例在盘（长度下限 + 十六进制 + 两次不同）",
         "令牌生成只剩散文，没有会跑红的用例",
+    )
+    check(
+        "bootstrap_token_assignment_uses_current_shell_syntax" in raw_serve
+        and 'format!("$env:{env_name}=' in raw_serve
+        and 'format!("export {env_name}=' in raw_serve
+        and "format_bootstrap_token_assignment(\"QX_CONSOLE_BOOTSTRAP_TOKEN\", &token)" in raw_serve,
+        "引导令牌指令按目标 shell 输出 PowerShell 或 POSIX 赋值语法且有平台行为用例",
+        "令牌输出仅适用于 POSIX shell，或缺少跨平台语法回归",
     )
     check(
         "pub(crate) generate_token: bool" in args and "args.generate_token" in serve,
